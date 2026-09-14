@@ -1,6 +1,7 @@
 /** @jsxImportSource solid-js */
 import { Show, createEffect, createMemo, createSignal, on, onCleanup } from 'solid-js';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { onCatalogUpdate } from '@bridge/events';
 import {
   CacheManager,
   DataSourceRegistry,
@@ -316,19 +317,33 @@ export function App(props: AppProps) {
   // update) for the Packs tab now mounted where `settings` used to hold a
   // standalone Sources tab. `sources`/`refreshSources` are `settings`'s own
   // (SourcesTab remains the only place a source is added or removed — see
-  // `PacksPanel.tsx`'s doc comment); `onCatalogChanged` calls
-  // `analyzers.refreshCatalog()` so a pack or processor installed here shows
-  // up immediately in every session's "Add analyzer" list, same as
-  // `AddAnalyzer.tsx`'s own `installFromFile` already does for a local YAML
-  // load. No event bus involved — direct store-to-store wiring here matches
-  // how every other cross-store dependency in this composition root works
-  // (e.g. `deviceState` reading `analyzers` above); see implementation-notes.
+  // `PacksPanel.tsx`'s doc comment).
   const packs = createPacksStore({
     sources: settings.sources,
     refreshSources: settings.refreshSources,
-    onCatalogChanged: () => void analyzers.refreshCatalog(),
   });
   onCleanup(() => packs.dispose());
+
+  // The installed catalog changed — a processor or pack was installed,
+  // uninstalled or updated, by this UI's Packs tab or by an agent over the
+  // bridge (F1). This listener is the ONE path by which either store learns
+  // of it: `analyzers` re-fetches its catalog (every session's "Add analyzer"
+  // list and the cards' names), `packs` its installed set (the "already
+  // added" badges). A UI-initiated install reaches `analyzers` through this
+  // same echo rather than a direct store-to-store callback, so an agent's
+  // install and a human's are indistinguishable downstream. Both refreshes
+  // are fire-and-forget: a failed re-fetch leaves the previous catalog in
+  // place, which is no worse than not having heard the event at all.
+  const catalogListener = onCatalogUpdate(() => {
+    void analyzers.refreshCatalog();
+    void packs.refreshInstalled();
+  });
+  onCleanup(() => {
+    // Unlisten-safe: a `listen()` promise that settles after this root is
+    // disposed unlistens itself instead of leaking (same pattern as every
+    // store's `track()`).
+    void catalogListener.then((unlisten) => unlisten()).catch(() => undefined);
+  });
 
   /** Who last ran this session's pipeline, from the presence journal — the
    *  analyzers surface has no journal access of its own (A2 owns that). */

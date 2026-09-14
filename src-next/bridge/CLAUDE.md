@@ -105,8 +105,15 @@ UI-created path had the same gap and is fixed by the same listener), **`onActivi
 `useActivityFeed` for the consumer pattern: fetch `getActivity(200)` once, then append by
 `id`, bounded client-side to 200 even though the backend ring holds 500),
 `onWorkspaceRestored` (`WorkspaceRestoredEvent`, `source: 'lts' | 'workspace'`),
-`onWorkspaceAutoSaved` (`WorkspaceAutoSavedEvent`), plus the pipeline/search/filter/index
-progress listeners and the ADB stream listeners.
+`onWorkspaceAutoSaved` (`WorkspaceAutoSavedEvent`), **`onChainUpdate`** (`chain-update`,
+`ChainUpdateEvent` — the WHOLE new chain, `activeProcessorIds` disabled members included,
+plus `caller`; not emitted for a no-op write), **`onPipelineComplete`** (`pipeline-complete`,
+`PipelineCompleteEvent` — once per run from either caller, exactly one of `result`/`error`
+non-null, a cancel is `result` with empty `summaries`), **`onCatalogUpdate`** (`catalog-update`,
+`CatalogUpdateEvent`, `action: 'install' | 'uninstall' | 'update'`, from either caller — the
+Solid app's single refresh path for both the analyzer catalog and the packs store's
+installed set), plus the pipeline/search/filter/index progress listeners and the ADB stream
+listeners.
 
 ## Chain resolution is backend-owned
 

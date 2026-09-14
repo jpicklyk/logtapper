@@ -48,6 +48,9 @@ import type {
   FilterProgress,
   ActivityEntry,
   Caller,
+  ChainState,
+  ChainUpdateEvent,
+  PipelineCompleteEvent,
   HighlightSpan,
   LinePage,
   LineRequest,
@@ -138,6 +141,9 @@ export type {
   FilterProgress,
   ActivityEntry,
   Caller,
+  ChainState,
+  ChainUpdateEvent,
+  PipelineCompleteEvent,
   HighlightSpan,
   LinePage,
   LineRequest,
@@ -255,6 +261,12 @@ export type AnalysisUpdateEvent = Omit<Generated.AnalysisUpdateEvent, 'action'> 
 /** Rust `action` field is a `String`; only these three values are ever emitted. */
 export type BookmarkUpdateEvent = Omit<Generated.BookmarkUpdateEvent, 'action'> & {
   action: 'created' | 'updated' | 'deleted';
+};
+
+/** Rust `action` field is a `String`; only these three values are ever emitted
+ *  (`services::processors::emit_catalog_update`). */
+export type CatalogUpdateEvent = Omit<Generated.CatalogUpdateEvent, 'action'> & {
+  action: 'install' | 'uninstall' | 'update';
 };
 
 /** Rust `status` field is a `String`; only these three values are ever emitted. */

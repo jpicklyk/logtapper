@@ -5,6 +5,42 @@ import { App } from './App';
 import type { LoadResult } from '@bridge/types';
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
+// F1: the `catalog-update` test below needs to see the PUBLIC `refreshCatalog`
+// / `refreshInstalled` calls App makes on the real stores — not the
+// construction-time seeds each store fires through its own closure — so the
+// two factories are wrapped to count calls on the returned object's method.
+// Everything else in both barrels is the real module.
+const refreshSpies = vi.hoisted(() => ({ refreshCatalog: vi.fn(), refreshInstalled: vi.fn() }));
+vi.mock('./analyzers', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('./analyzers')>();
+  return {
+    ...mod,
+    createAnalyzerStore: (deps: Parameters<typeof mod.createAnalyzerStore>[0]) => {
+      const store = mod.createAnalyzerStore(deps);
+      const original = store.refreshCatalog;
+      store.refreshCatalog = () => {
+        refreshSpies.refreshCatalog();
+        return original();
+      };
+      return store;
+    },
+  };
+});
+vi.mock('./packs', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('./packs')>();
+  return {
+    ...mod,
+    createPacksStore: (deps: Parameters<typeof mod.createPacksStore>[0]) => {
+      const store = mod.createPacksStore(deps);
+      const original = store.refreshInstalled;
+      store.refreshInstalled = () => {
+        refreshSpies.refreshInstalled();
+        return original();
+      };
+      return store;
+    },
+  };
+});
 // The shell now renders `WindowControls`, which calls `getCurrentWindow()` from
 // `@tauri-apps/api/window` — that throws outside a Tauri webview, so stub it.
 // Every method returns a resolved promise; `isMaximized` reports false so the
@@ -153,6 +189,9 @@ vi.mock('@bridge/events', () => ({
   onFilterProgress: vi.fn(() => Promise.resolve(() => {})),
   onSearchProgress: vi.fn(() => Promise.resolve(() => {})),
   onPipelineProgress: vi.fn(() => Promise.resolve(() => {})),
+  onPipelineComplete: vi.fn(() => Promise.resolve(() => {})),
+  onChainUpdate: vi.fn(() => Promise.resolve(() => {})),
+  onCatalogUpdate: vi.fn(() => Promise.resolve(() => {})),
   onAnalysisUpdate: vi.fn(() => Promise.resolve(() => {})),
   onBookmarkUpdate: vi.fn(() => Promise.resolve(() => {})),
   onWatchMatch: vi.fn(() => Promise.resolve(() => {})),
@@ -445,5 +484,27 @@ describe('App', () => {
     // never the stale-session fallback.
     expect(screen.queryByText(/no longer open/i)).toBeNull();
     expect(screen.getByText(/pick a session above/i)).toBeTruthy();
+  });
+
+  // F1: `catalog-update` is the ONE path by which an install/uninstall/update
+  // — an agent's over the bridge, or this UI's own Packs tab — reaches the
+  // analyzer catalog and the packs store's installed set. Both stores fetch
+  // `listProcessors` + `listPacks` once at construction; after the event each
+  // must have re-fetched exactly once more, so the counts separate "both
+  // refreshed once" from "one refreshed twice" or "nobody listened".
+  it('refreshes the analyzer catalog and the installed packs once each on catalog-update', async () => {
+    const { onCatalogUpdate } = await import('@bridge/events');
+    render(() => <App />);
+    expect(onCatalogUpdate).toHaveBeenCalledTimes(1);
+    const fire = vi.mocked(onCatalogUpdate).mock.calls[0][0];
+    // Construction-time seeds go through each store's internal closure, not
+    // the public method — so nothing has hit the spies yet.
+    expect(refreshSpies.refreshCatalog).not.toHaveBeenCalled();
+    expect(refreshSpies.refreshInstalled).not.toHaveBeenCalled();
+
+    fire({ caller: { kind: 'agent', client: 'claude' }, action: 'install', ids: ['wifi@official'] });
+
+    expect(refreshSpies.refreshCatalog).toHaveBeenCalledTimes(1);
+    expect(refreshSpies.refreshInstalled).toHaveBeenCalledTimes(1);
   });
 });

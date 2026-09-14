@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { ActivityEntry, AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, PipelineProgress, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent, WatchUpdateEvent, LoadResult, SessionClosedEvent, WorkspaceAutoSavedEvent, WorkspaceRestoredEvent, WorkspaceListChangedEvent, LtsEditorTabPayload, FocusContext, NavRequest } from './types';
+import type { ActivityEntry, AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, PipelineProgress, PipelineCompleteEvent, ChainUpdateEvent, CatalogUpdateEvent, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent, WatchUpdateEvent, LoadResult, SessionClosedEvent, WorkspaceAutoSavedEvent, WorkspaceRestoredEvent, WorkspaceListChangedEvent, LtsEditorTabPayload, FocusContext, NavRequest } from './types';
 
 // ---------------------------------------------------------------------------
 // ADB streaming events
@@ -60,6 +60,59 @@ export function onPipelineProgress(
   cb: (payload: PipelineProgress) => void,
 ): Promise<UnlistenFn> {
   return listen<PipelineProgress>('pipeline-progress', (e) => cb(e.payload));
+}
+
+/**
+ * Emitted once per pipeline run, from EITHER caller, after the run settles
+ * and before its result is handed back to whoever started it — so a UI store
+ * can land the results of a run it did not start (an agent's) or clear its
+ * progress bar when that run failed. Exactly one of `result` / `error` is
+ * non-null; a run cancelled while queued or mid-run arrives as `result` with
+ * empty `summaries`. The payload carries `sessionId` and `caller`: a store
+ * that settles its own runs from the `run_pipeline` promise should ignore
+ * `caller.kind === 'ui'` here rather than apply the same result twice.
+ */
+export function onPipelineComplete(
+  cb: (payload: PipelineCompleteEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<PipelineCompleteEvent>('pipeline-complete', (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
+// Session pipeline chain (shared state, from EITHER caller)
+// ---------------------------------------------------------------------------
+
+/**
+ * Emitted after every stored change to a session's pipeline chain — the UI's
+ * own `setSessionPipelineMeta`, an agent's `PUT`/`PATCH .../chain`, or the
+ * run-merge of an explicit-ids `run_pipeline`. Not emitted for a no-op write.
+ * The payload is the WHOLE new chain (`activeProcessorIds` is the full
+ * ordered chain, disabled members included; `disabledProcessorIds` is its
+ * subset), so a consumer applies it as a replace, and it carries `sessionId`
+ * plus `caller` — a store that already holds its own edits locally should
+ * ignore the `ui` echo of them.
+ */
+export function onChainUpdate(
+  cb: (payload: ChainUpdateEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<ChainUpdateEvent>('chain-update', (e) => cb(e.payload));
+}
+
+// ---------------------------------------------------------------------------
+// Processor / pack catalog (install, uninstall, update — from EITHER caller)
+// ---------------------------------------------------------------------------
+
+/**
+ * Emitted on every processor or pack install, uninstall, or update, from
+ * either caller — the single signal that the installed catalog changed. `ids`
+ * are the qualified processor ids and/or pack ids the mutation touched. A
+ * consumer refetches (`listProcessors`/`listPacks`) rather than patching its
+ * own copy. Never emitted for marketplace source add/remove.
+ */
+export function onCatalogUpdate(
+  cb: (payload: CatalogUpdateEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<CatalogUpdateEvent>('catalog-update', (e) => cb(e.payload));
 }
 
 // ---------------------------------------------------------------------------

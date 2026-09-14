@@ -68,6 +68,7 @@ function fakeStore(overrides: { result?: PipelineRunResult | null } = {}): Analy
       }),
     ),
     resetToDefault: vi.fn(),
+    addedBy: () => null,
     running: () => running(),
     progress: () => new Map(),
     result: () => result(),

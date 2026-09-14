@@ -5,6 +5,8 @@ import type {
   PackSummary,
   PipelineRunResult,
   PipelineProgress,
+  PipelineCompleteEvent,
+  ChainUpdateEvent,
   MatchedLine,
 } from '@bridge/types';
 import {
@@ -96,8 +98,12 @@ interface Harness {
   commands: AnalyzerCommands;
   controller: { setLineSet: ReturnType<typeof vi.fn>; scrollToLine: ReturnType<typeof vi.fn> };
   unlisten: ReturnType<typeof vi.fn>;
+  unlistenChain: ReturnType<typeof vi.fn>;
+  unlistenComplete: ReturnType<typeof vi.fn>;
   chooseFile: ReturnType<typeof vi.fn>;
   fireProgress: (payload: PipelineProgress) => void;
+  fireChain: (payload: ChainUpdateEvent) => void;
+  fireComplete: (payload: PipelineCompleteEvent) => void;
   setOrder: (ids: string[]) => void;
 }
 
@@ -112,19 +118,54 @@ function mount(commandOverrides: Partial<AnalyzerCommands> = {}): Harness {
     progressCb = cb;
     return Promise.resolve(unlisten);
   });
+  const unlistenChain = vi.fn();
+  let chainCb: ((payload: ChainUpdateEvent) => void) | null = null;
+  const listenChain = vi.fn((cb: (payload: ChainUpdateEvent) => void) => {
+    chainCb = cb;
+    return Promise.resolve(unlistenChain);
+  });
+  const unlistenComplete = vi.fn();
+  let completeCb: ((payload: PipelineCompleteEvent) => void) | null = null;
+  const listenComplete = vi.fn((cb: (payload: PipelineCompleteEvent) => void) => {
+    completeCb = cb;
+    return Promise.resolve(unlistenComplete);
+  });
   const sessions: AnalyzerSessions = { order: () => order() };
 
-  const store = createAnalyzerStore({ sessions, controller, listen, commands, chooseFile });
+  const store = createAnalyzerStore({ sessions, controller, listen, listenChain, listenComplete, commands, chooseFile });
 
   return {
     store,
     commands,
     controller,
     unlisten,
+    unlistenChain,
+    unlistenComplete,
     chooseFile,
     fireProgress: (payload) => progressCb?.(payload),
+    fireChain: (payload) => chainCb?.(payload),
+    fireComplete: (payload) => completeCb?.(payload),
     setOrder: (ids) => setOrderSignal(ids),
   };
+}
+
+const AGENT = { kind: 'agent', client: 'claude' } as const;
+const UI = { kind: 'ui' } as const;
+
+function chainEvent(
+  sessionId: string,
+  activeProcessorIds: string[],
+  disabledProcessorIds: string[] = [],
+  caller: ChainUpdateEvent['caller'] = AGENT,
+): ChainUpdateEvent {
+  return { sessionId, activeProcessorIds, disabledProcessorIds, caller };
+}
+
+function completeEvent(
+  sessionId: string,
+  overrides: Partial<PipelineCompleteEvent> = {},
+): PipelineCompleteEvent {
+  return { sessionId, caller: AGENT, result: runResult(sessionId, [summary('agent-ran')]), error: null, ...overrides };
 }
 
 describe('analyzerStore', () => {
@@ -245,6 +286,188 @@ describe('analyzerStore', () => {
     });
   });
 
+  // ── Push on edit (F1) ────────────────────────────────────────────────────
+
+  describe('push on edit', () => {
+    it('two toggles in one tick produce ONE setSessionPipelineMeta call, and the disabled id is still in the chain arg', async () => {
+      const { store, commands } = mount();
+      store.add('s1', 'a');
+      store.add('s1', 'b');
+      store.toggle('s1', 'a');
+      store.toggle('s1', 'b');
+      expect(commands.setSessionPipelineMeta).not.toHaveBeenCalled(); // nothing synchronous
+      await tick();
+      expect(commands.setSessionPipelineMeta).toHaveBeenCalledTimes(1);
+      // Bug-fix regression: `activeProcessorIds` is the FULL ordered chain —
+      // both disabled ids stay in the first arg.
+      expect(commands.setSessionPipelineMeta).toHaveBeenCalledWith('s1', ['a', 'b'], ['a', 'b']);
+    });
+
+    it('remove, reorder and resetToDefault each push the resulting chain', async () => {
+      const { store, commands } = mount();
+      store.add('s1', 'a');
+      store.add('s1', 'b');
+      store.add('s1', 'c');
+      await tick();
+      expect(commands.setSessionPipelineMeta).toHaveBeenLastCalledWith('s1', ['a', 'b', 'c'], []);
+
+      store.reorder('s1', 0, 2);
+      await tick();
+      expect(commands.setSessionPipelineMeta).toHaveBeenLastCalledWith('s1', ['b', 'c', 'a'], []);
+
+      store.remove('s1', 'c');
+      await tick();
+      expect(commands.setSessionPipelineMeta).toHaveBeenLastCalledWith('s1', ['b', 'a'], []);
+
+      store.resetToDefault('s1');
+      await tick();
+      expect(commands.setSessionPipelineMeta).toHaveBeenLastCalledWith('s1', [], []);
+      expect(commands.setSessionPipelineMeta).toHaveBeenCalledTimes(4);
+    });
+
+    it('a no-op edit does not push', async () => {
+      const { store, commands } = mount();
+      store.add('s1', 'a');
+      await tick();
+      (commands.setSessionPipelineMeta as ReturnType<typeof vi.fn>).mockClear();
+      store.add('s1', 'a'); // idempotent
+      store.toggle('s1', 'missing');
+      store.remove('s1', 'missing');
+      store.reorder('s1', 0, 0);
+      await tick();
+      expect(commands.setSessionPipelineMeta).not.toHaveBeenCalled();
+    });
+
+    it('sessions coalesce independently', async () => {
+      const { store, commands } = mount();
+      store.add('s1', 'a');
+      store.add('s2', 'b');
+      store.toggle('s2', 'b');
+      await tick();
+      expect(commands.setSessionPipelineMeta).toHaveBeenCalledTimes(2);
+      expect(commands.setSessionPipelineMeta).toHaveBeenCalledWith('s1', ['a'], []);
+      expect(commands.setSessionPipelineMeta).toHaveBeenCalledWith('s2', ['b'], ['b']);
+    });
+
+    it('a rejected push is swallowed, not surfaced', async () => {
+      const { store } = mount({
+        setSessionPipelineMeta: vi.fn(async () => { throw new Error("processor 'a' is not installed"); }),
+      });
+      store.add('s1', 'a');
+      await tick();
+      await tick();
+      expect(store.chain('s1').order).toEqual(['a']); // local state is not rolled back
+      expect(store.lastError('s1')).toBeNull();
+    });
+  });
+
+  // ── chain-update (F1) ────────────────────────────────────────────────────
+
+  describe('chain-update', () => {
+    it('a ui-caller chain-update is ignored even when its payload differs', () => {
+      const { store, setOrder, fireChain } = mount();
+      setOrder(['s1']);
+      store.add('s1', 'a');
+      fireChain(chainEvent('s1', ['x', 'y'], ['y'], UI));
+      expect(store.chain('s1')).toEqual({ order: ['a'], disabled: [], active: ['a'] });
+      expect(store.addedBy('s1', 'x')).toBeNull();
+    });
+
+    it('an agent chain-update replaces order/disabled, strips the anonymizer and records addedBy for the new id only', () => {
+      const { store, setOrder, fireChain } = mount();
+      setOrder(['s1']);
+      store.add('s1', 'a');
+      store.add('s1', 'b');
+      store.toggle('s1', 'b');
+
+      fireChain(chainEvent('s1', ['b', 'wifi@official', PII_ANONYMIZER_ID, 'a'], ['a']));
+
+      expect(store.chain('s1')).toEqual({
+        order: ['b', 'wifi@official', 'a'],
+        disabled: ['a'],
+        active: ['b', 'wifi@official'],
+      });
+      expect(store.addedBy('s1', 'wifi@official')).toEqual(AGENT);
+      expect(store.addedBy('s1', 'a')).toBeNull(); // was already ours
+      expect(store.addedBy('s1', 'b')).toBeNull();
+      expect(store.addedBy('s1', PII_ANONYMIZER_ID)).toBeNull();
+    });
+
+    it('a disabled id the payload does not also list as active is dropped from disabled', () => {
+      const { store, setOrder, fireChain } = mount();
+      setOrder(['s1']);
+      fireChain(chainEvent('s1', ['a'], ['a', 'ghost']));
+      expect(store.chain('s1')).toEqual({ order: ['a'], disabled: ['a'], active: [] });
+    });
+
+    it('remove clears addedBy, and so does any other path that takes the id out', () => {
+      const { store, setOrder, fireChain } = mount();
+      setOrder(['s1']);
+      fireChain(chainEvent('s1', ['agent-a', 'agent-b', 'agent-c']));
+      expect(store.addedBy('s1', 'agent-a')).toEqual(AGENT);
+
+      store.remove('s1', 'agent-a');
+      expect(store.addedBy('s1', 'agent-a')).toBeNull();
+      expect(store.addedBy('s1', 'agent-b')).toEqual(AGENT); // untouched
+
+      // A later agent replace that drops an id forgets it too...
+      fireChain(chainEvent('s1', ['agent-c']));
+      expect(store.addedBy('s1', 'agent-b')).toBeNull();
+      expect(store.addedBy('s1', 'agent-c')).toEqual(AGENT); // still present, still theirs
+
+      // ...as does a reset back to the (empty) template.
+      store.resetToDefault('s1');
+      expect(store.addedBy('s1', 'agent-c')).toBeNull();
+    });
+
+    it('a toggle keeps addedBy — the id is still in the chain', () => {
+      const { store, setOrder, fireChain } = mount();
+      setOrder(['s1']);
+      fireChain(chainEvent('s1', ['agent-a']));
+      store.toggle('s1', 'agent-a');
+      expect(store.chain('s1').disabled).toEqual(['agent-a']);
+      expect(store.addedBy('s1', 'agent-a')).toEqual(AGENT);
+    });
+
+    it('uninstall clears addedBy along with the id', async () => {
+      const { store, setOrder, fireChain } = mount();
+      setOrder(['s1']);
+      fireChain(chainEvent('s1', ['agent-a', 'keep']));
+      await store.uninstall('agent-a');
+      expect(store.chain('s1').order).toEqual(['keep']);
+      expect(store.addedBy('s1', 'agent-a')).toBeNull();
+    });
+
+    it('a chain-update for an unknown session leaves chains untouched', () => {
+      const { store, setOrder, fireChain } = mount();
+      setOrder(['s1']);
+      store.add('s1', 'a');
+      fireChain(chainEvent('s2', ['x']));
+      expect(store.chain('s2').order).toEqual([]); // reads through to the empty template
+      expect(store.chain('s1').order).toEqual(['a']);
+      expect(store.addedBy('s2', 'x')).toBeNull();
+    });
+
+    it('applying an agent chain-update does not push it back', async () => {
+      const { store, setOrder, commands, fireChain } = mount();
+      setOrder(['s1']);
+      fireChain(chainEvent('s1', ['x']));
+      await tick();
+      expect(store.chain('s1').order).toEqual(['x']); // applied locally...
+      expect(commands.setSessionPipelineMeta).not.toHaveBeenCalled(); // ...never echoed back
+    });
+
+    it('addedBy is pruned with the rest of a closed session\'s state', async () => {
+      const { store, setOrder, fireChain } = mount();
+      setOrder(['s1']);
+      fireChain(chainEvent('s1', ['agent-a']));
+      setOrder([]);
+      await tick();
+      expect(store.addedBy('s1', 'agent-a')).toBeNull();
+      expect(store.chain('s1').order).toEqual([]);
+    });
+  });
+
   // ── Default template round-trip ──────────────────────────────────────────
 
   describe('default template', () => {
@@ -312,7 +535,7 @@ describe('analyzerStore', () => {
   // ── run() lifecycle ──────────────────────────────────────────────────────
 
   describe('run()', () => {
-    it('pushes setSessionPipelineMeta before runPipeline, with the session\'s active/disabled sets', async () => {
+    it('pushes setSessionPipelineMeta before runPipeline, with the FULL ordered chain plus the disabled set', async () => {
       const order: string[] = [];
       const { store, commands } = mount({
         setSessionPipelineMeta: vi.fn(async () => {
@@ -329,8 +552,16 @@ describe('analyzerStore', () => {
 
       await store.run('s1');
 
-      expect(order).toEqual(['meta', 'run']);
-      expect(commands.setSessionPipelineMeta).toHaveBeenCalledWith('s1', ['a'], ['b']);
+      // Every push (the run's own, plus the edits' coalesced one landing in
+      // the same microtask window) precedes the run itself.
+      expect(order.at(-1)).toBe('run');
+      expect(order.slice(0, -1)).toEqual(order.slice(0, -1).map(() => 'meta'));
+      expect(order.length).toBeGreaterThanOrEqual(2);
+      // The backend contract is `activeProcessorIds` = the whole chain,
+      // disabled members INCLUDED, + `disabledProcessorIds` ⊆ it. Sending
+      // `active` (order − disabled) here used to drop 'b' from the backend's
+      // chain — and from `.ltw` saves — the moment it was toggled off.
+      expect(commands.setSessionPipelineMeta).toHaveBeenCalledWith('s1', ['a', 'b'], ['b']);
       expect(commands.runPipeline).toHaveBeenCalledWith('s1', null);
     });
 
@@ -438,17 +669,26 @@ describe('analyzerStore', () => {
       expect(store.progress('s1').get('a')).toEqual({ processorId: 'a', linesProcessed: 5, totalLines: 10, percent: 42 });
     });
 
-    it('ignores an update for a session this store never started running', () => {
+    it('ignores an update for a session this store does not know', () => {
       const { store, fireProgress } = mount();
       fireProgress(progressPayload('other-session', 'a'));
       expect(store.progress('other-session').size).toBe(0);
+      expect(store.running('other-session')).toBe(false);
     });
 
-    it('ignores an update once the run has already settled', async () => {
-      const { store, fireProgress } = mount({ runPipeline: vi.fn(async () => runResult('s1')) });
+    // Was "ignores an update once the run has already settled" before F1.
+    // Progress for a known session with no run in flight is now the first
+    // sign of a FOREIGN run (an agent's `run_pipeline`) — see the
+    // 'foreign runs' block — so the old drop rule no longer holds for a
+    // known session; only an unknown one is still dropped (above).
+    it('progress for a known, idle session starts a foreign run rather than being dropped', async () => {
+      const { store, setOrder, fireProgress } = mount({ runPipeline: vi.fn(async () => runResult('s1')) });
+      setOrder(['s1']);
       await store.run('s1');
+      expect(store.running('s1')).toBe(false);
       fireProgress(progressPayload('s1', 'a'));
-      expect(store.progress('s1').size).toBe(0);
+      expect(store.running('s1')).toBe(true);
+      expect(store.progress('s1').size).toBe(1);
     });
 
     it('starting a new run clears the previous run\'s progress', async () => {
@@ -459,6 +699,158 @@ describe('analyzerStore', () => {
 
       void store.run('s1');
       expect(store.progress('s1').size).toBe(0);
+    });
+  });
+
+  // ── Foreign runs (F1) ────────────────────────────────────────────────────
+
+  describe('foreign runs', () => {
+    function progressPayload(sessionId: string, processorId: string, percent = 50): PipelineProgress {
+      return { sessionId, processorId, linesProcessed: 5, totalLines: 10, percent };
+    }
+
+    it('progress for an idle known session starts a foreign run and resets the per-run caches', async () => {
+      const { store, setOrder, commands, fireProgress } = mount({ runPipeline: vi.fn(async (sid: string) => runResult(sid)) });
+      setOrder(['s1']);
+      await store.run('s1');
+      await store.matchedLines('s1', 'a');
+      expect(commands.getMatchedLines).toHaveBeenCalledTimes(1);
+      // Leftovers a fresh run must not inherit.
+      expect(store.running('s1')).toBe(false);
+
+      fireProgress(progressPayload('s1', 'a', 10));
+
+      expect(store.running('s1')).toBe(true);
+      expect(store.lastError('s1')).toBeNull();
+      expect(store.progress('s1').get('a')?.percent).toBe(10);
+      // The generation moved on: the cached promise from the previous run is
+      // not handed out for the foreign one.
+      await store.matchedLines('s1', 'a');
+      expect(commands.getMatchedLines).toHaveBeenCalledTimes(2);
+    });
+
+    it('a second progress for the same foreign run updates it rather than restarting it', async () => {
+      const { store, setOrder, commands, fireProgress } = mount();
+      setOrder(['s1']);
+      fireProgress(progressPayload('s1', 'a', 10));
+      await store.matchedLines('s1', 'a');
+      fireProgress(progressPayload('s1', 'b', 20));
+      fireProgress(progressPayload('s1', 'a', 30));
+      expect(store.progress('s1').get('a')?.percent).toBe(30);
+      expect(store.progress('s1').size).toBe(2);
+      await store.matchedLines('s1', 'a');
+      expect(commands.getMatchedLines).toHaveBeenCalledTimes(1); // same generation, same cache
+    });
+
+    it('an agent pipeline-complete lands the result, clears running and stamps lastRunAt', async () => {
+      const { store, setOrder, commands, fireProgress, fireComplete } = mount();
+      setOrder(['s1']);
+      fireProgress(progressPayload('s1', 'a'));
+      await store.matchedLines('s1', 'a');
+      expect(store.lastRunAt('s1')).toBeNull();
+
+      fireComplete(completeEvent('s1'));
+
+      expect(store.running('s1')).toBe(false);
+      expect(store.result('s1')?.summaries[0].processorId).toBe('agent-ran');
+      expect(store.lastError('s1')).toBeNull();
+      expect(store.lastRunAt('s1')).not.toBeNull();
+      // Generation bumped again on landing: result fetches are keyed to the
+      // landed result, not to promises started while it was still running.
+      await store.matchedLines('s1', 'a');
+      expect(commands.getMatchedLines).toHaveBeenCalledTimes(2);
+    });
+
+    it('an agent pipeline-complete for a known session lands even if no progress was seen', () => {
+      const { store, setOrder, fireComplete } = mount();
+      setOrder(['s1']);
+      fireComplete(completeEvent('s1'));
+      expect(store.result('s1')?.summaries[0].processorId).toBe('agent-ran');
+      expect(store.running('s1')).toBe(false);
+    });
+
+    it('an agent pipeline-complete with an error sets lastError and keeps the previous result', async () => {
+      const { store, setOrder, fireProgress, fireComplete } = mount({
+        runPipeline: vi.fn(async (sid: string) => runResult(sid, [summary('own')])),
+      });
+      setOrder(['s1']);
+      await store.run('s1');
+      fireProgress(progressPayload('s1', 'a'));
+      fireComplete(completeEvent('s1', { result: null, error: 'script exploded' }));
+      expect(store.running('s1')).toBe(false);
+      expect(store.lastError('s1')).toBe('script exploded');
+      expect(store.result('s1')?.summaries[0].processorId).toBe('own');
+    });
+
+    it('a cancelled agent run (result with empty summaries) only clears running', async () => {
+      const { store, setOrder, fireProgress, fireComplete } = mount({
+        runPipeline: vi.fn(async (sid: string) => runResult(sid, [summary('own')])),
+      });
+      setOrder(['s1']);
+      await store.run('s1');
+      const before = store.lastRunAt('s1');
+      fireProgress(progressPayload('s1', 'a'));
+      fireComplete(completeEvent('s1', { result: runResult('s1', []) }));
+      expect(store.running('s1')).toBe(false);
+      expect(store.result('s1')?.summaries[0].processorId).toBe('own');
+      expect(store.lastRunAt('s1')).toBe(before);
+    });
+
+    it('a ui pipeline-complete is ignored — the own run() promise settles that run', async () => {
+      const own = deferred<PipelineRunResult>();
+      const { store, setOrder, fireComplete } = mount({ runPipeline: vi.fn(() => own.promise) });
+      setOrder(['s1']);
+      const p = store.run('s1');
+      expect(store.running('s1')).toBe(true);
+
+      // The backend emits this BEFORE `run_pipeline` returns to us.
+      fireComplete(completeEvent('s1', { caller: UI, result: runResult('s1', [summary('from-event')]) }));
+      expect(store.running('s1')).toBe(true);
+      expect(store.result('s1')).toBeNull();
+
+      own.resolve(runResult('s1', [summary('from-promise')]));
+      await p;
+      expect(store.running('s1')).toBe(false);
+      expect(store.result('s1')?.summaries[0].processorId).toBe('from-promise');
+    });
+
+    it('a foreign complete arriving after a newer own run() started is dropped by the guard', async () => {
+      const own = deferred<PipelineRunResult>();
+      const { store, setOrder, fireProgress, fireComplete } = mount({ runPipeline: vi.fn(() => own.promise) });
+      setOrder(['s1']);
+      fireProgress(progressPayload('s1', 'a')); // foreign run noticed
+      const p = store.run('s1'); // supersedes it
+      expect(store.running('s1')).toBe(true);
+
+      fireComplete(completeEvent('s1')); // the foreign run's late completion
+      // Must not clear `running` out from under the own run, nor land its result.
+      expect(store.running('s1')).toBe(true);
+      expect(store.result('s1')).toBeNull();
+
+      own.resolve(runResult('s1', [summary('own')]));
+      await p;
+      expect(store.result('s1')?.summaries[0].processorId).toBe('own');
+      expect(store.running('s1')).toBe(false);
+    });
+
+    it('an agent complete for a session whose in-flight row is an own run is dropped', async () => {
+      const own = deferred<PipelineRunResult>();
+      const { store, setOrder, fireComplete } = mount({ runPipeline: vi.fn(() => own.promise) });
+      setOrder(['s1']);
+      const p = store.run('s1');
+      fireComplete(completeEvent('s1')); // no foreign progress was ever seen
+      expect(store.running('s1')).toBe(true);
+      expect(store.result('s1')).toBeNull();
+      own.resolve(runResult('s1', [summary('own')]));
+      await p;
+      expect(store.result('s1')?.summaries[0].processorId).toBe('own');
+    });
+
+    it('a pipeline-complete for an unknown session is dropped', () => {
+      const { store, fireComplete } = mount();
+      fireComplete(completeEvent('ghost'));
+      expect(store.result('ghost')).toBeNull();
+      expect(store.running('ghost')).toBe(false);
     });
   });
 
@@ -568,23 +960,29 @@ describe('analyzerStore', () => {
   // ── Workspace chain provider / restore ───────────────────────────────────
 
   describe('workspace chain provider and restore', () => {
-    it('applyWorkspaceChain with a sessionId sets only that session and pushes meta', () => {
+    it('applyWorkspaceChain with a sessionId sets only that session and pushes the full chain', () => {
       const { store, commands } = mount();
       store.applyWorkspaceChain({ chain: ['a', 'b'], disabledChainIds: ['b'] }, 's1');
       expect(store.chain('s1')).toEqual({ order: ['a', 'b'], disabled: ['b'], active: ['a'] });
-      expect(commands.setSessionPipelineMeta).toHaveBeenCalledWith('s1', ['a'], ['b']);
+      // Same contract as `run()`: the whole chain, not `order − disabled`.
+      expect(commands.setSessionPipelineMeta).toHaveBeenCalledWith('s1', ['a', 'b'], ['b']);
     });
 
-    it('applyWorkspaceChain with no sessionId back-fills sessions with no chain of their own', () => {
-      const { store, setOrder } = mount();
+    it('applyWorkspaceChain with no sessionId back-fills sessions with no chain of their own, without pushing', async () => {
+      const { store, setOrder, commands } = mount();
       setOrder(['A', 'B']);
       store.add('B', 'own-choice'); // B has already diverged
+      await tick(); // let B's own coalesced push land, so the count below is the restore's alone
+      (commands.setSessionPipelineMeta as ReturnType<typeof vi.fn>).mockClear();
 
       store.applyWorkspaceChain({ chain: ['p1', 'p2'], disabledChainIds: ['p2'] });
+      await tick();
 
       expect(store.chain('A')).toEqual({ order: ['p1', 'p2'], disabled: ['p2'], active: ['p1'] });
       expect(store.chain('B').order).toEqual(['own-choice']); // untouched
       expect(store.pipelineChainProvider()).toEqual({ chain: ['p1', 'p2'], disabledIds: ['p2'] });
+      // The legacy template path never fans out into per-session pushes.
+      expect(commands.setSessionPipelineMeta).not.toHaveBeenCalled();
     });
   });
 
@@ -706,22 +1104,41 @@ describe('analyzerStore', () => {
   // ── Disposal ─────────────────────────────────────────────────────────────
 
   describe('dispose()', () => {
-    it('unlistens the progress subscription and ignores further events', async () => {
-      const { store, unlisten, fireProgress } = mount({ runPipeline: vi.fn(() => new Promise<PipelineRunResult>(() => {})) });
+    it('unlistens all three subscriptions and ignores further events', async () => {
+      const { store, setOrder, unlisten, unlistenChain, unlistenComplete, fireProgress, fireChain, fireComplete } = mount({
+        runPipeline: vi.fn(() => new Promise<PipelineRunResult>(() => {})),
+      });
+      setOrder(['s1']);
       void store.run('s1');
       await tick();
       store.dispose();
       expect(unlisten).toHaveBeenCalledTimes(1);
+      expect(unlistenChain).toHaveBeenCalledTimes(1);
+      expect(unlistenComplete).toHaveBeenCalledTimes(1);
       expect(() => fireProgress({ sessionId: 's1', processorId: 'a', linesProcessed: 1, totalLines: 2, percent: 50 })).not.toThrow();
       expect(store.progress('s1').size).toBe(0);
+      expect(() => fireChain(chainEvent('s1', ['x']))).not.toThrow();
+      expect(store.chain('s1').order).toEqual([]);
+      expect(() => fireComplete(completeEvent('s1'))).not.toThrow();
+      expect(store.result('s1')).toBeNull();
     });
 
     it('is idempotent', async () => {
-      const { store, unlisten } = mount();
-      await tick(); // let the listen() promise settle and attach the unlisten fn
+      const { store, unlisten, unlistenChain, unlistenComplete } = mount();
+      await tick(); // let the listen() promises settle and attach the unlisten fns
       store.dispose();
       store.dispose();
       expect(unlisten).toHaveBeenCalledTimes(1);
+      expect(unlistenChain).toHaveBeenCalledTimes(1);
+      expect(unlistenComplete).toHaveBeenCalledTimes(1);
+    });
+
+    it('a coalesced push still pending at dispose never fires', async () => {
+      const { store, commands } = mount();
+      store.add('s1', 'a');
+      store.dispose();
+      await tick();
+      expect(commands.setSessionPipelineMeta).not.toHaveBeenCalled();
     });
 
     it('unlistens even when the listen() promise settles after dispose', async () => {
@@ -732,12 +1149,14 @@ describe('analyzerStore', () => {
         sessions: { order: () => [] },
         controller: { setLineSet: vi.fn(), scrollToLine: vi.fn() },
         listen: () => late,
+        listenChain: () => late,
+        listenComplete: () => late,
         commands: makeCommands(),
       });
       store.dispose();
       resolveListen(lateUnlisten);
       await tick();
-      expect(lateUnlisten).toHaveBeenCalledTimes(1);
+      expect(lateUnlisten).toHaveBeenCalledTimes(3); // once per late-settling subscription
     });
   });
 });

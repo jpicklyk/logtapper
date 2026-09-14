@@ -237,4 +237,38 @@ describe('AnalyzerCard', () => {
     ));
     expect(screen.getByText('Ran')).toBeTruthy();
   });
+
+  it('shows an "Added" badge naming the agent only when addedBy is an agent', () => {
+    const { unmount } = render(() => (
+      <AnalyzerCard
+        store={fakeStore()}
+        controller={fakeController()}
+        sessionId="s1"
+        processor={proc()}
+        disabled={false}
+        running={false}
+        addedBy={{ kind: 'agent', client: 'claude' }}
+      />
+    ));
+    const badge = screen.getByText('Added');
+    expect(badge.getAttribute('title')).toBe('Added by claude');
+    expect(badge.getAttribute('data-caller')).toBe('agent');
+    expect(screen.queryByText('Ran')).toBeNull();
+    unmount();
+
+    // A human addition (or none) gets no badge — the store never records one,
+    // but the card must not render it even if handed a `ui` caller.
+    render(() => (
+      <AnalyzerCard
+        store={fakeStore()}
+        controller={fakeController()}
+        sessionId="s1"
+        processor={proc()}
+        disabled={false}
+        running={false}
+        addedBy={{ kind: 'ui' }}
+      />
+    ));
+    expect(screen.queryByText('Added')).toBeNull();
+  });
 });

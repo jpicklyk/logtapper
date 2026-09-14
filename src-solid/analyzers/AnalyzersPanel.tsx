@@ -86,6 +86,7 @@ export function AnalyzersPanel(props: AnalyzersPanelProps): JSX.Element {
       progress={progress().get(processor.id)}
       summary={props.store.summaryFor(props.sessionId, processor.id)}
       lastRunCaller={lastRunCaller()}
+      addedBy={pinned ? null : props.store.addedBy(props.sessionId, processor.id)}
       index={pinned ? undefined : indexOf(processor.id)}
       total={pinned ? undefined : chain().order.length}
       onToggle={() => props.store.toggle(props.sessionId, processor.id)}

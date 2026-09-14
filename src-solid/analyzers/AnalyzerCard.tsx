@@ -3,7 +3,7 @@ import { Show, createEffect, createSignal, onCleanup } from 'solid-js';
 import type { JSX } from 'solid-js';
 import type { CorrelatorResult, PipelineRunSummary, ProcessorSummary } from '@bridge/types';
 import type { CallerLike } from '../ui';
-import { CallerBadge } from '../ui';
+import { CallerBadge, callerClient, normalizeCaller } from '../ui';
 import type { AnalyzerController, AnalyzerProgress, AnalyzerStore } from './analyzerStore';
 import styles from './analyzers.module.css';
 
@@ -35,6 +35,9 @@ export interface AnalyzerCardProps {
   index?: number;
   total?: number;
   lastRunCaller?: CallerLike | null;
+  /** Who introduced this analyzer into the session's chain, when that was an
+   *  agent (`store.addedBy`). A human addition carries no badge. */
+  addedBy?: CallerLike | null;
   onToggle?: () => void;
   onMoveUp?: () => void;
   onMoveDown?: () => void;
@@ -66,6 +69,10 @@ export function AnalyzerCard(props: AnalyzerCardProps): JSX.Element {
 
   const accent = (): string => TYPE_ACCENT[props.processor.processorType] ?? 'var(--border)';
   const typeLabel = (): string => TYPE_LABEL[props.processor.processorType] ?? props.processor.processorType;
+  /** Only an agent's addition is worth a badge — the store never records a
+   *  human's, but the prop is `CallerLike`, so say so here rather than trust it. */
+  const addedByAgent = (): CallerLike | null =>
+    props.addedBy && normalizeCaller(props.addedBy) === 'agent' ? props.addedBy : null;
 
   const handleShowMatched = (): void => {
     void props.store.showMatched(props.sessionId, props.processor.id);
@@ -112,6 +119,15 @@ export function AnalyzerCard(props: AnalyzerCardProps): JSX.Element {
           {props.processor.name}
         </button>
         <span class={styles.typeBadge}>{typeLabel()}</span>
+        <Show when={addedByAgent()}>
+          {(caller) => (
+            <CallerBadge
+              caller={caller()}
+              label="Added"
+              title={`Added by ${callerClient(caller()) ?? 'an agent'}`}
+            />
+          )}
+        </Show>
         <Show when={props.lastRunCaller}>
           {(caller) => <CallerBadge caller={caller()} label="Ran" title="Last ran this analyzer" />}
         </Show>
