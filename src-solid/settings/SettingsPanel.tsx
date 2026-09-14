@@ -6,8 +6,8 @@ import { GeneralTab } from './GeneralTab';
 import { PiiTab } from './PiiTab';
 import { ThemesTab } from './ThemesTab';
 import { SourcesTab } from './SourcesTab';
-import { PacksPanel } from '../packs/PacksPanel';
-import type { PacksStore } from '../packs/packsStore';
+import { PacksPanel } from '../packs';
+import type { PacksStore } from '../packs';
 import styles from './settings.module.css';
 export interface SettingsPanelProps {
   store: SettingsStore;
