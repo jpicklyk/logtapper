@@ -502,6 +502,54 @@ describe('LogViewer + ViewerController', () => {
     controller.dispose();
   });
 
+  it('activates its pane on pointer-down (S1: split-pane focus)', () => {
+    const controller = createViewerController({ focusSession: vi.fn() });
+    const focusPane = vi.spyOn(controller, 'focusPane');
+    const onActivate = vi.fn();
+    const src = makeSource(100);
+    const { container } = render(() => (
+      <LogViewer
+        dataSource={src}
+        totalLineCount={100}
+        sessionId={SID}
+        paneId="mine"
+        controller={controller}
+        onActivate={onActivate}
+      />
+    ));
+    focusPane.mockClear(); // drop the mount-time attachPane call
+
+    fireEvent.pointerDown(grid(container));
+
+    expect(focusPane).toHaveBeenCalledWith('mine');
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    controller.dispose();
+  });
+
+  it('activates its pane on native focus without a pointer-down', () => {
+    const controller = createViewerController({ focusSession: vi.fn() });
+    const focusPane = vi.spyOn(controller, 'focusPane');
+    const onActivate = vi.fn();
+    const src = makeSource(100);
+    const { container } = render(() => (
+      <LogViewer
+        dataSource={src}
+        totalLineCount={100}
+        sessionId={SID}
+        paneId="mine"
+        controller={controller}
+        onActivate={onActivate}
+      />
+    ));
+    focusPane.mockClear();
+
+    fireEvent.focusIn(grid(container));
+
+    expect(focusPane).toHaveBeenCalledWith('mine');
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    controller.dispose();
+  });
+
   it('renders controller highlights over the line spans', () => {
     const controller = createViewerController({ focusSession: vi.fn() });
     controller.setHighlights(

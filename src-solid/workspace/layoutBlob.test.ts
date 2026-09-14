@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_SPLIT_RATIO,
+  MIN_SPLIT_RATIO,
   REACT_LAYOUT_KEYS,
   SOLID_LAYOUT_VERSION,
   emptySolidLayout,
+  emptySplitLayout,
   readSolidLayout,
   writeSolidLayout,
 } from './layoutBlob';
@@ -13,6 +16,7 @@ const layout: SolidLayout = {
   collapsed: ['presence'],
   tabs: ['a.log', 'b.log'],
   activeTab: 'b.log',
+  split: { active: true, secondarySessionId: 'session-b', ratio: 0.35 },
 };
 
 /**
@@ -61,6 +65,7 @@ describe('readSolidLayout', () => {
         collapsed: ['presence', 7],
         tabs: null,
         activeTab: 42,
+        split: { active: 'yes', secondarySessionId: 9, ratio: 'half' },
       },
     };
     expect(readSolidLayout(blob)).toEqual({
@@ -68,7 +73,41 @@ describe('readSolidLayout', () => {
       collapsed: ['presence'],
       tabs: [],
       activeTab: null,
+      split: emptySplitLayout(),
     });
+  });
+
+  it('defaults split when the key is absent (a pre-S1 save)', () => {
+    const blob = {
+      solid: { v: SOLID_LAYOUT_VERSION, columns: {}, collapsed: [], tabs: [], activeTab: null },
+    };
+    expect(readSolidLayout(blob)?.split).toEqual(emptySplitLayout());
+  });
+
+  it('clamps an out-of-range split ratio rather than dropping it', () => {
+    const blob = {
+      solid: {
+        v: SOLID_LAYOUT_VERSION,
+        columns: {},
+        collapsed: [],
+        tabs: [],
+        activeTab: null,
+        split: { active: true, secondarySessionId: 's', ratio: 0.95 },
+      },
+    };
+    expect(readSolidLayout(blob)?.split.ratio).toBe(MAX_SPLIT_RATIO);
+
+    const low = {
+      solid: {
+        v: SOLID_LAYOUT_VERSION,
+        columns: {},
+        collapsed: [],
+        tabs: [],
+        activeTab: null,
+        split: { active: true, secondarySessionId: 's', ratio: 0.01 },
+      },
+    };
+    expect(readSolidLayout(low)?.split.ratio).toBe(MIN_SPLIT_RATIO);
   });
 });
 
@@ -110,15 +149,23 @@ describe('writeSolidLayout', () => {
   });
 
   it('does not alias the caller’s layout (a later mutation cannot leak in)', () => {
-    const mutable: SolidLayout = { columns: { navigator: 300 }, collapsed: [], tabs: ['a'], activeTab: 'a' };
+    const mutable: SolidLayout = {
+      columns: { navigator: 300 },
+      collapsed: [],
+      tabs: ['a'],
+      activeTab: 'a',
+      split: { active: true, secondarySessionId: 'b', ratio: 0.4 },
+    };
     const blob = writeSolidLayout(null, mutable);
     mutable.tabs.push('b');
     mutable.columns.navigator = 999;
+    mutable.split.ratio = 0.9;
     expect(readSolidLayout(blob)).toEqual({
       columns: { navigator: 300 },
       collapsed: [],
       tabs: ['a'],
       activeTab: 'a',
+      split: { active: true, secondarySessionId: 'b', ratio: 0.4 },
     });
   });
 });

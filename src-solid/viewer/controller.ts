@@ -5,9 +5,10 @@
  * scrolls.
  *
  * Callers only ever name a **session**. The controller resolves that to a pane
- * via `bindSession`/`paneForSession` (today always `'main'`), focuses the
- * session first when the pane is showing a different one, and then drives the
- * pane's `PaneHandle`. Nothing outside `LogViewer` touches the DOM.
+ * via `bindSession`/`paneForSession` (one pane until S1's split, two after),
+ * focuses the session first when the pane is showing a different one, and
+ * then drives the pane's `PaneHandle`. Nothing outside `LogViewer` touches
+ * the DOM.
  *
  * It also owns the per-session *view* state the data source and the cache
  * binding read back:
@@ -105,6 +106,16 @@ export interface ViewerController {
   attachPane(paneId: string, handle: PaneHandle): () => void;
   bindSession(sessionId: string, paneId: string): void;
   paneForSession(sessionId: string): string;
+
+  /**
+   * Mark `paneId` as the one `focus()` targets, without touching any session
+   * binding. `LogViewer` calls this on pointer-down and on native focus, so
+   * clicking or Tab-ing into an already-bound pane (S1: a second, split pane)
+   * makes it the keyboard-shortcut target immediately — before this,
+   * `activePaneId` only ever moved on `attachPane`/`bindSession`, so a pane
+   * showing a session nothing just navigated to could never become active.
+   */
+  focusPane(paneId: string): void;
 
   dispose(): void;
 }
@@ -329,8 +340,19 @@ export function createViewerController(deps: ViewerControllerDeps): ViewerContro
         activePaneId = paneId;
         return () => {
           // Only detach our own handle: a remount may already have replaced it.
-          if (panes.get(paneId) === handle) panes.delete(paneId);
+          if (panes.get(paneId) !== handle) return;
+          panes.delete(paneId);
+          // A session left bound to a pane that no longer has a handle would
+          // make `paneForSession` return a dead id forever (S1: unsplitting
+          // unmounts the secondary pane). Clearing the binding here — not in
+          // a component — is the fix; `paneForSession` falls back to
+          // `DEFAULT_PANE_ID` for a session nothing claims.
+          boundSessions.delete(paneId);
         };
+      },
+
+      focusPane: (paneId) => {
+        activePaneId = paneId;
       },
 
       bindSession: (sessionId, paneId) => {

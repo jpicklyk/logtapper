@@ -1,7 +1,8 @@
 /** @jsxImportSource solid-js */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render, screen, waitFor } from '@solidjs/testing-library';
 import { App } from './App';
+import type { LoadResult } from '@bridge/types';
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 // A2 added the presence store to App, which fetches bridge status, the
@@ -39,6 +40,13 @@ vi.mock('@bridge/commands', () => ({
   getLines: vi.fn(),
   loadLogFile: vi.fn(),
   closeSession: vi.fn(() => Promise.resolve()),
+  // S1 mounts a QueryBar per open pane, which needs the filter/search commands
+  // even though no test here drives either mode's inputs.
+  createFilter: vi.fn(),
+  getFilteredLines: vi.fn(),
+  cancelFilter: vi.fn(() => Promise.resolve()),
+  closeFilter: vi.fn(() => Promise.resolve()),
+  searchLogs: vi.fn(),
   setFocusedSession: vi.fn(() => Promise.resolve()),
   readTextFile: vi.fn(),
   writeTextFile: vi.fn(() => Promise.resolve()),
@@ -111,6 +119,8 @@ vi.mock('@bridge/events', () => ({
   onBridgeSessionClosed: vi.fn(() => Promise.resolve(() => {})),
   onFileIndexProgress: vi.fn(() => Promise.resolve(() => {})),
   onFileIndexComplete: vi.fn(() => Promise.resolve(() => {})),
+  onFilterProgress: vi.fn(() => Promise.resolve(() => {})),
+  onSearchProgress: vi.fn(() => Promise.resolve(() => {})),
   onPipelineProgress: vi.fn(() => Promise.resolve(() => {})),
   onAnalysisUpdate: vi.fn(() => Promise.resolve(() => {})),
   onBookmarkUpdate: vi.fn(() => Promise.resolve(() => {})),
@@ -122,6 +132,11 @@ vi.mock('@bridge/events', () => ({
 // vitest `globals` is off, so @solidjs/testing-library's auto-cleanup never
 // registers — unmount explicitly or renders stack up across tests.
 afterEach(cleanup);
+
+const originalInnerWidth = window.innerWidth;
+afterEach(() => {
+  Object.defineProperty(window, 'innerWidth', { value: originalInnerWidth, configurable: true });
+});
 
 describe('App', () => {
   // The scaffold heading was replaced by the viewer shell in P3; the open-file
@@ -142,5 +157,78 @@ describe('App', () => {
   it('shows the empty state until a file is opened', () => {
     render(() => <App />);
     expect(screen.getByText(/no log open/i)).toBeTruthy();
+  });
+
+  it('disables the split control below the wide tier (S1)', () => {
+    Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true }); // compact
+    render(() => <App />);
+    const button = screen.getByRole('button', { name: /split view/i }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+  });
+
+  it('splits into two panes, each bound to a different session (S1)', async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const { getLines, loadLogFile } = await import('@bridge/commands');
+
+    const makeLoad = (path: string): LoadResult => ({
+      sessionId: path,
+      sourceId: path,
+      sourceName: path,
+      filePath: path,
+      totalLines: 5,
+      fileSize: 0,
+      firstTimestamp: null,
+      lastTimestamp: null,
+      sourceType: 'Logcat',
+      isStreaming: false,
+      isIndexing: false,
+      hasCrlf: false,
+      encoding: 'UTF-8',
+    });
+
+    vi.mocked(open).mockResolvedValueOnce('/a.log').mockResolvedValueOnce('/b.log');
+    vi.mocked(loadLogFile).mockImplementation((path: string) => Promise.resolve([makeLoad(path)]));
+    vi.mocked(getLines).mockResolvedValue({ lines: [], totalLines: 5 } as never);
+
+    // Split view (S1) is gated to wide/ultra-wide — jsdom has no matchMedia,
+    // so `createTier` reads `innerWidth`, whose jsdom default (1024) is compact.
+    Object.defineProperty(window, 'innerWidth', { value: 2600, configurable: true });
+
+    render(() => <App />);
+    const openButton = screen.getByRole('button', { name: /^open file/i }) as HTMLButtonElement;
+
+    fireEvent.click(openButton);
+    await waitFor(() => expect(loadLogFile).toHaveBeenCalledTimes(1));
+    // `openFileDialog` disables this button for the duration of `openPath`
+    // (`actions.busy()`) — wait for it to re-enable, or the second click is a
+    // no-op on a disabled element.
+    await waitFor(() => expect(openButton.disabled).toBe(false));
+
+    fireEvent.click(openButton);
+    await waitFor(() => expect(loadLogFile).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(openButton.disabled).toBe(false));
+
+    // Both sessions are open; '/b.log' (opened last) is focused in the
+    // primary pane, so only '/a.log' is offered for the secondary.
+    fireEvent.click(screen.getByRole('button', { name: /split view/i }));
+    const picker = screen.getByLabelText('Secondary pane session') as HTMLSelectElement;
+    expect([...picker.options].map((o) => o.value).filter(Boolean)).toEqual(['/a.log']);
+
+    fireEvent.change(picker, { target: { value: '/a.log' } });
+
+    const grids = screen.getAllByRole('grid');
+    expect(grids).toHaveLength(2);
+    expect(screen.getAllByLabelText('Secondary pane session')).toHaveLength(1);
+
+    // The primary pane's tab strip can switch its focus to the same session
+    // the secondary pane is already showing — that must clear the secondary
+    // selection rather than let both panes render (and share the state of)
+    // the same session.
+    fireEvent.click(document.querySelector('[data-key="/a.log"]')!);
+
+    expect(screen.getAllByRole('grid')).toHaveLength(1);
+    // The split stays open — only its session selection was cleared.
+    const pickerAfter = screen.getByLabelText('Secondary pane session') as HTMLSelectElement;
+    expect(pickerAfter.value).toBe('');
   });
 });
