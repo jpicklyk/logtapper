@@ -48,8 +48,30 @@
  * `viewer/createStreamSession.ts` (via `stream/streamStore.ts`) is the sole
  * caller today, batching multiple `AdbProcessorUpdate`s per Channel flush
  * before calling `applyProcessorUpdates` once — see that module's doc.
+ *
+ * ## The chain is shared session state (F1)
+ *
+ * The backend's `session_pipeline_meta` is the single source of truth for a
+ * session's chain, written by this store AND by an agent (`PUT`/`PATCH
+ * …/chain`, or the run-merge of an explicit-ids `run_pipeline`). So:
+ *
+ *  - **Push on edit.** Every local chain edit (`add`/`remove`/`toggle`/
+ *    `reorder`/`resetToDefault`) schedules one microtask-coalesced
+ *    `setSessionPipelineMeta(sid, order, disabled)` — a burst of edits in one
+ *    tick is one IPC call. `activeProcessorIds` is always the FULL ordered
+ *    chain (disabled members included), matching the backend contract and
+ *    the React app; sending `active` (= order − disabled) silently dropped
+ *    disabled analyzers from the backend's chain and from `.ltw` saves.
+ *  - **`chain-update` is applied only for a non-`ui` caller.** Our own writes
+ *    are already local state; applying their echo would race an edit that is
+ *    still waiting for its coalesced push. An agent's change replaces the
+ *    session's chain wholesale (anonymizer stripped), and each id it newly
+ *    introduced is remembered in `addedBy` until that id leaves the chain by
+ *    any path — that is what `AnalyzerCard`'s "Added" badge reads.
+ *  - **Foreign runs** (an agent's `run_pipeline`) are visible here too — see
+ *    the progress/complete handlers' comment for the rule.
  */
-import { batch, createEffect, createRoot, createSignal } from 'solid-js';
+import { batch, createEffect, createRoot, createSignal, untrack } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import { createStore, produce, unwrap } from 'solid-js/store';
 import type { UnlistenFn } from '@tauri-apps/api/event';
@@ -66,15 +88,18 @@ import {
   getCorrelatorEvents,
   getProcessorVars,
 } from '@bridge/commands';
-import { onPipelineProgress } from '@bridge/events';
+import { onPipelineProgress, onChainUpdate, onPipelineComplete } from '@bridge/events';
 import { groupProcessorsByPack } from '@bridge/types';
 import type {
+  Caller,
   ProcessorSummary,
   PackSummary,
   ProcessorPackGroup,
   PipelineRunResult,
   PipelineRunSummary,
   PipelineProgress,
+  PipelineCompleteEvent,
+  ChainUpdateEvent,
   MatchedLine,
   CorrelatorResult,
   AdbProcessorUpdate,
@@ -84,7 +109,7 @@ import type {
 // React app's key names (`logtapper_pipeline_chain` / `_disabled`) — same
 // file the file-level ESLint allow-list on `@hooks` names.
 import { loadChainFromStorage, loadDisabledFromStorage } from '@hooks/pipelineChainStorage';
-import { createGenerationGuard } from '../reactive';
+import { coalesceMicrotask, createGenerationGuard } from '../reactive';
 import type { GenerationGuard } from '../reactive';
 
 /** Backend-appended, never user-managed. See the module doc's first bullet. */
@@ -179,6 +204,10 @@ export interface AnalyzerStoreDeps {
   controller: AnalyzerController;
   /** Injected for tests; defaults to `onPipelineProgress`. */
   listen?: (cb: (payload: PipelineProgress) => void) => Promise<UnlistenFn>;
+  /** Injected for tests; defaults to `onChainUpdate`. */
+  listenChain?: (cb: (payload: ChainUpdateEvent) => void) => Promise<UnlistenFn>;
+  /** Injected for tests; defaults to `onPipelineComplete`. */
+  listenComplete?: (cb: (payload: PipelineCompleteEvent) => void) => Promise<UnlistenFn>;
   /** Injected for tests; defaults to the real bridge wrappers. */
   commands?: AnalyzerCommands;
   /** Injected for tests; defaults to the Tauri native dialog. */
@@ -206,6 +235,11 @@ export interface AnalyzerStore {
   reorder(sessionId: string, fromIndex: number, toIndex: number): void;
   /** Reset this session's chain back to the shared template. */
   resetToDefault(sessionId: string): void;
+  /** Who introduced `processorId` into this session's chain, when that was
+   *  an agent (via a `chain-update` this store applied). `null` for an id
+   *  the user added, one restored from a workspace, or one no longer in the
+   *  chain. */
+  addedBy(sessionId: string, processorId: string): Caller | null;
 
   // ── Run lifecycle ────────────────────────────────────────────────────────
   running(sessionId: string): boolean;
@@ -213,7 +247,7 @@ export interface AnalyzerStore {
   result(sessionId: string): PipelineRunResult | null;
   lastError(sessionId: string): string | null;
   lastRunAt(sessionId: string): number | null;
-  /** Push this session's chain then run it. Bumps the run generation first. */
+  /** Push this session's full chain then run it. Bumps the run generation first. */
   run(sessionId: string): Promise<void>;
   stop(sessionId: string): Promise<void>;
 
@@ -306,6 +340,15 @@ function freshCache(generation: number): RunCache {
   return { generation, matchedLines: new Map(), correlatorEvents: new Map() };
 }
 
+/** Bookkeeping for one session's own `run()` — see `ownRuns` in the store.
+ *  `settled`: the latest own promise has resolved or rejected;
+ *  `awaitingCompletes`: `runPipeline` invokes whose `pipeline-complete(ui)`
+ *  has not arrived yet. Own mode ends when settled and nothing is awaited. */
+interface OwnRunState {
+  settled: boolean;
+  awaitingCompletes: number;
+}
+
 /**
  * Fold one processor's live streaming counters into a summaries array,
  * replacing any pre-existing entry for the same processor (including
@@ -367,6 +410,8 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
   const { sessions, controller } = deps;
   const commands = deps.commands ?? defaultCommands;
   const listen = deps.listen ?? onPipelineProgress;
+  const listenChain = deps.listenChain ?? onChainUpdate;
+  const listenComplete = deps.listenComplete ?? onPipelineComplete;
   const chooseFile = deps.chooseFile ?? openDialog;
 
   return createRoot((disposeRoot) => {
@@ -375,6 +420,10 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
     const [defaultTemplate, setDefaultTemplate] = createSignal<SessionChain>(emptyChain());
 
     const [chains, setChains] = createStore<Record<string, SessionChain>>({});
+    // Per session, which chain members an agent introduced (see the module
+    // doc's "shared session state" section). Store-backed because a card
+    // renders a badge off it. Pruned whenever an id leaves the chain.
+    const [addedByAgent, setAddedByAgent] = createStore<Record<string, Record<string, Caller>>>({});
     const [runs, setRuns] = createStore<Record<string, SessionRun>>({});
     // Not store-backed: these are fetch-result caches, not render state, and a
     // `Map`/nested-object churn per fetch would just fight `createStore`'s
@@ -384,6 +433,25 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
     // store for the same reason `runCaches` is: nothing renders a generation
     // number, so it doesn't belong in store-tracked state.
     const runGuards = new Map<string, GenerationGuard>();
+    // The generation token of a foreign (agent-started) run this store is
+    // currently mirroring, per session — set when its first progress arrives,
+    // consumed by its `pipeline-complete`. A newer own `run()` bumps past it,
+    // which is how a late foreign completion is recognised and dropped.
+    const foreignRuns = new Map<string, number>();
+    // Sessions with an own `run()` "in flight" in the wide sense: from the
+    // `run()` call until BOTH its promise has settled AND its
+    // `pipeline-complete(ui)` has arrived. `running` alone cannot serve —
+    // `stop()` clears it as soon as `stopPipeline()` resolves, but the
+    // backend only checks the cancel flag once per chunk AFTER emitting that
+    // chunk's progress, so trailing progress lands on an idle row; and an
+    // own run's final progress can trail its promise if the event channel
+    // lags the invoke response. While a session is in here, progress never
+    // starts a foreign run (see the handler). The backend emits the ui
+    // complete BEFORE the promise resolves and the event channel is ordered,
+    // so "complete seen" bounds every own progress event.
+    const ownRuns = new Map<string, OwnRunState>();
+    // One coalesced push per session (see `schedulePush`).
+    const pushers = new Map<string, () => void>();
 
     let disposed = false;
     let templateSeeded = false;
@@ -448,11 +516,49 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
 
     const chain = (sessionId: string): SessionChainSnapshot => toSnapshot(currentChain(sessionId));
 
+    /** The one writer of `chains[sid]`. Also forgets `addedBy` for any id
+     *  that is no longer a member — the badge must never outlive the row,
+     *  whichever path (user remove, agent replace, reset, restore, uninstall)
+     *  took the id out. */
+    const setSessionChain = (sessionId: string, next: SessionChain): void => {
+      batch(() => {
+        setChains(sessionId, next);
+        const recorded = addedByAgent[sessionId];
+        if (!recorded) return;
+        const gone = Object.keys(recorded).filter((id) => !next.order.includes(id));
+        if (gone.length === 0) return;
+        setAddedByAgent(sessionId, produce((draft) => { for (const id of gone) delete draft[id]; }));
+      });
+    };
+
+    /** Push this session's chain to the backend once per tick, however many
+     *  edits land in that tick. The backend is the source of truth for the
+     *  chain (an agent reads and writes it there), so an unpushed local edit
+     *  is an edit an agent cannot see. Fire-and-forget: a refused push (an
+     *  uninstalled bare id, a session that closed meanwhile) is not a UI
+     *  error the user can act on, same as `applyWorkspaceChain`'s. */
+    const schedulePush = (sessionId: string): void => {
+      let push = pushers.get(sessionId);
+      if (!push) {
+        push = coalesceMicrotask(() => {
+          if (disposed) return;
+          // A deferred imperative read, deliberately outside any tracked
+          // scope — the microtask is not an effect and must not become one.
+          const cur = untrack(() => chains[sessionId]);
+          if (!cur) return; // pruned (session closed) before the microtask ran
+          void commands.setSessionPipelineMeta(sessionId, [...cur.order], [...cur.disabled]).catch(() => undefined);
+        });
+        pushers.set(sessionId, push);
+      }
+      push();
+    };
+
     const add = (sessionId: string, processorId: string): void => {
       if (PINNED_TAIL_IDS.includes(processorId)) return; // invariant: never user-added
       const cur = currentChain(sessionId);
       if (cur.order.includes(processorId)) return;
-      setChains(sessionId, { order: [...cur.order, processorId], disabled: new Set(cur.disabled) });
+      setSessionChain(sessionId, { order: [...cur.order, processorId], disabled: new Set(cur.disabled) });
+      schedulePush(sessionId);
     };
 
     const remove = (sessionId: string, processorId: string): void => {
@@ -460,7 +566,8 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       if (!cur.order.includes(processorId)) return;
       const disabled = new Set(cur.disabled);
       disabled.delete(processorId);
-      setChains(sessionId, { order: cur.order.filter((id) => id !== processorId), disabled });
+      setSessionChain(sessionId, { order: cur.order.filter((id) => id !== processorId), disabled });
+      schedulePush(sessionId);
     };
 
     const toggle = (sessionId: string, processorId: string): void => {
@@ -469,7 +576,8 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       const disabled = new Set(cur.disabled);
       if (disabled.has(processorId)) disabled.delete(processorId);
       else disabled.add(processorId);
-      setChains(sessionId, { order: [...cur.order], disabled });
+      setSessionChain(sessionId, { order: [...cur.order], disabled });
+      schedulePush(sessionId);
     };
 
     const reorder = (sessionId: string, fromIndex: number, toIndex: number): void => {
@@ -482,13 +590,46 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       const order = [...cur.order];
       const [moved] = order.splice(from, 1);
       order.splice(to, 0, moved);
-      setChains(sessionId, { order, disabled: new Set(cur.disabled) });
+      setSessionChain(sessionId, { order, disabled: new Set(cur.disabled) });
+      schedulePush(sessionId);
     };
 
     const resetToDefault = (sessionId: string): void => {
       const tpl = defaultTemplate();
-      setChains(sessionId, { order: [...tpl.order], disabled: new Set(tpl.disabled) });
+      setSessionChain(sessionId, { order: [...tpl.order], disabled: new Set(tpl.disabled) });
+      schedulePush(sessionId);
     };
+
+    const addedBy = (sessionId: string, processorId: string): Caller | null =>
+      addedByAgent[sessionId]?.[processorId] ?? null;
+
+    // An agent changed this session's chain (or an explicit-ids agent run
+    // merged into it). Replace wholesale — the payload is the whole chain —
+    // and remember which ids the agent introduced. A `ui` caller is our own
+    // write echoed back: already local, and applying it would race an edit
+    // still waiting on its coalesced push. A session this store does not
+    // know (never opened here, or already closed) is dropped rather than
+    // growing `chains` for a tab that does not exist.
+    track(
+      listenChain((payload) => {
+        if (disposed) return;
+        if (payload.caller.kind === 'ui') return;
+        if (!sessions.order().includes(payload.sessionId)) return;
+        const order = payload.activeProcessorIds.filter((id) => id !== PII_ANONYMIZER_ID);
+        const disabled = new Set(payload.disabledProcessorIds.filter((id) => order.includes(id)));
+        const before = new Set(currentChain(payload.sessionId).order);
+        const introduced = order.filter((id) => !before.has(id));
+        batch(() => {
+          setSessionChain(payload.sessionId, { order, disabled });
+          if (introduced.length > 0) {
+            // A plain object write: a session with no row yet has nothing to
+            // `produce` on, and `setStore` merges object values into an
+            // existing row anyway.
+            setAddedByAgent(payload.sessionId, Object.fromEntries(introduced.map((id) => [id, payload.caller])));
+          }
+        });
+      }),
+    );
 
     // ── Run lifecycle ────────────────────────────────────────────────────
     const running = (sessionId: string): boolean => currentRun(sessionId).running;
@@ -497,23 +638,45 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
     const lastError = (sessionId: string): string | null => currentRun(sessionId).lastError;
     const lastRunAt = (sessionId: string): number | null => currentRun(sessionId).lastRunAt;
 
+    /** Leave own-run mode once the latest own `run()` promise has settled AND
+     *  every `pipeline-complete(ui)` it is owed has arrived — see `ownRuns`. */
+    const ownRunDone = (sessionId: string): void => {
+      const state = ownRuns.get(sessionId);
+      if (state && state.settled && state.awaitingCompletes <= 0) ownRuns.delete(sessionId);
+    };
+
     const run = async (sessionId: string): Promise<void> => {
       const own = toSnapshot(currentChain(sessionId));
       const myGeneration = guardFor(sessionId).bump();
+      // Fresh own-run state per `run()` (a superseded run's finally checks
+      // the generation, not this object, so it cannot end the newer run's
+      // own mode) — and a state a lost event might have left behind cannot
+      // outlive the next run.
+      const state: OwnRunState = { settled: false, awaitingCompletes: 0 };
+      ownRuns.set(sessionId, state);
       setRuns(sessionId, {
         ...currentRun(sessionId),
         running: true,
         progress: new Map(),
         lastError: null,
       });
+      let invoked = false;
       try {
-        await commands.setSessionPipelineMeta(sessionId, own.active, own.disabled);
+        // The FULL ordered chain, disabled members included — never `own.active`
+        // (see the module doc: that dropped disabled analyzers backend-side).
+        await commands.setSessionPipelineMeta(sessionId, own.order, own.disabled);
+        invoked = true;
+        state.awaitingCompletes += 1;
         const runResult = await commands.runPipeline(sessionId, null);
         // A newer `run()` call for this session superseded this one while the
         // IPC round trip was in flight — its state must win, not ours.
         if (!guardFor(sessionId).isCurrent(myGeneration)) return;
         setRuns(sessionId, { ...currentRun(sessionId), running: false, result: runResult, lastRunAt: Date.now() });
       } catch (e) {
+        // A rejected invoke is not guaranteed a `pipeline-complete` (an IPC
+        // failure never reaches the backend) — don't wait on one: a failed
+        // run has no trailing chunk to emit stale progress for anyway.
+        if (invoked) state.awaitingCompletes -= 1;
         if (!guardFor(sessionId).isCurrent(myGeneration)) return;
         const message = String(e);
         if (message.includes(NO_CHAIN_CONFIGURED)) {
@@ -523,6 +686,11 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
           return;
         }
         setRuns(sessionId, { ...currentRun(sessionId), running: false, lastError: message });
+      } finally {
+        if (guardFor(sessionId).isCurrent(myGeneration)) {
+          state.settled = true;
+          ownRunDone(sessionId);
+        }
       }
     };
 
@@ -534,30 +702,104 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       }
     };
 
-    // ── Progress ─────────────────────────────────────────────────────────
-    // The wire payload carries no run-generation token, so the guard this can
-    // actually enforce is: accept a processor's progress only while THIS store
-    // believes a run is in flight for that session (an event for a session
-    // this store never started, or one that already settled/stopped, is
-    // dropped) — and starting a new run clears the map so stale entries from
-    // the previous run never linger into a fresh one. The genuinely stale-
-    // generation race (an old run's *settlement* arriving after a newer run
-    // started) is guarded separately in `run()`, which compares the captured
-    // generation against the session's current one before writing `result`/
-    // `lastError`.
+    // ── Progress + foreign runs ──────────────────────────────────────────
+    // `pipeline-progress` carries neither a caller nor a run-generation token,
+    // and the backend serialises runs per session, so the rule is:
+    //
+    //  - Progress for a session this store believes is running (an own
+    //    `run()` in flight, or a foreign run already noticed) updates that
+    //    run's progress map. Starting any run clears the map, so entries from
+    //    the previous run never linger into a fresh one.
+    //  - Progress for a session in own-run mode (`ownRuns`) but not running
+    //    is an own run's trailing event — after `stop()` cleared `running`,
+    //    or after the promise settled but before its ui complete — and is
+    //    dropped. It is NEVER the start of a foreign run: the backend
+    //    serialises runs per session, so no agent run can emit while ours is
+    //    in flight.
+    //  - Otherwise, progress for a KNOWN session with no run in flight is the
+    //    first sign of a foreign run — an agent's `run_pipeline` — and starts
+    //    mirroring it: `running: true`, a fresh progress map, no stale
+    //    `lastError`, and a generation bump so `runCaches` reset (the results
+    //    that fetch will be this run's, not the previous one's). The bumped
+    //    token is kept in `foreignRuns` for the completion below.
+    //  - Progress for a session this store does not know (`sessions.order()`)
+    //    is dropped: there is no tab to show it in.
+    //
+    // A foreign run settles through `pipeline-complete` (below), which
+    // carries the caller: `ui` is our own run's — `run()` writes its result
+    // from the `run_pipeline` promise, so the event never writes run state;
+    // it only counts down `ownRuns`'s awaited completes (own-run mode ends
+    // once the promise has settled too) — and anything else lands
+    // `result`/`lastError`, clears `running`, stamps `lastRunAt` and bumps
+    // the generation once more so the caches are keyed to the landed result.
+    // Generation guard: a foreign completion whose token was superseded by a
+    // newer own `run()` (or by a later foreign start) is dropped, exactly as
+    // a stale own settlement is in `run()`; and a completion for a session
+    // with no foreign token that is running or in own-run mode is dropped
+    // for the same reason (its in-flight row is an own run's). A cancel
+    // (`result` with empty `summaries`) and a "no chain configured" failure
+    // only clear `running`, matching `run()`.
     track(
       listen((payload) => {
         if (disposed) return;
         const row = runs[payload.sessionId];
-        if (!row || !row.running) return;
-        const next = new Map(row.progress);
-        next.set(payload.processorId, {
+        const entry: AnalyzerProgress = {
           processorId: payload.processorId,
           linesProcessed: payload.linesProcessed,
           totalLines: payload.totalLines,
           percent: payload.percent,
+        };
+        if (row?.running) {
+          const next = new Map(row.progress);
+          next.set(payload.processorId, entry);
+          setRuns(payload.sessionId, 'progress', next);
+          return;
+        }
+        if (ownRuns.has(payload.sessionId)) return; // an own run's trailing progress
+        if (!sessions.order().includes(payload.sessionId)) return;
+        foreignRuns.set(payload.sessionId, guardFor(payload.sessionId).bump());
+        setRuns(payload.sessionId, {
+          ...currentRun(payload.sessionId),
+          running: true,
+          progress: new Map([[payload.processorId, entry]]),
+          lastError: null,
         });
-        setRuns(payload.sessionId, 'progress', next);
+      }),
+    );
+
+    track(
+      listenComplete((payload) => {
+        if (disposed) return;
+        const sessionId = payload.sessionId;
+        if (payload.caller.kind === 'ui') {
+          // Our own run's — bookkeeping only, never run state (see above).
+          const state = ownRuns.get(sessionId);
+          if (state) {
+            state.awaitingCompletes -= 1;
+            ownRunDone(sessionId);
+          }
+          return;
+        }
+        if (!sessions.order().includes(sessionId)) return;
+        const token = foreignRuns.get(sessionId);
+        if (token !== undefined) {
+          foreignRuns.delete(sessionId);
+          if (!guardFor(sessionId).isCurrent(token)) return;
+        } else if (currentRun(sessionId).running || ownRuns.has(sessionId)) {
+          return; // the in-flight row is an own run's — not this completion's
+        }
+        guardFor(sessionId).bump();
+        const cur = currentRun(sessionId);
+        if (payload.error !== null) {
+          const silent = payload.error.includes(NO_CHAIN_CONFIGURED);
+          setRuns(sessionId, { ...cur, running: false, lastError: silent ? cur.lastError : payload.error });
+          return;
+        }
+        if (!payload.result || payload.result.summaries.length === 0) {
+          setRuns(sessionId, { ...cur, running: false }); // cancelled — nothing to land
+          return;
+        }
+        setRuns(sessionId, { ...cur, running: false, result: payload.result, lastError: null, lastRunAt: Date.now() });
       }),
     );
 
@@ -654,7 +896,7 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
           if (!cur.order.includes(processorId)) continue;
           const disabled = new Set(cur.disabled);
           disabled.delete(processorId);
-          setChains(sessionId, { order: cur.order.filter((id) => id !== processorId), disabled });
+          setSessionChain(sessionId, { order: cur.order.filter((id) => id !== processorId), disabled });
         }
         const tpl = defaultTemplate();
         if (tpl.order.includes(processorId)) {
@@ -685,20 +927,22 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       const next: SessionChain = { order: cleanOrder, disabled: cleanDisabled };
 
       if (sessionId) {
-        setChains(sessionId, next);
-        const active = cleanOrder.filter((id) => !cleanDisabled.has(id));
-        void commands.setSessionPipelineMeta(sessionId, active, [...cleanDisabled]).catch(() => undefined);
+        setSessionChain(sessionId, next);
+        // The full chain, not `order − disabled` — see `run()`.
+        void commands.setSessionPipelineMeta(sessionId, [...cleanOrder], [...cleanDisabled]).catch(() => undefined);
         return;
       }
 
       // Legacy path: an old, pre-v4 single-chain workspace. Sets the shared
       // template AND back-fills every open session that has no chain of its
       // own — a session that already diverged keeps its own chain, exactly as
-      // `PipelineContext.tsx`'s `chain:restore` reducer case does.
+      // `PipelineContext.tsx`'s `chain:restore` reducer case does. Deliberately
+      // no per-session push here: `run()` pushes before every run regardless,
+      // and one restore must not fan out into N chain writes.
       batch(() => {
         setDefaultTemplate(next);
         for (const id of sessions.order()) {
-          if (!chains[id]) setChains(id, { order: [...next.order], disabled: new Set(next.disabled) });
+          if (!chains[id]) setSessionChain(id, { order: [...next.order], disabled: new Set(next.disabled) });
         }
       });
     };
@@ -711,7 +955,8 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       const known = new Set(sessions.order());
       const staleChains = Object.keys(unwrap(chains)).filter((id) => !known.has(id));
       const staleRuns = Object.keys(unwrap(runs)).filter((id) => !known.has(id));
-      if (staleChains.length === 0 && staleRuns.length === 0) return;
+      const staleAdded = Object.keys(unwrap(addedByAgent)).filter((id) => !known.has(id));
+      if (staleChains.length === 0 && staleRuns.length === 0 && staleAdded.length === 0) return;
       batch(() => {
         if (staleChains.length > 0) {
           setChains(produce((draft) => { for (const id of staleChains) delete draft[id]; }));
@@ -719,13 +964,19 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
         if (staleRuns.length > 0) {
           setRuns(produce((draft) => { for (const id of staleRuns) delete draft[id]; }));
         }
+        if (staleAdded.length > 0) {
+          setAddedByAgent(produce((draft) => { for (const id of staleAdded) delete draft[id]; }));
+        }
       });
-      // A session can be stale in one record and not the other (e.g. `run()`
+      // A session can be stale in one record and not the others (e.g. `run()`
       // was never called for it), so sweep the union rather than assume the
-      // two lists match.
-      for (const id of new Set([...staleChains, ...staleRuns])) {
+      // lists match.
+      for (const id of new Set([...staleChains, ...staleRuns, ...staleAdded])) {
         runCaches.delete(id);
         runGuards.delete(id);
+        foreignRuns.delete(id);
+        ownRuns.delete(id);
+        pushers.delete(id);
       }
     });
 
@@ -740,6 +991,9 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       unlisteners.length = 0;
       runCaches.clear();
       runGuards.clear();
+      foreignRuns.clear();
+      ownRuns.clear();
+      pushers.clear();
       disposeRoot();
     };
 
@@ -757,6 +1011,7 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       toggle,
       reorder,
       resetToDefault,
+      addedBy,
       running,
       progress,
       result,

@@ -129,19 +129,19 @@ describe('packsStore', () => {
     store.dispose();
   });
 
-  it('installPack maps processorIds to the snake_case payload, refreshes installed state, and notifies the catalog', async () => {
+  it('installPack maps processorIds to the snake_case payload and refreshes installed state', async () => {
     const listPacks = vi.fn(() => Promise.resolve([packSummary()]));
-    const onCatalogChanged = vi.fn();
     const commands = baseCommands({ listPacks });
-    const store = createPacksStore({ sources: noSources(), commands, onCatalogChanged });
+    const store = createPacksStore({ sources: noSources(), commands });
     await store.installPack('official', packEntry);
     expect(commands.installPackFromMarketplace).toHaveBeenCalledWith('official', {
       id: 'wifi-pack', name: 'WiFi Pack', version: '1.0.0', description: 'WiFi diagnostics',
       path: 'packs/wifi.pack.yaml', tags: ['wifi'], sha256: 'abc', category: 'network',
       processor_ids: ['wifi-state', 'wlan-disconnect'],
     });
-    expect(listPacks).toHaveBeenCalled();
-    expect(onCatalogChanged).toHaveBeenCalledTimes(1);
+    // Seed at construction + one post-mutation refresh.
+    expect(listPacks).toHaveBeenCalledTimes(2);
+    expect(store.installedPacks()).toEqual([packSummary()]);
     expect(store.isPending('wifi-pack')).toBe(false);
     store.dispose();
   });
@@ -168,17 +168,19 @@ describe('packsStore', () => {
     store.dispose();
   });
 
-  it('installProcessor and uninstallProcessor both refresh installed state and notify the catalog', async () => {
-    const onCatalogChanged = vi.fn();
+  it('installProcessor and uninstallProcessor both refresh installed state', async () => {
     const commands = baseCommands();
-    const store = createPacksStore({ sources: noSources(), commands, onCatalogChanged });
+    const store = createPacksStore({ sources: noSources(), commands });
     await store.installProcessor('official', procEntry);
     await store.uninstallProcessor('wifi-state');
     expect(commands.installFromMarketplace).toHaveBeenCalledWith('official', {
       id: 'wifi-state', name: 'WiFi State', path: 'processors/wifi_state.yaml', version: '1.4.0', sha256: 'def',
     });
     expect(commands.uninstallProcessor).toHaveBeenCalledWith('wifi-state');
-    expect(onCatalogChanged).toHaveBeenCalledTimes(2);
+    // Seed at construction + one refresh per mutation. The analyzer catalog
+    // is refreshed by `App.tsx`'s `catalog-update` listener, not from here —
+    // there is no callback dep left to notify.
+    expect(commands.listProcessors).toHaveBeenCalledTimes(3);
     store.dispose();
   });
 

@@ -133,13 +133,6 @@ export interface PacksStoreDeps {
    *  `lastChecked` timestamps stay current. Mirrors React's
    *  `useMarketplace.checkUpdates` re-fetching `listSources()`. */
   refreshSources?: () => void;
-  /** Called after any successful install/uninstall/update so
-   *  `analyzerStore.catalog()` (the per-session "add analyzer" list) picks up
-   *  newly-added or newly-removed processors. Wired to
-   *  `analyzerStore.refreshCatalog` in `App.tsx` — see this package's
-   *  implementation-notes for why that wiring lives there rather than in a
-   *  bus. */
-  onCatalogChanged?: () => void;
   /** Injected for tests; defaults to the real bridge wrappers. */
   commands?: Partial<PacksCommands>;
 }
@@ -258,9 +251,13 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
   const errorFor = (id: string): string | undefined => itemErrors()[id];
 
   /** Run one mutation for `id`: marks it pending, clears its previous error,
-   *  and on success refreshes installed state + notifies the analyzer
-   *  catalog. Every install/uninstall goes through this so the pending/error
-   *  bookkeeping never drifts between call sites. */
+   *  and on success refreshes installed state. Every install/uninstall goes
+   *  through this so the pending/error bookkeeping never drifts between call
+   *  sites. The analyzer catalog is NOT notified from here: the backend
+   *  emits `catalog-update` for every install/uninstall/update from either
+   *  caller, and `App.tsx`'s single listener on it refreshes both stores —
+   *  a UI-initiated install reaches the analyzers the same way an agent's
+   *  does. */
   function withMutation<T>(id: string, run: () => Promise<T>): Promise<T> {
     setPending((s) => new Set(s).add(id));
     setItemErrors((errs) => {
@@ -272,7 +269,6 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
     return run()
       .then(async (value) => {
         await refreshInstalled();
-        if (!disposed) deps.onCatalogChanged?.();
         return value;
       })
       .catch((e: unknown) => {
@@ -345,7 +341,6 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
       if (disposed) return;
       const succeededIds = new Set(results.filter((r) => r.success).map((r) => r.processorId));
       await refreshInstalled();
-      deps.onCatalogChanged?.();
       if (disposed) return;
       setPendingUpdates((list) => list.filter((u) => !succeededIds.has(u.processorId)));
     } finally {
