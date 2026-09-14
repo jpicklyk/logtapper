@@ -43,6 +43,18 @@ export interface AppActionsDeps {
   controller: ViewerController;
   /** Injected for tests; defaults to the Tauri native dialog. */
   chooseFile?: typeof openDialog;
+  /**
+   * Stop a live ADB stream before its session is closed — mirrors React's
+   * `useSessionTabManager.closeSession` guard (`if
+   * (refs.streamingSessionIdRef.current === resolvedSessionId) await
+   * deps.stopStream()`). Injected rather than imported directly so this
+   * module stays free of a `stream/` dependency; `App.tsx` wires
+   * `liveStream.stopIfCurrent`. The stream module is responsible for
+   * no-op-ing when `sessionId` isn't its current session — this call site
+   * always invokes it unconditionally, same as React always calling
+   * `stopStream()` once the id check passes.
+   */
+  stopLiveSession?: (sessionId: string) => Promise<void>;
 }
 
 export interface AppActions {
@@ -79,7 +91,7 @@ function toImported(load: LoadResult): ImportedSession {
 }
 
 export function createAppActions(deps: AppActionsDeps): AppActions {
-  const { store, controller, chooseFile = openDialog } = deps;
+  const { store, controller, chooseFile = openDialog, stopLiveSession } = deps;
 
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal('');
@@ -184,6 +196,15 @@ export function createAppActions(deps: AppActionsDeps): AppActions {
     // read as an agent closing the session.
     store.markPendingClose(sessionId);
     try {
+      // The backend's `close_session` already cancels a running stream task as
+      // part of tearing down session state, so skipping this would not leak
+      // anything server-side. It matters on the frontend: without it, the
+      // `LiveStreamStore`'s `createStreamSession` instance never learns the
+      // stream ended — `channelActive`/`currentSessionId` stay set, `status()`
+      // never reaches `'stopped'`, and `active()` keeps reporting `true` for a
+      // capture whose session no longer exists. Same reasoning as React's
+      // `useSessionTabManager.closeSession` stopping first.
+      await stopLiveSession?.(sessionId);
       await closeSession(sessionId);
     } catch (e) {
       // No echo will come for a failed close: release the claim so a later

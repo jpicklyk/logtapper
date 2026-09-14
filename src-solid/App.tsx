@@ -23,6 +23,7 @@ import { BookmarksPanel, createBookmarksStore } from './bookmarks';
 import { Switcher, WorkspaceHome, createWorkspaceStore } from './workspace';
 import { ExportDialog, createExportStore } from './export';
 import { SettingsPanel, createSettingsStore } from './settings';
+import { StreamControlsPanel, createLiveStreamStore } from './stream';
 import type { ThemeController } from './theme/applyTheme';
 import styles from './App.module.css';
 
@@ -60,12 +61,20 @@ export function App(props: AppProps) {
   // selects its tab first.
   const controller = createViewerController({ focusSession: (id) => store.setFocused(id) });
   const store = createSessionStore({ cacheManager, registry, controller });
-  const actions = createAppActions({ store, controller });
+  // Live stream (L1) — the one place a `start_adb_stream` result becomes a
+  // registered session (tab, focus) and a stopped one becomes an ordinary
+  // postmortem session again. Built before `actions` so `close()` can stop a
+  // running stream before its session closes; `benchDriver.ts`'s
+  // `startStream`/`stopStream` and `stream-controls`'s panel below both drive
+  // this same instance — see its own module doc for why that's the point.
+  const liveStream = createLiveStreamStore({ cacheManager, registry, sessions: store });
+  const actions = createAppActions({ store, controller, stopLiveSession: liveStream.stopIfCurrent });
   // Query bar (W2b) — reads/writes per-session query state and plugs its
   // `SearchQuery` provider into the session store's `fetchLines`.
   const queryStore = createQueryStore({ cacheManager, controller, sessions: store });
   onCleanup(() => {
     queryStore.dispose();
+    liveStream.dispose();
     store.dispose();
     controller.dispose();
   });
@@ -230,7 +239,7 @@ export function App(props: AppProps) {
     return controller.lineNumbers(entry.load.sessionId)?.length ?? entry.totalLines;
   };
 
-  if (isBenchMode()) installBenchApp({ actions, store, cacheManager, registry });
+  if (isBenchMode()) installBenchApp({ actions, stream: liveStream });
 
   const newDocument = (): void => {
     editorStore.newDoc();
@@ -387,6 +396,7 @@ export function App(props: AppProps) {
         ),
         export: () => <ExportDialog store={exportStore} />,
         settings: () => <SettingsPanel store={settings} theme={props.theme} />,
+        'stream-controls': () => <StreamControlsPanel store={liveStream} />,
       }}
     />
   );

@@ -139,6 +139,24 @@ describe('createSessionStore', () => {
     expect(store.byId('a')?.load.sourceName).toBe('a.log');
   });
 
+  it('setStreamingKind flips an open session between live and file', () => {
+    const { store } = harness;
+    store.add(load('a', { isStreaming: true }));
+    expect(store.byId('a')?.kind).toBe('live');
+
+    store.setStreamingKind('a', false);
+    expect(store.byId('a')?.kind).toBe('file');
+
+    store.setStreamingKind('a', true);
+    expect(store.byId('a')?.kind).toBe('live');
+  });
+
+  it('setStreamingKind is a no-op for a session id that is not open', () => {
+    const { store } = harness;
+    expect(() => store.setStreamingKind('missing', false)).not.toThrow();
+    expect(store.byId('missing')).toBeUndefined();
+  });
+
   it('ignores a session-opened echo for a session it already has', () => {
     const { store } = harness;
     store.add(load('a'));

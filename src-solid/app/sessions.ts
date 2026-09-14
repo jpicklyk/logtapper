@@ -76,6 +76,22 @@ export interface SessionStore {
   updateTotal(sessionId: string, totalLines: number, isIndexing?: boolean): void;
 
   /**
+   * Flip a session's `kind` between `'live'` and `'file'` — called by
+   * `stream/streamStore.ts` when its ADB stream starts (already implied by
+   * `add()`, since a fresh stream's `LoadResult.isStreaming` is `true`) and,
+   * more importantly, when it stops. A stopped stream's session stays open
+   * (the backend keeps its retained lines as a static log — see
+   * `stop_adb_stream`'s doc comment), but it is no longer *live*: `kind`
+   * drives both the shell's `data-mode` (`shell/mode.ts`) and
+   * `LogViewer`'s `tailMode` (`App.tsx`), so leaving it at `'live'` after a
+   * stop would strand the session in tail-follow with no more lines ever
+   * coming, and would keep live-only surfaces (watches, stream-controls)
+   * showing for a capture that is now exactly like any other opened file.
+   * No-op for a session id that isn't open.
+   */
+  setStreamingKind(sessionId: string, streaming: boolean): void;
+
+  /**
    * Mark a close as ours, so the backend's `session-closed` echo is not
    * mistaken for a foreign (agent-initiated) close and does not remove the
    * entry twice. Cleared when that echo arrives.
@@ -217,6 +233,11 @@ export function createSessionStore(deps: SessionStoreDeps): SessionStore {
       });
     };
 
+    const setStreamingKind = (sessionId: string, streaming: boolean): void => {
+      if (!entries[sessionId]) return;
+      setEntries(sessionId, 'kind', streaming ? 'live' : 'file');
+    };
+
     // ── Backend subscriptions ────────────────────────────────────────────
     // A bridge-opened session becomes a tab here; `add` is idempotent, so the
     // echo of an open this app started itself is a no-op.
@@ -284,6 +305,7 @@ export function createSessionStore(deps: SessionStoreDeps): SessionStore {
       remove,
       setFocused: setFocusedId,
       updateTotal,
+      setStreamingKind,
       markPendingClose: (sessionId) => { pendingClose.add(sessionId); },
       releasePendingClose: (sessionId) => { pendingClose.delete(sessionId); },
       setSearchQueryProvider: (provider) => { searchQuery = provider; },
