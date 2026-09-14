@@ -287,7 +287,7 @@ pub struct SearchHits {
 /// caller that passed `None` learns what it got rather than having to
 /// re-derive it (which is what `mcp_bridge::h_run_pipeline` does today, and
 /// what `usePipelineCommands.ts` duplicates on the frontend).
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PipelineRunResult {
     pub session_id: String,

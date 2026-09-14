@@ -29,7 +29,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use rayon::prelude::*;
+use serde::Serialize;
 use serde_json::{json, Value};
+use ts_rs::TS;
 
 use crate::commands::pipeline::{
     source_type_filter_skip, source_type_skip, PipelineRunSummary,
@@ -48,7 +50,7 @@ use crate::processors::state_tracker::types::{StateTrackerResult, StateTransitio
 use crate::processors::ProcessorKind;
 use crate::services::events::{EventSink, PipelineProgressEvent, ProgressEvent, ProgressSink};
 use crate::services::wire::PipelineRunResult;
-use crate::services::{lock_svc, policy, ServiceCtx, ServiceError};
+use crate::services::{chain, lock_svc, policy, Caller, ServiceCtx, ServiceError};
 
 /// The built-in PII transformer. Force-included in the effective chain whenever
 /// the caller's redaction gate is on, and exempt from source-type exclusion —
@@ -65,6 +67,25 @@ pub const UNSUPPORTED_PROCESSOR_TYPE: &str = "UNSUPPORTED_PROCESSOR_TYPE";
 const RESULT_LINE_CHARS: usize = 500;
 
 const CHUNK_SIZE: usize = 50_000;
+
+/// Event name for [`PipelineCompleteEvent`].
+pub const PIPELINE_COMPLETE_EVENT: &str = "pipeline-complete";
+
+/// Broadcast once per [`run`], after the blocking body returns and before the
+/// result is handed back to the caller — on success **and** on failure — so a
+/// UI store can land the results of a run it did not start (an agent's) or
+/// clear its progress bar when that run failed. Exactly one of `result` /
+/// `error` is `Some`. A run cancelled while queued or mid-run arrives as
+/// `result: Some` with empty `summaries` (`run_blocking` returns `Ok` for a
+/// cancel, so the two are not distinguishable here without changing it).
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PipelineCompleteEvent {
+    pub session_id: String,
+    pub caller: Caller,
+    pub result: Option<PipelineRunResult>,
+    pub error: Option<String>,
+}
 
 // ---------------------------------------------------------------------------
 // Progress plumbing
@@ -318,8 +339,12 @@ impl Drop for PipelineRunGuard<'_> {
 /// per-chunk progress goes — `TauriProgressSink` from the command adapter,
 /// [`EventSinkProgress`] from the bridge adapter, `NullProgressSink` in tests.
 ///
-/// Journals `pipeline.run` on completion (not on start), so the activity feed
-/// records runs that finished rather than runs that were attempted.
+/// Emits [`PipelineCompleteEvent`] once the blocking body returns — on
+/// success and on failure alike — then journals `pipeline.run` on completion
+/// (not on start), so the activity feed records runs that finished rather
+/// than runs that were attempted. An explicit `requested` list is also merged
+/// into the session's chain via `services::chain::patch` before the run
+/// starts (see `run_blocking`).
 pub async fn run(
     ctx: ServiceCtx,
     session_id: String,
@@ -328,11 +353,31 @@ pub async fn run(
 ) -> Result<PipelineRunResult, ServiceError> {
     let task_ctx = ctx.clone();
     let task_session = session_id.clone();
-    let result = tokio::task::spawn_blocking(move || {
+    let outcome = tokio::task::spawn_blocking(move || {
         run_blocking(&task_ctx, &task_session, requested.as_deref(), &*progress)
     })
     .await
-    .map_err(|e| ServiceError::Internal(format!("Pipeline task panicked: {e}")))??;
+    .map_err(|e| ServiceError::Internal(format!("Pipeline task panicked: {e}")))
+    .and_then(|r| r);
+
+    // Announce the outcome before the caller sees it, either way — a listener
+    // that is not the caller (the UI watching an agent's run) has no other way
+    // to learn the run finished.
+    let (result, error) = match &outcome {
+        Ok(result) => (Some(result.clone()), None),
+        Err(e) => (None, Some(e.message())),
+    };
+    ctx.events().emit_json(
+        PIPELINE_COMPLETE_EVENT,
+        serde_json::to_value(PipelineCompleteEvent {
+            session_id: session_id.clone(),
+            caller: ctx.caller().clone(),
+            result,
+            error,
+        })
+        .unwrap_or_default(),
+    );
+    let result = outcome?;
 
     ctx.journal(
         "pipeline.run",
@@ -396,6 +441,21 @@ fn run_blocking(
     // resolution happened after the run lock was taken). Each AppState lock it
     // needs is acquired and released in turn, never nested.
     let processor_ids = resolve_effective_chain(ctx, session_id, requested)?;
+
+    // ── Merge an explicit list into the session's chain ──────────────────────
+    // An explicit `processor_ids` (an agent naming processors, or the UI's
+    // override path) becomes part of the chain the user sees and the next
+    // chain-only run executes — silently running something the chain never
+    // learns about is exactly the invisibility this closes. `chain::patch`
+    // emits `chain-update` (before the first `pipeline-progress` below) and
+    // journals when membership changed; ids are already resolved, so its
+    // strict resolution cannot fail on them, and it strips the anonymizer
+    // `resolve_effective_chain` may have force-added. Deliberately ahead of
+    // the queued-cancel check: a run cancelled while still queued has still
+    // expressed which processors the caller wanted in the chain.
+    if requested.is_some_and(|r| !r.is_empty()) {
+        chain::patch(ctx, session_id, processor_ids.clone(), Vec::new())?;
+    }
 
     // If a stop arrived while we were queued behind another run, honor it now
     // rather than running a full pass. Returning empty leaves any results
@@ -1969,7 +2029,7 @@ pipeline:
 
     #[tokio::test]
     async fn a_queued_cancel_aborts_the_run_without_clearing_stored_results() {
-        let (ctx, _t) = test_ctx().with_session("s1", 3).build();
+        let (ctx, sink, _t) = test_ctx().with_session("s1", 3).build_recording();
         install(&ctx, "a@official", reporter_processor("a"));
 
         // Seed a sentinel result so we can tell a queued-cancel abort left
@@ -2058,6 +2118,148 @@ pipeline:
                 .is_some_and(|m| m.contains_key("sentinel@official")),
             "a queued-cancel abort must leave previously stored results untouched"
         );
+        drop(stored);
+
+        // A cancelled run still announces itself — as a success with no
+        // summaries, which is all `run_blocking` lets `run` tell apart.
+        let done = sink.only_event(PIPELINE_COMPLETE_EVENT);
+        assert_eq!(done["error"], Value::Null);
+        assert_eq!(done["result"]["summaries"], json!([]));
+        assert_eq!(done["result"]["effectiveProcessorIds"], json!(["a@official"]));
+
+        // …and the explicit id reached the chain even though the run never
+        // executed: the merge is deliberately ahead of the queued-cancel check.
+        sink.only_event(chain::CHAIN_UPDATE_EVENT);
+        assert_eq!(
+            chain::get(&ctx, "s1").expect("chain").active_processor_ids,
+            vec!["a@official".to_string()]
+        );
+    }
+
+    // ── chain merge + pipeline-complete ────────────────────────────────────
+
+    /// An explicit-ids run adds those ids to the session's chain, and the
+    /// `chain-update` announcing that lands before the first
+    /// `pipeline-progress` — both through the same broadcast sink, the way
+    /// the bridge wires them (`EventSinkProgress` over `ctx.events()`).
+    #[tokio::test]
+    async fn an_explicit_ids_run_merges_into_the_chain_before_any_progress() {
+        let (ctx, sink, _t) = test_ctx().agent("claude").with_session("s1", 3).build_recording();
+        install(&ctx, "a@official", reporter_processor("a"));
+        install(&ctx, "b@official", reporter_processor("b"));
+        set_meta(&ctx, "s1", &["a@official"], &[]);
+
+        let progress: Arc<dyn ProgressSink> =
+            Arc::new(EventSinkProgress::new(Arc::clone(&sink) as Arc<dyn EventSink>));
+        let out = run(ctx.clone(), "s1".to_string(), Some(vec!["b".to_string()]), progress)
+            .await
+            .expect("run succeeds");
+        // The agent is redacted by default, so the run itself carries the
+        // force-included anonymizer — which must NOT reach the chain below.
+        assert_eq!(
+            out.effective_processor_ids,
+            vec!["b@official".to_string(), PII_ANONYMIZER_ID.to_string()]
+        );
+
+        let names: Vec<String> = sink.events().into_iter().map(|e| e.name).collect();
+        let chain_at = names
+            .iter()
+            .position(|n| n == chain::CHAIN_UPDATE_EVENT)
+            .expect("an explicit-ids run must emit chain-update");
+        let progress_at = names
+            .iter()
+            .position(|n| n == "pipeline-progress")
+            .expect("the run must emit progress");
+        assert!(
+            chain_at < progress_at,
+            "chain-update must precede the first pipeline-progress: {names:?}"
+        );
+
+        let ev = sink.only_event(chain::CHAIN_UPDATE_EVENT);
+        assert_eq!(ev["activeProcessorIds"], json!(["a@official", "b@official"]));
+        assert_eq!(ev["caller"], json!({ "kind": "agent", "client": "claude" }));
+
+        let stored = chain::get(&ctx, "s1").expect("chain");
+        assert_eq!(stored.active_processor_ids, vec!["a@official".to_string(), "b@official".to_string()]);
+
+        // Both the chain edit and the run are in the feed, in that order.
+        let actions: Vec<String> = sink
+            .events_named("activity")
+            .into_iter()
+            .map(|e| e.payload["action"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert_eq!(actions, vec!["chain.update".to_string(), "pipeline.run".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_chain_only_run_emits_no_chain_update() {
+        let (ctx, sink, _t) = test_ctx().with_session("s1", 3).build_recording();
+        install(&ctx, "a@official", reporter_processor("a"));
+        set_meta(&ctx, "s1", &["a@official"], &[]);
+
+        run(ctx.clone(), "s1".to_string(), None, Arc::new(NullProgressSink))
+            .await
+            .expect("run succeeds");
+
+        assert!(
+            sink.events_named(chain::CHAIN_UPDATE_EVENT).is_empty(),
+            "running the chain as configured is not a chain edit"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_explicit_ids_run_over_ids_already_in_the_chain_is_not_a_chain_edit() {
+        let (ctx, sink, _t) = test_ctx().with_session("s1", 3).build_recording();
+        install(&ctx, "a@official", reporter_processor("a"));
+        set_meta(&ctx, "s1", &["a@official"], &[]);
+
+        run(ctx.clone(), "s1".to_string(), Some(vec!["a".to_string()]), Arc::new(NullProgressSink))
+            .await
+            .expect("run succeeds");
+
+        assert!(sink.events_named(chain::CHAIN_UPDATE_EVENT).is_empty());
+        let entry = sink.only_event("activity");
+        assert_eq!(entry["action"], "pipeline.run");
+    }
+
+    #[tokio::test]
+    async fn pipeline_complete_carries_the_result_on_success() {
+        let (ctx, sink, _t) = test_ctx().agent("claude").with_session("s1", 3).build_recording();
+        install(&ctx, "a@official", reporter_processor("a"));
+        set_meta(&ctx, "s1", &["a@official"], &[]);
+
+        let out = run(ctx.clone(), "s1".to_string(), None, Arc::new(NullProgressSink))
+            .await
+            .expect("run succeeds");
+
+        let done = sink.only_event(PIPELINE_COMPLETE_EVENT);
+        assert_eq!(done["sessionId"], "s1");
+        assert_eq!(done["caller"], json!({ "kind": "agent", "client": "claude" }));
+        assert_eq!(done["error"], Value::Null);
+        assert_eq!(done["result"], serde_json::to_value(&out).unwrap(), "the event carries the same result the caller gets");
+
+        // Emitted before the journal entry, so a listener sees the outcome
+        // first and the feed line second.
+        let names: Vec<String> = sink.events().into_iter().map(|e| e.name).collect();
+        let done_at = names.iter().position(|n| n == PIPELINE_COMPLETE_EVENT).unwrap();
+        let journal_at = names.iter().position(|n| n == "activity").unwrap();
+        assert!(done_at < journal_at, "{names:?}");
+    }
+
+    #[tokio::test]
+    async fn pipeline_complete_carries_the_error_on_failure() {
+        let (ctx, sink, _t) = test_ctx().with_session("s1", 3).build_recording();
+
+        let err = run(ctx.clone(), "s1".to_string(), None, Arc::new(NullProgressSink))
+            .await
+            .unwrap_err();
+
+        let done = sink.only_event(PIPELINE_COMPLETE_EVENT);
+        assert_eq!(done["sessionId"], "s1");
+        assert_eq!(done["caller"], json!({ "kind": "ui" }));
+        assert_eq!(done["result"], Value::Null);
+        assert_eq!(done["error"], err.message());
+        assert!(sink.events_named("activity").is_empty(), "a failed run is not journaled");
     }
 
     // ── SourceSnapshot (moved with the run logic) ──────────────────────────

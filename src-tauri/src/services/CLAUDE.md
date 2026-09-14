@@ -164,7 +164,8 @@ across both transports instead of per-transport. **Mutations only — reads are 
 journaled.** Journaled actions: `session.{open,close}`, `pipeline.run`, `bookmark.*`,
 `analysis.*`, `watch.{create,cancel}`, `filter.{create,cancel,close}`,
 `workspace.{save,load,switch}`, `processor.*`, `pack.*`, `stream.{start,stop,save}`,
-`export.run`, `settings.*`. Two documented non-journal mutations: `analyses::set_workspace`
+`export.run`, `settings.*`, `chain.update` (only when membership or enablement changed — a
+pure reorder emits `chain-update` and autosaves but is not feed-worthy). Two documented non-journal mutations: `analyses::set_workspace`
 (restoring a workspace must not immediately re-persist itself as a caller action) and
 `workspace::restore_session` (the enclosing `workspace.load`/`workspace.switch` entry
 already records it).

@@ -138,14 +138,15 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
     // `GET /mcp/settings/agent_access`, 74 with B1's `GET|PUT|DELETE
     // /mcp/focus` + `POST /mcp/navigate`, 78 with B2's `GET /mcp/themes` +
     // `GET|PUT|DELETE /mcp/themes/{slug}`, 80 with B3's `PATCH|DELETE
-    // /mcp/workspaces/{id}`) — a drift here means BOTH tests need updating,
+    // /mcp/workspaces/{id}`, 83 with the agent-chain B1's `GET|PUT|PATCH
+    // /mcp/sessions/{session_id}/chain`) — a drift here means BOTH tests need updating,
     // which is the point: it forces a route addition or removal to touch this
     // file. Other packages may bump this same number concurrently in sibling
     // worktrees — resolve a merge conflict by summing every package's
     // additions rather than picking one side.
     assert_eq!(
         routes.len(),
-        80,
+        83,
         "mcp_bridge::ROUTES count drifted — update this assertion alongside the route table"
     );
 
@@ -3146,5 +3147,131 @@ mod b3_workspace_rename_delete {
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
         assert_eq!(body["error"]["code"], "NOT_ALLOWED");
         assert!(ltw.exists(), "a refused delete must not remove the file");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// B1 (agent chain) — GET | PUT | PATCH /mcp/sessions/{session_id}/chain
+// ---------------------------------------------------------------------------
+
+mod b1_agent_chain {
+    use super::*;
+    use app_lib::processors::AnyProcessor;
+
+    const REPORTER_YAML: &str = r#"
+meta:
+  id: r
+  name: R
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains
+        value: "x"
+"#;
+
+    fn with_session(state: &Arc<AppState>, id: &str) {
+        state
+            .sessions
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), app_lib::services::testing::fixture_session(id, 5));
+    }
+
+    fn install(state: &Arc<AppState>, id: &str) {
+        let proc = AnyProcessor::from_yaml(REPORTER_YAML).expect("fixture yaml parses");
+        state.processors.lock().unwrap().insert(id.to_string(), proc);
+    }
+
+    #[tokio::test]
+    async fn get_chain_unknown_session_yields_404() {
+        let (router, _state, _sink, _tmp) = app();
+        let (status, body) = get(&router, "/mcp/sessions/nosuch/chain", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(body["error"]["code"], "NOT_FOUND");
+    }
+
+    #[tokio::test]
+    async fn get_chain_with_nothing_configured_is_empty() {
+        let (router, state, _sink, _tmp) = app();
+        with_session(&state, "s1");
+        let (status, body) = get(&router, "/mcp/sessions/s1/chain", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body, json!({ "sessionId": "s1", "activeProcessorIds": [], "disabledProcessorIds": [] }));
+    }
+
+    #[tokio::test]
+    async fn put_chain_passes_a_qualified_lts_id_through_and_resolves_a_bare_one() {
+        let (router, state, sink, _tmp) = app();
+        with_session(&state, "s1");
+        install(&state, "wifi@official");
+
+        let (status, body) = send_json(
+            &router,
+            Method::PUT,
+            "/mcp/sessions/s1/chain",
+            &trusted_headers(),
+            &json!({ "activeProcessorIds": ["wifi", "x@lts-abc"], "disabledProcessorIds": ["x@lts-abc"] }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["activeProcessorIds"], json!(["wifi@official", "x@lts-abc"]));
+        assert_eq!(body["disabledProcessorIds"], json!(["x@lts-abc"]));
+
+        let (status, got) = get(&router, "/mcp/sessions/s1/chain", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(got, body, "GET must read back exactly what PUT stored");
+
+        let ev = sink.only_event("chain-update");
+        assert_eq!(ev["caller"]["kind"], "agent");
+        assert_eq!(ev["activeProcessorIds"], json!(["wifi@official", "x@lts-abc"]));
+        let entry = sink.only_event("activity");
+        assert_eq!(entry["action"], "chain.update");
+        assert_eq!(entry["sessionId"], "s1");
+    }
+
+    #[tokio::test]
+    async fn patch_chain_unknown_id_yields_400() {
+        let (router, state, sink, _tmp) = app();
+        with_session(&state, "s1");
+        let (status, body) = send_json(
+            &router,
+            Method::PATCH,
+            "/mcp/sessions/s1/chain",
+            &trusted_headers(),
+            &json!({ "add": ["nope"] }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["code"], "INVALID_ARGUMENT");
+        assert!(sink.events_named("chain-update").is_empty(), "a refused patch emits nothing");
+    }
+
+    #[tokio::test]
+    async fn patch_chain_adds_then_removes_a_member() {
+        let (router, state, _sink, _tmp) = app();
+        with_session(&state, "s1");
+        install(&state, "wifi@official");
+
+        let (status, body) = send_json(
+            &router,
+            Method::PATCH,
+            "/mcp/sessions/s1/chain",
+            &trusted_headers(),
+            &json!({ "add": ["wifi"] }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["activeProcessorIds"], json!(["wifi@official"]));
+
+        let (status, body) = send_json(
+            &router,
+            Method::PATCH,
+            "/mcp/sessions/s1/chain",
+            &trusted_headers(),
+            &json!({ "remove": ["wifi@official"] }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["activeProcessorIds"], json!([]));
     }
 }

@@ -127,8 +127,11 @@ is gone (the backend decides via `services::policy::should_anonymize`). **Push
 `setSessionPipelineMeta` immediately before every run, not only on the override path** —
 `usePipelineWiring` debounces its own push by 500ms, and editing the chain then hitting Run
 inside that window would otherwise resolve against the *previous* chain server-side. The
-extra IPC round trip is the cost of closing that race; `setSessionPipelineMeta` itself is a
-pure in-memory insert (no autosave, no journal, no event).
+extra IPC round trip is the cost of closing that race. `setSessionPipelineMeta` goes through
+`services::chain::set` (the same function the bridge's `PUT /mcp/sessions/{id}/chain` calls):
+an unchanged chain is a no-op, a changed one emits `chain-update` (with `caller: { kind: 'ui' }`,
+so a listener can ignore its own echo), schedules an autosave, and journals `chain.update` when
+membership or enablement changed.
 
 An empty effective chain is not an error — `resolve_effective_chain` returns
 `InvalidArg("no pipeline chain configured for session {id}")`, which the frontend matches

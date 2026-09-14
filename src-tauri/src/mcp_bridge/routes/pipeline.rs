@@ -46,6 +46,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::services::ServiceError;
+use crate::services::chain::{self, ChainState};
 use crate::services::pipeline::{self, DetailPage, ProcessorDetail as SvcDetail, TransitionRow};
 use crate::services::wire::{
     EmissionEntry, MatchedLineEntry, Page, PipelineRunResult, ProcessorDetail, ReporterDetail,
@@ -289,6 +290,73 @@ pub(crate) async fn h_run_pipeline(
     Ok(Json(
         pipeline::run(svc, session_id, body.processor_ids, progress).await?,
     ))
+}
+
+// ---------------------------------------------------------------------------
+// GET | PUT | PATCH /mcp/sessions/{session_id}/chain
+// ---------------------------------------------------------------------------
+//
+// The session's processor chain — what the user sees in the Analyzers panel
+// and what a chain-only `run_pipeline` executes. All three are pure
+// passthroughs of `services::chain`, the same functions the UI's
+// `set_session_pipeline_meta` command calls, so an agent's edit and a human's
+// land in one place and both broadcast `chain-update`.
+
+/// Body for `PUT …/chain` — a full replace. Both fields default to empty so
+/// `{}` clears the chain rather than failing to deserialize.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetChainBody {
+    /// The full ordered chain, disabled members included.
+    #[serde(default)]
+    active_processor_ids: Vec<String>,
+    /// The subset of `active_processor_ids` that is switched off.
+    #[serde(default)]
+    disabled_processor_ids: Vec<String>,
+}
+
+/// Body for `PATCH …/chain` — add and/or remove members, leaving the rest.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PatchChainBody {
+    #[serde(default)]
+    add: Vec<String>,
+    #[serde(default)]
+    remove: Vec<String>,
+}
+
+pub(crate) async fn h_get_chain(
+    State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+) -> Result<Json<ChainState>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(chain::get(&svc, &session_id)?))
+}
+
+pub(crate) async fn h_set_chain(
+    State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    JsonBody(body): JsonBody<SetChainBody>,
+) -> Result<Json<ChainState>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(chain::set(
+        &svc,
+        &session_id,
+        body.active_processor_ids,
+        body.disabled_processor_ids,
+    )?))
+}
+
+pub(crate) async fn h_patch_chain(
+    State(ctx): State<BridgeCtx>,
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    JsonBody(body): JsonBody<PatchChainBody>,
+) -> Result<Json<ChainState>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    Ok(Json(chain::patch(&svc, &session_id, body.add, body.remove)?))
 }
 
 // ---------------------------------------------------------------------------

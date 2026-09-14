@@ -231,7 +231,15 @@ const covered = new Set<string>();
  * `logtapper_themes` already apply by exposing only reads for other
  * Ui-only-gated config (anonymizer config, open-file allowlist).
  */
-const ROUTES_WITH_NO_TOOL = new Set(["PUT /mcp/themes/{slug}", "DELETE /mcp/themes/{slug}"]);
+const ROUTES_WITH_NO_TOOL = new Set([
+  "PUT /mcp/themes/{slug}",
+  "DELETE /mcp/themes/{slug}",
+  // Agent-chain B1 landed the routes; M1 adds `logtapper_chain` and moves
+  // these three into ROUTE_TABLE.
+  "GET /mcp/sessions/{session_id}/chain",
+  "PUT /mcp/sessions/{session_id}/chain",
+  "PATCH /mcp/sessions/{session_id}/chain",
+]);
 
 describe("mcp-server tool → route coverage", () => {
   it.each(ROUTE_TABLE)("$tool ($route) calls $method $route", async (row) => {
@@ -255,7 +263,7 @@ describe("mcp-server tool → route coverage", () => {
 
   it("ROUTE_TABLE covers every entry in mcp_bridge::ROUTES", () => {
     const bridgeRoutes = parseBridgeRoutes();
-    expect(bridgeRoutes.length).toBe(80);
+    expect(bridgeRoutes.length).toBe(83);
 
     const missing = bridgeRoutes.filter((r) => !covered.has(r) && !ROUTES_WITH_NO_TOOL.has(r));
     expect(missing, `ROUTE_TABLE is missing rows for: ${missing.join(", ")}`).toEqual([]);

@@ -219,6 +219,10 @@ macro_rules! ROOT_TYPES {
             app_lib::services::workspace::RenameWorkspaceRequest,
             app_lib::services::workspace::DeleteWorkspaceRequest,
             app_lib::services::workspace::WorkspaceListChangedEvent,
+            // --- B1 (agent chain): chain as shared session state ---------------
+            app_lib::services::chain::ChainState,
+            app_lib::services::chain::ChainUpdateEvent,
+            app_lib::services::pipeline::PipelineCompleteEvent,
         ]
     };
 }

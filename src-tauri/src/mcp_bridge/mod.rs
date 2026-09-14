@@ -37,7 +37,9 @@ use routes::filters::{h_cancel_filter, h_close_filter, h_create_filter, h_filter
 use routes::export::{h_export_info, h_export_run};
 use routes::insights::h_insights;
 use routes::lines::{h_lines_around, h_query};
-use routes::pipeline::{h_pipeline, h_processor_detail, h_run_pipeline};
+use routes::pipeline::{
+    h_get_chain, h_patch_chain, h_pipeline, h_processor_detail, h_run_pipeline, h_set_chain,
+};
 use routes::processors::{
     h_install_processor, h_marketplace_fetch, h_marketplace_install, h_marketplace_sources,
     h_marketplace_update_all, h_marketplace_updates, h_packs, h_processor_defs_list,
@@ -263,6 +265,10 @@ pub const ROUTES: &[(&str, &str)] = &[
     // B3 — workspace rename/delete (services::workspace).
     ("PATCH", "/mcp/workspaces/{id}"),
     ("DELETE", "/mcp/workspaces/{id}"),
+    // B1 (agent chain) — the session's processor chain (services::chain).
+    ("GET", "/mcp/sessions/{session_id}/chain"),
+    ("PUT", "/mcp/sessions/{session_id}/chain"),
+    ("PATCH", "/mcp/sessions/{session_id}/chain"),
 ];
 
 /// Build the bridge's `Router` without binding a socket.
@@ -354,6 +360,8 @@ pub fn router(ctx: BridgeCtx) -> Router {
         .route("/mcp/themes/{slug}", get(h_read_theme).put(h_write_theme).delete(h_delete_theme))
         // B3 — workspace rename/delete.
         .route("/mcp/workspaces/{id}", patch(h_rename_workspace).delete(h_delete_workspace))
+        // B1 (agent chain) — the session's processor chain.
+        .route("/mcp/sessions/{session_id}/chain", get(h_get_chain).put(h_set_chain).patch(h_patch_chain))
         .layer(axum_middleware::from_fn_with_state(ctx.clone(), middleware::record_activity))
         // `require_local` is added AFTER `record_activity`, which in axum/tower
         // layering means it becomes the OUTERMOST layer and therefore runs
@@ -505,6 +513,9 @@ mod tests {
             "DELETE /mcp/themes/{slug}",
             "PATCH /mcp/workspaces/{id}",
             "DELETE /mcp/workspaces/{id}",
+            "GET /mcp/sessions/{session_id}/chain",
+            "PUT /mcp/sessions/{session_id}/chain",
+            "PATCH /mcp/sessions/{session_id}/chain",
         ];
 
         assert_eq!(rendered, expected, "ROUTES drifted from the pinned route table — update both this test and router() together");

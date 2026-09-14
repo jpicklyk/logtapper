@@ -78,8 +78,8 @@ use app_lib::processors::{AnyProcessor, ProcessorKind, ProcessorMeta};
 use app_lib::services::pipeline::{self, DetailPage, ProcessorDetail as SvcProcessorDetail};
 use app_lib::services::testing::{fixture_session, fixture_session_with_pii};
 use app_lib::services::{
-    analyses, bookmarks, correlator, filters, focus, insights, navigation, search, sections,
-    settings, stream, themes, tracker, watches, workspace,
+    analyses, bookmarks, chain, correlator, filters, focus, insights, navigation, search,
+    sections, settings, stream, themes, tracker, watches, workspace,
 };
 use app_lib::services::lines::{self, LineSelection, LinesRequest};
 use app_lib::services::search::SearchHitsRequest;
@@ -1344,4 +1344,35 @@ async fn theme_summary_list_matches_between_the_service_call_and_the_http_route(
     assert_eq!(status, axum::http::StatusCode::OK, "{http_value}");
     assert_eq!(expected_value, http_value, "ThemeSummary list must be byte-identical between the service call and the HTTP route");
     assert_ts_binding_covers_json_keys("ThemeSummary", &http_value[0]);
+}
+
+// ---------------------------------------------------------------------------
+// 18. B1 (agent chain) — ChainState
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn chain_state_is_byte_identical_between_the_service_call_and_the_http_read() {
+    let (bridge_ctx, state, _sink, _tmp) = support::ctx_only();
+    state.sessions.lock().unwrap().insert("s1".to_string(), fixture_session("s1", 5));
+
+    let svc = bridge_ctx.svc("wire-parity");
+    let router = mcp_bridge::router(bridge_ctx);
+
+    // Mutate through the service path (the same function `PUT …/chain`
+    // calls) — a lenient set, so the `@lts-` ids need no installed processor …
+    let expected = chain::set(
+        &svc,
+        "s1",
+        vec!["a@lts-one".to_string(), "b@lts-two".to_string()],
+        vec!["b@lts-two".to_string()],
+    )
+    .expect("service chain::set");
+    let expected_value = serde_json::to_value(&expected).unwrap();
+
+    // … and read it back over HTTP (`GET …/chain` is a pure passthrough of
+    // `chain::get`, which returns the same `ChainState`).
+    let (status, http_value) = get(&router, "/mcp/sessions/s1/chain", &trusted_headers()).await;
+    assert_eq!(status, axum::http::StatusCode::OK, "{http_value}");
+    assert_eq!(expected_value, http_value, "ChainState must be byte-identical between the service call and the HTTP read");
+    assert_ts_binding_covers_json_keys("ChainState", &http_value);
 }

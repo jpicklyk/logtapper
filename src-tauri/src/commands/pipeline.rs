@@ -12,7 +12,7 @@ use serde::Serialize;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 
-use crate::commands::{lock_or_err, AppState};
+use crate::commands::AppState;
 use crate::services::pipeline;
 use crate::services::wire::PipelineRunResult;
 use ts_rs::TS;
@@ -35,7 +35,7 @@ pub struct PipelineProgress {
 // Result summary returned from run_pipeline
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize, TS)]
+#[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PipelineRunSummary {
     pub processor_id: String,
@@ -185,22 +185,27 @@ pub async fn stop_pipeline(state: State<'_, std::sync::Arc<AppState>>) -> Result
 }
 
 // ---------------------------------------------------------------------------
-// set_session_pipeline_meta — frontend pushes chain state for workspace saves
+// set_session_pipeline_meta — frontend pushes chain state
 // ---------------------------------------------------------------------------
 
+/// Thin adapter over `services::chain::set`. This used to be a bare map
+/// insert; it now goes through the same service the bridge's
+/// `PUT /mcp/sessions/{id}/chain` uses, so a UI chain edit emits
+/// `chain-update`, schedules an autosave and journals like an agent's does.
+/// The JS argument names are unchanged.
 #[tauri::command]
 pub fn set_session_pipeline_meta(
-    state: State<'_, std::sync::Arc<AppState>>,
+    app: AppHandle,
     session_id: String,
     active_processor_ids: Vec<String>,
     disabled_processor_ids: Vec<String>,
 ) -> Result<(), String> {
-    let meta = crate::workspace::SessionMeta {
+    crate::services::chain::set(
+        &crate::commands::adapters::ui_ctx(&app),
+        &session_id,
         active_processor_ids,
         disabled_processor_ids,
-    };
-    let mut map = lock_or_err(&state.session_pipeline_meta, "session_pipeline_meta")?;
-    map.insert(session_id, meta);
+    )?;
     Ok(())
 }
 

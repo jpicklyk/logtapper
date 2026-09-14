@@ -50,6 +50,7 @@ pub mod wire;
 // Domain services — one file per package (stubs until the owning package lands).
 pub mod analyses;
 pub mod bookmarks;
+pub mod chain;
 pub mod correlator;
 pub mod export;
 pub mod filters;
