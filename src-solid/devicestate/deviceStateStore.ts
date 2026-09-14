@@ -43,6 +43,8 @@ import type { Accessor, Owner } from 'solid-js';
 import { getStateAtLine, getStateTransitions } from '@bridge/commands';
 import type { FieldChange, ProcessorSummary, StateSnapshot, StateTransition } from '@bridge/types';
 import type { CursorPosition, NavSource } from '../viewer';
+import { createGenerationGuard } from '../reactive';
+import type { GenerationGuard } from '../reactive';
 
 /** Debounce window between a cursor move and the resulting `getStateAtLine`
  *  fetch — cheap enough that a fast scroll doesn't fire one request per line. */
@@ -178,7 +180,7 @@ interface TrackerRuntime {
   fetchedGeneration: FetchedGeneration;
   /** Guards a late-settling promise after a newer fetch for this same runtime
    *  started (generation changed again before the first one returned). */
-  fetchToken: number;
+  guard: GenerationGuard;
 }
 
 interface SessionDeviceState {
@@ -197,7 +199,7 @@ interface SessionDeviceState {
    *  switch does not diff two unrelated trackers' fields against each other. */
   displayedTrackerId: string | null;
   /** Guards a late-settling `getStateAtLine` after a newer one was issued. */
-  fetchToken: number;
+  guard: GenerationGuard;
   debounceTimer: ReturnType<typeof setTimeout> | undefined;
   trackerRuntimes: Map<string, TrackerRuntime>;
 }
@@ -220,7 +222,7 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
         loading,
         setLoading: (v) => setLoadingSignal(v),
         fetchedGeneration: UNFETCHED,
-        fetchToken: 0,
+        guard: createGenerationGuard(),
       };
     };
 
@@ -238,16 +240,16 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
           if (disposed || generation === null || runtime!.fetchedGeneration === generation) return;
           runtime!.fetchedGeneration = generation;
           runtime!.setLoading(true);
-          const myToken = ++runtime!.fetchToken;
+          const myToken = runtime!.guard.bump();
           commands
             .getStateTransitions(sessionId, trackerId)
             .then((trans) => {
-              if (disposed || runtime!.fetchToken !== myToken) return;
+              if (disposed || !runtime!.guard.isCurrent(myToken)) return;
               runtime!.setTransitions(trans);
               runtime!.setLoading(false);
             })
             .catch(() => {
-              if (disposed || runtime!.fetchToken !== myToken) return;
+              if (disposed || !runtime!.guard.isCurrent(myToken)) return;
               runtime!.setLoading(false);
             });
         });
@@ -282,7 +284,7 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
         setChanges: (v) => setChangesSignal(v),
         snapshotCache: new Map(),
         displayedTrackerId: null,
-        fetchToken: 0,
+        guard: createGenerationGuard(),
         debounceTimer: undefined,
         trackerRuntimes: new Map(),
       };
@@ -296,7 +298,7 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
       createEffect(() => {
         // The tracker id is deliberately the value at schedule time: the
         // debounced fetch below must resolve for the tracker/cursor pair that
-        // scheduled it, and `fetchToken` discards a response the effect has
+        // scheduled it, and `state.guard` discards a response the effect has
         // since superseded. Re-reading the memo inside the timeout would pair
         // a newer tracker with an older cursor line.
         // eslint-disable-next-line solid/reactivity -- snapshot at schedule time by design (see above)
@@ -340,18 +342,18 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
         }
 
         state.setSnapshotLoading(true);
-        const myToken = ++state.fetchToken;
+        const myToken = state.guard.bump();
         state.debounceTimer = setTimeout(() => {
           state.debounceTimer = undefined;
           commands
             .getStateAtLine(sessionId, trackerId, line)
             .then((snap) => {
-              if (disposed || state.fetchToken !== myToken) return;
+              if (disposed || !state.guard.isCurrent(myToken)) return;
               if (isSnapshotMode) state.snapshotCache.set(trackerId, { generation, snapshot: snap });
               applySnapshot(snap);
             })
             .catch(() => {
-              if (disposed || state.fetchToken !== myToken) return;
+              if (disposed || !state.guard.isCurrent(myToken)) return;
               state.setSnapshotLoading(false);
             });
         }, SNAPSHOT_DEBOUNCE_MS);

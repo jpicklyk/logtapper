@@ -3,6 +3,7 @@ import type { Accessor } from 'solid-js';
 import { FetchScheduler } from '@viewport/FetchScheduler';
 import type { DataSource } from '@viewport/DataSource';
 import { DEFAULT_ROW_HEIGHT } from './virtualBase';
+import { createGenerationGuard } from '../reactive';
 
 /**
  * Solid port of `src-next/viewport/useFetchScheduler.ts`.
@@ -85,7 +86,7 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
   const bumpCacheVersion = () => setCacheVersion((v) => v + 1);
 
   let fetchInFlight = false;
-  let fetchGen = 0;
+  const fetchGuard = createGenerationGuard();
   let initialFetchDone = false;
   let disposed = false;
 
@@ -115,7 +116,7 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
     on(
       () => dataSource().sourceId,
       () => {
-        fetchGen++;
+        fetchGuard.bump();
         fetchInFlight = false;
         initialFetchDone = false;
         bumpCacheVersion();
@@ -133,7 +134,7 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
       on(
         revision,
         () => {
-          fetchGen++;
+          fetchGuard.bump();
           fetchInFlight = false;
           initialFetchDone = false;
           bumpCacheVersion();
@@ -163,10 +164,10 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
           // Viewport already cached — try the prefetch range only.
           if (!missing(prefetch.offset, prefetch.count)) return;
           fetchInFlight = true;
-          const gen = fetchGen;
+          const gen = fetchGuard.current();
           Promise.resolve(ds.getLines(prefetch.offset, prefetch.count))
             .then(() => {
-              if (gen !== fetchGen) return;
+              if (!fetchGuard.isCurrent(gen)) return;
               bumpCacheVersion();
             })
             .catch(console.error)
@@ -181,17 +182,17 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
 
         // Phase 1: viewport fill.
         fetchInFlight = true;
-        const gen = fetchGen;
+        const gen = fetchGuard.current();
         Promise.resolve(ds.getLines(viewport.offset, viewport.count))
           .then(() => {
-            if (gen !== fetchGen) { fetchInFlight = false; return; }
+            if (!fetchGuard.isCurrent(gen)) { fetchInFlight = false; return; }
             bumpCacheVersion();
 
             // Phase 2: directional prefetch. No bump here — the forceFetch in
             // .finally() re-evaluates and bumps only if the viewport moved.
-            const pfGen = fetchGen;
+            const pfGen = fetchGuard.current();
             Promise.resolve(ds.getLines(prefetch.offset, prefetch.count))
-              .then(() => { if (pfGen !== fetchGen) return; })
+              .then(() => { if (!fetchGuard.isCurrent(pfGen)) return; })
               .catch(console.error)
               .finally(() => {
                 fetchInFlight = false;
@@ -222,7 +223,7 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
     // Cancel a stale in-flight prefetch during fast scrolling so it cannot block
     // the post-settle viewport fetch. Uses the scheduler's own velocity notion.
     if (!scheduler.isSettled && fetchInFlight) {
-      fetchGen++;
+      fetchGuard.bump();
       fetchInFlight = false;
     }
 
