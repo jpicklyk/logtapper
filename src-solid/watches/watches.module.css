@@ -1,0 +1,324 @@
+/* watches surface (L2). Lives inside the shell's navigator column / rail
+   drawer, which already supplies padding and scroll — mirrors
+   stream/StreamControlsPanel.module.css's and bookmarks/bookmarks.module.css's
+   conventions (semantic/domain tokens only, no --p-* here). */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+}
+
+/* ── Header ───────────────────────────────────────────────────────────── */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.headerLabel {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-dimmed);
+}
+
+.watchCount {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-overlay);
+  padding: 1px 5px;
+  border-radius: var(--radius-full, 9999px);
+}
+
+.addBtn {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 3px);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+}
+
+.addBtn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 16px;
+  color: var(--text-dimmed);
+  text-align: center;
+}
+
+.emptySub {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ── Watch row ───────────────────────────────────────────────────────────── */
+
+.watchRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.watchRowCancelled {
+  opacity: 0.5;
+}
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full, 9999px);
+  flex-shrink: 0;
+}
+
+.statusDotActive {
+  background: var(--success);
+  box-shadow: 0 0 4px 1px color-mix(in srgb, var(--success) 40%, transparent);
+}
+
+.statusDotCancelled {
+  background: var(--text-dimmed);
+}
+
+.matchCount {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  min-width: 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.matchCountFlash {
+  animation: watches-count-flash 600ms ease-out;
+}
+
+.cancelBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--radius-sm, 3px);
+  background: transparent;
+  color: var(--text-dimmed);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.cancelBtn:hover {
+  color: var(--danger);
+  background: var(--danger-muted);
+}
+
+.dangerLink {
+  border: none;
+  background: transparent;
+  color: var(--danger);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+/* ── Criteria chips ──────────────────────────────────────────────────────── */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 3px);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.chipDanger { color: var(--danger); }
+.chipWarning { color: var(--warning); }
+.chipAccent { color: var(--accent); border-color: var(--accent-border); }
+.chipDimmed { color: var(--text-dimmed); border-color: var(--border-subtle); }
+
+/* ── Section divider ─────────────────────────────────────────────────────── */
+
+.sectionLabel {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 8px 4px 4px;
+}
+
+/* ── Create watch form ───────────────────────────────────────────────────── */
+
+.createForm {
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  padding: 8px;
+  margin: 8px 4px;
+}
+
+.formRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.formRow:last-child { margin-bottom: 0; }
+.formRowActions { justify-content: space-between; }
+
+.formInput {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 3px);
+  background: var(--bg-base);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.formInputSmall { flex: 0 1 90px; min-width: 60px; }
+.formInputTiny { flex: 0 1 56px; min-width: 40px; }
+
+.levelGroup { display: flex; gap: 2px; }
+
+.levelToggle {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 3px);
+  background: transparent;
+  color: var(--text-dimmed);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.levelToggleActive {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.levelToggleDanger {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-muted);
+}
+
+.levelToggleWarning {
+  border-color: var(--warning);
+  color: var(--warning);
+  background: var(--warning-muted);
+}
+
+.combineGroup { display: flex; gap: 2px; }
+
+.combineToggle {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 3px);
+  background: transparent;
+  color: var(--text-dimmed);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.combineToggleActive { border-color: var(--accent); color: var(--accent); }
+
+.formActions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+.formCancelLink {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.formError {
+  color: var(--danger);
+  font-size: 11px;
+  flex: 1;
+  min-width: 0;
+}
+
+.primaryButtonSm {
+  padding: 4px 10px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm, 3px);
+  background: var(--accent);
+  color: var(--text-on-accent);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.primaryButtonSm:disabled { opacity: 0.6; cursor: default; }
+
+@keyframes watches-count-flash {
+  0% {
+    color: var(--accent);
+    text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+  100% {
+    color: var(--text);
+    text-shadow: none;
+  }
+}

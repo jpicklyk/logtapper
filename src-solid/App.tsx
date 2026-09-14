@@ -29,6 +29,7 @@ import type { CallerLike } from './ui';
 import { AnalysesPanel, createAnalysesStore } from './analyses';
 import { DeviceStatePanel, TimelineStrip, createDeviceStateStore } from './devicestate';
 import { BookmarksPanel, createBookmarksStore } from './bookmarks';
+import { WatchesPanel, createWatchesStore } from './watches';
 import { Switcher, WorkspaceHome, createWorkspaceStore } from './workspace';
 import { ExportDialog, createExportStore } from './export';
 import { SettingsPanel, createSettingsStore } from './settings';
@@ -301,6 +302,33 @@ export function App(props: AppProps) {
     return null;
   };
 
+  // Watches (L2) — per-session live watches: list, create, cancel, running
+  // match-count badges. Couples to the app only through the session store
+  // (no controller: see `watches/watchesStore.ts`'s doc comment for why
+  // there is no line-level data to route through it).
+  const watches = createWatchesStore({ sessions: store });
+  onCleanup(() => watches.dispose());
+
+  /** A watch's caller, from the same presence journal `lastRunCaller` reads
+   *  above — `WatchInfo` carries no caller field (see `watchesStore.ts`'s
+   *  doc comment, point 2), so this is the only place that information
+   *  exists on the frontend. `watch.create`'s journalled summary is exactly
+   *  `"watch {watch_id}"` (`services/watches.rs`). */
+  const watchCaller = (watchId: string, sessionId: string): CallerLike | null => {
+    const entries = presence.entries();
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i];
+      if (
+        entry.sessionId === sessionId &&
+        entry.action === 'watch.create' &&
+        entry.summary === `watch ${watchId}`
+      ) {
+        return entry.caller;
+      }
+    }
+    return null;
+  };
+
   const tabs = createMemo<TabDescriptor[]>(() => [
     ...store.order().map((id) => ({
       key: id,
@@ -436,6 +464,7 @@ export function App(props: AppProps) {
         ),
         analyses: () => <AnalysesPanel store={analyses} />,
         bookmarks: () => <BookmarksPanel store={bookmarks} sessions={store} />,
+        watches: () => <WatchesPanel store={watches} sessions={store} callerFor={watchCaller} />,
         viewer: () => (
           <ViewerSplit
             split={splitView}
