@@ -219,6 +219,8 @@ macro_rules! ROOT_TYPES {
             app_lib::services::workspace::RenameWorkspaceRequest,
             app_lib::services::workspace::DeleteWorkspaceRequest,
             app_lib::services::workspace::WorkspaceListChangedEvent,
+            // --- B2: catalog-update event (processor/pack install provenance) ---
+            app_lib::services::processors::CatalogUpdateEvent,
         ]
     };
 }

@@ -19,6 +19,11 @@ hasSchema: boolean,
  */
 source?: string, 
 /**
+ * Who installed this processor: `"ui"` or `"agent:<client>"`. Absent for
+ * a built-in or a processor installed before this field existed.
+ */
+installedBy?: string, 
+/**
  * Pack ID this processor belongs to, if any.
  */
 packId?: string, 

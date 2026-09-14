@@ -27,6 +27,7 @@ export type { BridgeSessionMetadata } from './BridgeSessionMetadata';
 export type { BridgeSessionSource } from './BridgeSessionSource';
 export type { BridgeStatusInfo } from './BridgeStatusInfo';
 export type { Caller } from './Caller';
+export type { CatalogUpdateEvent } from './CatalogUpdateEvent';
 export type { ChartData } from './ChartData';
 export type { CombineMode } from './CombineMode';
 export type { CorrelationEvent } from './CorrelationEvent';

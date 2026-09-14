@@ -347,6 +347,7 @@ mod tests {
             kind: ProcessorKind::StateTracker(Arc::new(tracker_def(mode, timeline))),
             schema: None,
             source: None,
+            installed_by: None,
         };
         ctx.state()
             .processors

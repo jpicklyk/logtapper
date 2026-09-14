@@ -169,6 +169,30 @@ journaled.** Journaled actions: `session.{open,close}`, `pipeline.run`, `bookmar
 `workspace::restore_session` (the enclosing `workspace.load`/`workspace.switch` entry
 already records it).
 
+## Catalog events & provenance (`processors.rs`)
+
+Every processor/pack install, uninstall, and update — from either caller — emits
+`catalog-update` (`CatalogUpdateEvent { caller, action: "install"|"uninstall"|"update", ids
+}`) after the journal call, via `services::processors::emit_catalog_update` (a no-op for
+an empty `ids`, e.g. `update_all_from_source` finding nothing outdated). Mutation sites:
+`processors.rs`'s `install_yaml`/`install_from_file`/`uninstall`/`install_pack_yaml`/
+`load_pack_from_file`/`uninstall_pack`, and `marketplace.rs`'s `update_processor`/
+`update_all_from_source`/`install_from_marketplace`/`install_pack_from_marketplace`/
+`uninstall_pack_from_marketplace`. **Never** `add_source`/`remove_source` — those are the
+human-only supply-chain gate (`policy::deny_agent_gate_mutation`), not a catalog change.
+
+Every processor installed by either caller is stamped with `_installed_by` provenance in
+its persisted YAML (`processors::marketplace::Provenance.installed_by`, alongside the
+existing `_source`/`_installed_version`/`_installed_at`/`_sha256`): `"ui"` or
+`"agent:<client>"`, from `services::processors::caller_provenance(ctx.caller())`. A
+marketplace install embeds it via `build_provenance_yaml`'s `installed_by` parameter; a
+raw YAML install (`validate_and_install`) appends `_installed_by: <v>` to the caller's
+YAML directly, since it never goes through `build_provenance_yaml`. `AnyProcessor.installed_by`
+is populated at startup (`lib.rs::load_persisted_processors`) from the parsed
+`Provenance.installed_by`, next to the existing `_source` copy, and exposed on
+`ProcessorSummary.installed_by` (`skip_serializing_if` + `#[ts(optional)]`, absent for a
+built-in or a processor installed before this field existed). Packs get no provenance.
+
 ## Lock discipline
 
 A service function holds **at most one** `AppState` lock, never across an `.await`. A

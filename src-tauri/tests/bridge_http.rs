@@ -593,6 +593,7 @@ async fn processor_detail_tracker_arm_route_honors_the_anonymization_gate() {
                 kind: ProcessorKind::StateTracker(Arc::new(def)),
                 schema: None,
                 source: None,
+                installed_by: None,
             },
         );
 

@@ -76,6 +76,10 @@ pub struct AnyProcessor {
     pub schema: Option<SchemaContract>,
     /// Marketplace source name (e.g. "official"), set at install time.
     pub source: Option<String>,
+    /// Who installed this processor: `"ui"` or `"agent:<client>"`, from the
+    /// persisted YAML's `_installed_by` provenance field. `None` for a
+    /// built-in or a processor installed before this field existed.
+    pub installed_by: Option<String>,
 }
 
 impl AnyProcessor {
@@ -322,7 +326,7 @@ impl AnyProcessor {
             other => return Err(format!("Unknown processor type: '{other}'")),
         };
 
-        Ok(AnyProcessor { meta, kind, schema, source: None })
+        Ok(AnyProcessor { meta, kind, schema, source: None, installed_by: None })
     }
 }
 
@@ -369,6 +373,11 @@ pub struct ProcessorSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub source: Option<String>,
+    /// Who installed this processor: `"ui"` or `"agent:<client>"`. Absent for
+    /// a built-in or a processor installed before this field existed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub installed_by: Option<String>,
     /// Pack ID this processor belongs to, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -435,6 +444,7 @@ impl From<&AnyProcessor> for ProcessorSummary {
             deprecated: p.meta.deprecated,
             has_schema: p.schema.is_some(),
             source: p.source.clone(),
+            installed_by: p.installed_by.clone(),
             pack_id: None,
             tracker_mode: if let ProcessorKind::StateTracker(def) = &p.kind { Some(def.mode) } else { None },
             tracker_timeline: if let ProcessorKind::StateTracker(def) = &p.kind { Some(def.output.timeline) } else { None },
@@ -493,6 +503,7 @@ mod tests {
             deprecated: false,
             has_schema: false,
             source: None,
+            installed_by: None,
             pack_id: None,
             tracker_mode: None,
             tracker_timeline: None,

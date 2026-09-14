@@ -221,9 +221,18 @@ pub(crate) fn chrono_now_iso() -> String {
 }
 
 /// Build the provenance YAML suffix appended to downloaded processor YAMLs.
-pub(crate) fn build_provenance_yaml(source_name: &str, version: &str, sha256: &str) -> String {
+///
+/// `installed_by` is `"ui"` / `"agent:<client>"` for a fresh caller-driven
+/// install ([`super::processors::caller_provenance`]), or the previously
+/// recorded value (or `None`) when this is an automatic version bump that
+/// nobody explicitly triggered — see `lib.rs`'s `startup_update_check`.
+pub(crate) fn build_provenance_yaml(source_name: &str, version: &str, sha256: &str, installed_by: Option<&str>) -> String {
     let now = chrono_now_iso();
-    format!("\n_source: {source_name}\n_installed_version: {version}\n_installed_at: {now}\n_sha256: {sha256}\n")
+    let mut yaml = format!("\n_source: {source_name}\n_installed_version: {version}\n_installed_at: {now}\n_sha256: {sha256}\n");
+    if let Some(v) = installed_by {
+        yaml.push_str(&format!("_installed_by: {v}\n"));
+    }
+    yaml
 }
 
 /// Pure core of [`add_source`]: computes the post-add source list without
@@ -446,10 +455,16 @@ async fn download_and_install_processor(
     let yaml = registry::download_processor_from_source(&ctx.state().http_client, source, entry)
         .await
         .map_err(ServiceError::Internal)?;
-    let final_yaml = format!("{}{}", yaml, build_provenance_yaml(&source.name, &entry.version, &entry.sha256));
+    let installed_by = super::processors::caller_provenance(ctx.caller());
+    let final_yaml = format!(
+        "{}{}",
+        yaml,
+        build_provenance_yaml(&source.name, &entry.version, &entry.sha256, Some(&installed_by))
+    );
     let mut def = AnyProcessor::from_yaml(&final_yaml)
         .map_err(|e| ServiceError::invalid_arg(format!("Failed to parse processor YAML: {e}")))?;
     def.source = Some(source.name.clone());
+    def.installed_by = Some(installed_by);
 
     super::processors::persist_processor_file(ctx.paths(), qualified_id, &final_yaml)?;
 
@@ -535,6 +550,7 @@ pub async fn update_processor(
         None,
         format!("updated processor '{processor_id}' {old_version} -> {new_version}"),
     );
+    super::processors::emit_catalog_update(ctx, "update", vec![processor_id.to_string()]);
 
     Ok(UpdateResult {
         processor_id: processor_id.to_string(),
@@ -606,6 +622,8 @@ pub async fn update_all_from_source(ctx: &ServiceCtx, source_name: &str) -> Resu
             None,
             format!("updated {applied}/{} processor(s) from source '{source_name}'", results.len()),
         );
+        let updated_ids: Vec<String> = results.iter().filter(|r| r.success).map(|r| r.processor_id.clone()).collect();
+        super::processors::emit_catalog_update(ctx, "update", updated_ids);
     }
 
     Ok(results)
@@ -647,6 +665,7 @@ pub async fn install_from_marketplace(
         None,
         format!("installed '{qualified_id}' from marketplace source '{source_name}'"),
     );
+    super::processors::emit_catalog_update(ctx, "install", vec![qualified_id]);
     Ok(summary)
 }
 
@@ -704,12 +723,20 @@ pub async fn install_pack_from_marketplace(
 
     super::processors::persist_pack_file(ctx.paths(), &pack_meta.id, &pack_yaml)?;
     let summary = PackSummary::from(&pack_meta);
+    let pack_id = pack_meta.id.clone();
     super::processors::upsert_pack(ctx, pack_meta)?;
     ctx.journal(
         "pack.install",
         None,
         format!("installed pack '{}' from marketplace source '{source_name}'", pack_entry.id),
     );
+    let mut catalog_ids: Vec<String> = pack_entry
+        .processor_ids
+        .iter()
+        .map(|id| marketplace::qualified_id(id, source_name))
+        .collect();
+    catalog_ids.push(pack_id);
+    super::processors::emit_catalog_update(ctx, "install", catalog_ids);
     Ok(summary)
 }
 
@@ -744,6 +771,7 @@ pub fn uninstall_pack_from_marketplace(
             .collect()
     };
 
+    let mut removed_ids = Vec::new();
     for qid in &processor_ids {
         if other_pack_proc_ids.contains(qid) {
             continue;
@@ -753,6 +781,7 @@ pub fn uninstall_pack_from_marketplace(
             procs.remove(qid);
         }
         super::processors::delete_processor_file(ctx.paths(), qid);
+        removed_ids.push(qid.clone());
     }
 
     {
@@ -761,6 +790,8 @@ pub fn uninstall_pack_from_marketplace(
     }
     super::processors::delete_pack_file(ctx.paths(), pack_id);
     ctx.journal("pack.uninstall", None, format!("uninstalled pack '{pack_id}' from source '{source_name}'"));
+    removed_ids.push(pack_id.to_string());
+    super::processors::emit_catalog_update(ctx, "uninstall", removed_ids);
     Ok(())
 }
 
@@ -916,5 +947,240 @@ mod tests {
         let updated = try_remove_source(&current, "a").unwrap();
         assert_eq!(current.len(), 1, "input slice must be untouched");
         assert!(updated.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // B2: catalog-update event + installed_by provenance
+    // -----------------------------------------------------------------------
+
+    use crate::processors::marketplace::{MarketplaceIndex, Provenance};
+
+    const FIXTURE_PROCESSOR_YAML: &str = "meta:\n  id: wifi-state\n  name: WiFi State\n  version: 1.0.0\n";
+    const FIXTURE_PACK_YAML: &str = "name: WiFi Pack\nversion: 1.0.0\nprocessors:\n  - wifi-state\n";
+
+    fn local_source(dir: &std::path::Path) -> Source {
+        Source {
+            name: "official".to_string(),
+            source_type: SourceType::Local {
+                path: dir.to_string_lossy().to_string(),
+            },
+            enabled: true,
+            auto_update: false,
+            last_checked: None,
+        }
+    }
+
+    fn fixture_entry(version: &str) -> MarketplaceEntry {
+        MarketplaceEntry {
+            id: "wifi-state".to_string(),
+            name: "WiFi State".to_string(),
+            version: version.to_string(),
+            description: None,
+            path: "wifi-state.yaml".to_string(),
+            tags: vec![],
+            sha256: String::new(),
+            category: None,
+            license: None,
+            processor_type: None,
+            source_types: vec![],
+            deprecated: false,
+        }
+    }
+
+    fn write_index(dir: &std::path::Path, processors: Vec<MarketplaceEntry>) {
+        let index = MarketplaceIndex {
+            name: "official".to_string(),
+            version: 2,
+            owner: None,
+            processors,
+            packs: vec![],
+        };
+        std::fs::write(dir.join("marketplace.json"), serde_json::to_string(&index).unwrap()).unwrap();
+    }
+
+    /// Install an already-current copy of `wifi-state@official`, as the
+    /// prior-version fixture for update-path tests.
+    fn install_current(ctx: &ServiceCtx) {
+        let mut proc = AnyProcessor::from_yaml(FIXTURE_PROCESSOR_YAML).unwrap();
+        proc.source = Some("official".to_string());
+        ctx.state()
+            .processors
+            .lock()
+            .unwrap()
+            .insert("wifi-state@official".to_string(), proc);
+    }
+
+    #[test]
+    fn add_source_and_remove_source_emit_no_catalog_update() {
+        let (ctx, sink, _tmp) = test_ctx().build_recording();
+        add_source(&ctx, test_source("official")).unwrap();
+        remove_source(&ctx, "official").unwrap();
+        assert!(
+            sink.events_named("catalog-update").is_empty(),
+            "source add/remove is a human-only gate, not a catalog change"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_processor_emits_catalog_update() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("wifi-state.yaml"), FIXTURE_PROCESSOR_YAML).unwrap();
+        let (ctx, sink, _tmp) = test_ctx().build_recording();
+        ctx.state().sources.lock().unwrap().push(local_source(dir.path()));
+        install_current(&ctx);
+
+        update_processor(&ctx, "wifi-state@official", "WiFi State", "wifi-state.yaml", "2.0.0", "")
+            .await
+            .unwrap();
+
+        let events = sink.events_named("catalog-update");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].payload["action"], serde_json::json!("update"));
+        assert_eq!(events[0].payload["ids"], serde_json::json!(["wifi-state@official"]));
+    }
+
+    #[tokio::test]
+    async fn update_all_from_source_emits_catalog_update_with_successful_ids_only() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("wifi-state.yaml"), FIXTURE_PROCESSOR_YAML).unwrap();
+        write_index(dir.path(), vec![fixture_entry("2.0.0")]);
+
+        let (ctx, sink, _tmp) = test_ctx().build_recording();
+        ctx.state().sources.lock().unwrap().push(local_source(dir.path()));
+        install_current(&ctx);
+
+        let results = update_all_from_source(&ctx, "official").await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].success);
+
+        let events = sink.events_named("catalog-update");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].payload["action"], serde_json::json!("update"));
+        assert_eq!(events[0].payload["ids"], serde_json::json!(["wifi-state@official"]));
+    }
+
+    #[tokio::test]
+    async fn update_all_from_source_emits_nothing_when_no_processor_is_outdated() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("wifi-state.yaml"), FIXTURE_PROCESSOR_YAML).unwrap();
+        // Marketplace offers the same version already installed — nothing to update.
+        write_index(dir.path(), vec![fixture_entry("1.0.0")]);
+
+        let (ctx, sink, _tmp) = test_ctx().build_recording();
+        ctx.state().sources.lock().unwrap().push(local_source(dir.path()));
+        install_current(&ctx);
+
+        let results = update_all_from_source(&ctx, "official").await.unwrap();
+        assert!(results.is_empty());
+        assert!(sink.events_named("catalog-update").is_empty());
+    }
+
+    #[tokio::test]
+    async fn install_from_marketplace_emits_catalog_update() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("wifi-state.yaml"), FIXTURE_PROCESSOR_YAML).unwrap();
+        let (ctx, sink, _tmp) = test_ctx().build_recording();
+        ctx.state().sources.lock().unwrap().push(local_source(dir.path()));
+
+        let summary = install_from_marketplace(&ctx, "official", "wifi-state", "WiFi State", "wifi-state.yaml", "1.0.0", "")
+            .await
+            .unwrap();
+        assert_eq!(summary.id, "wifi-state@official");
+
+        let events = sink.events_named("catalog-update");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].payload["action"], serde_json::json!("install"));
+        assert_eq!(events[0].payload["ids"], serde_json::json!(["wifi-state@official"]));
+    }
+
+    #[tokio::test]
+    async fn install_pack_from_marketplace_emits_catalog_update_with_members_and_pack_id() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("wifi-state.yaml"), FIXTURE_PROCESSOR_YAML).unwrap();
+        std::fs::write(dir.path().join("wifi-pack.pack.yaml"), FIXTURE_PACK_YAML).unwrap();
+        write_index(dir.path(), vec![fixture_entry("1.0.0")]);
+
+        let (ctx, sink, _tmp) = test_ctx().build_recording();
+        ctx.state().sources.lock().unwrap().push(local_source(dir.path()));
+
+        let pack_entry = MarketplacePackEntry {
+            id: "wifi-pack".to_string(),
+            name: "WiFi Pack".to_string(),
+            version: "1.0.0".to_string(),
+            description: None,
+            path: "wifi-pack.pack.yaml".to_string(),
+            tags: vec![],
+            sha256: String::new(),
+            category: None,
+            processor_ids: vec!["wifi-state".to_string()],
+        };
+
+        let summary = install_pack_from_marketplace(&ctx, "official", pack_entry).await.unwrap();
+        assert_eq!(summary.id, "wifi-pack");
+
+        let events = sink.events_named("catalog-update");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].payload["action"], serde_json::json!("install"));
+        assert_eq!(events[0].payload["ids"], serde_json::json!(["wifi-state@official", "wifi-pack"]));
+    }
+
+    #[test]
+    fn uninstall_pack_from_marketplace_emits_catalog_update_with_removed_and_pack_id() {
+        let (ctx, sink, _tmp) = test_ctx().build_recording();
+        install_current(&ctx);
+        ctx.state().packs.lock().unwrap().push(PackMeta {
+            id: "wifi-pack".to_string(),
+            name: "WiFi Pack".to_string(),
+            version: "1.0.0".to_string(),
+            author: String::new(),
+            description: String::new(),
+            tags: vec![],
+            category: None,
+            license: None,
+            repository: None,
+            deprecated: false,
+            processors: vec!["wifi-state".to_string()],
+        });
+
+        uninstall_pack_from_marketplace(&ctx, "official", "wifi-pack").unwrap();
+
+        let events = sink.events_named("catalog-update");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].payload["action"], serde_json::json!("uninstall"));
+        assert_eq!(events[0].payload["ids"], serde_json::json!(["wifi-state@official", "wifi-pack"]));
+    }
+
+    #[tokio::test]
+    async fn install_from_marketplace_stamps_agent_installed_by_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("wifi-state.yaml"), FIXTURE_PROCESSOR_YAML).unwrap();
+        let (ctx, tmp) = test_ctx().agent("claude").build();
+        ctx.state().sources.lock().unwrap().push(local_source(dir.path()));
+
+        let summary = install_from_marketplace(&ctx, "official", "wifi-state", "WiFi State", "wifi-state.yaml", "1.0.0", "")
+            .await
+            .unwrap();
+        assert_eq!(summary.installed_by.as_deref(), Some("agent:claude"));
+
+        let yaml_path = tmp
+            .path()
+            .join("processors")
+            .join(format!("{}.yaml", marketplace::id_to_filename("wifi-state@official")));
+        let persisted = std::fs::read_to_string(&yaml_path).unwrap();
+        let prov: Provenance = serde_yaml::from_str(&persisted).unwrap();
+        assert_eq!(prov.installed_by.as_deref(), Some("agent:claude"));
+    }
+
+    #[tokio::test]
+    async fn install_from_marketplace_stamps_ui_installed_by_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("wifi-state.yaml"), FIXTURE_PROCESSOR_YAML).unwrap();
+        let (ctx, _tmp) = test_ctx().build();
+        ctx.state().sources.lock().unwrap().push(local_source(dir.path()));
+
+        let summary = install_from_marketplace(&ctx, "official", "wifi-state", "WiFi State", "wifi-state.yaml", "1.0.0", "")
+            .await
+            .unwrap();
+        assert_eq!(summary.installed_by.as_deref(), Some("ui"));
     }
 }
