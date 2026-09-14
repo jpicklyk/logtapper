@@ -48,6 +48,7 @@ import type {
   BridgeSessionList,
   BridgeSessionMetadata,
   BridgeStatusInfo,
+  ChainState,
   ChartData,
   ExportAllSessionsInfo,
   FilterCreateResult,
@@ -1289,7 +1290,72 @@ server.tool(
   }
 );
 
-// ── 19. logtapper_run_pipeline ───────────────────────────────────────────
+// ── 19. logtapper_chain ──────────────────────────────────────────────────
+
+server.tool(
+  "logtapper_chain",
+  "Read or edit a session's processor chain — the same configured analyzer " +
+    "list shown in the app's Analyzers panel, and what a chain-only " +
+    "logtapper_run_pipeline call (no explicit processor_ids) executes. " +
+    "`activeProcessorIds` is the FULL ordered chain, including members that " +
+    "are currently disabled; `disabledProcessorIds` is the subset of those " +
+    "switched off. Use action 'get' to read the current chain, 'set' to " +
+    "replace it outright (activeProcessorIds/disabledProcessorIds default to " +
+    "empty, so calling 'set' with neither field clears the chain), 'add' to " +
+    "append processor IDs to the chain (re-enabling them if they were " +
+    "disabled members), or 'remove' to drop processor IDs from the chain " +
+    "entirely. 'add' is strict: every ID must resolve to an installed " +
+    "processor. Every change this tool makes is journaled under the calling " +
+    "agent's client name, and the user can see and revert it from the app.",
+  {
+    session_id: z.string().describe("Session ID"),
+    action: z
+      .enum(["get", "set", "add", "remove"])
+      .describe("Action: read the chain, replace it wholesale, append processor IDs, or drop processor IDs"),
+    active_processor_ids: z
+      .array(z.string())
+      .optional()
+      .describe("Full ordered chain, disabled members included (used with 'set'; omitted means empty)"),
+    disabled_processor_ids: z
+      .array(z.string())
+      .optional()
+      .describe("Subset of active_processor_ids that should be disabled (used with 'set'; omitted means empty)"),
+    processor_ids: z
+      .array(z.string())
+      .optional()
+      .describe("Processor IDs to append or drop (required for 'add' and 'remove')"),
+  },
+  async ({ session_id, action, active_processor_ids, disabled_processor_ids, processor_ids }) => {
+    const sid = encodeURIComponent(session_id);
+    try {
+      switch (action) {
+        case "get":
+          return ok(await bridgeGet<ChainState>(`/mcp/sessions/${sid}/chain`));
+        case "set":
+          return ok(
+            await bridgePut<ChainState>(`/mcp/sessions/${sid}/chain`, {
+              activeProcessorIds: active_processor_ids,
+              disabledProcessorIds: disabled_processor_ids,
+            })
+          );
+        case "add":
+          if (!processor_ids || processor_ids.length === 0) {
+            return argError("processor_ids is required for 'add'");
+          }
+          return ok(await bridgePatch<ChainState>(`/mcp/sessions/${sid}/chain`, { add: processor_ids }));
+        case "remove":
+          if (!processor_ids || processor_ids.length === 0) {
+            return argError("processor_ids is required for 'remove'");
+          }
+          return ok(await bridgePatch<ChainState>(`/mcp/sessions/${sid}/chain`, { remove: processor_ids }));
+      }
+    } catch (err) {
+      return handleBridgeError(err);
+    }
+  }
+);
+
+// ── 20. logtapper_run_pipeline ───────────────────────────────────────────
 
 server.tool(
   "logtapper_run_pipeline",
@@ -1301,15 +1367,22 @@ server.tool(
     "IMPORTANT semantics: omitting processor_ids no longer means 'run every " +
     "installed processor' — it means 'run this session's own configured chain' " +
     "(resolved from the session's active/disabled processor sets). A session " +
-    "with no chain configured errors rather than running everything. The " +
-    "response's `effectiveProcessorIds` reports exactly which processors ran, " +
-    "so a caller that passed no ids can see what was actually used.",
+    "with no chain configured errors rather than running everything. Passing " +
+    "processor_ids does NOT run them in isolation: they are ADDED to the " +
+    "session's chain — visible in the app's Analyzers panel and persisted " +
+    "with the workspace — before the run executes. To configure the chain " +
+    "without triggering a run, use logtapper_chain instead. The response's " +
+    "`effectiveProcessorIds` reports exactly which processors ran, so a " +
+    "caller that passed no ids can see what was actually used.",
   {
     session_id: z.string().describe("Session ID"),
     processor_ids: z
       .array(z.string())
       .optional()
-      .describe("Processor IDs to run. If omitted, runs the session's own configured chain — see the semantics note above."),
+      .describe(
+        "Processor IDs to add to the session's chain and run. If omitted, runs the session's own " +
+          "configured chain — see the semantics note above."
+      ),
   },
   async ({ session_id, processor_ids }) => {
     try {
@@ -1325,7 +1398,7 @@ server.tool(
   }
 );
 
-// ── 20. logtapper_get_insights ───────────────────────────────────────────
+// ── 21. logtapper_get_insights ───────────────────────────────────────────
 
 server.tool(
   "logtapper_get_insights",
@@ -1368,7 +1441,7 @@ server.tool(
   }
 );
 
-// ── 21. logtapper_open_file ───────────────────────────────────────────────
+// ── 22. logtapper_open_file ───────────────────────────────────────────────
 
 server.tool(
   "logtapper_open_file",
@@ -1454,7 +1527,7 @@ server.tool(
   }
 );
 
-// ── 22. logtapper_close_session ───────────────────────────────────────────
+// ── 23. logtapper_close_session ───────────────────────────────────────────
 
 server.tool(
   "logtapper_close_session",
@@ -1486,7 +1559,7 @@ server.tool(
   }
 );
 
-// ── 23. logtapper_filters ─────────────────────────────────────────────────
+// ── 24. logtapper_filters ─────────────────────────────────────────────────
 
 server.tool(
   "logtapper_filters",
@@ -1596,7 +1669,7 @@ server.tool(
   }
 );
 
-// ── 24. logtapper_workspace ───────────────────────────────────────────────
+// ── 25. logtapper_workspace ───────────────────────────────────────────────
 
 server.tool(
   "logtapper_workspace",
@@ -1739,7 +1812,7 @@ server.tool(
   }
 );
 
-// ── 25. logtapper_chart ───────────────────────────────────────────────────
+// ── 26. logtapper_chart ───────────────────────────────────────────────────
 
 server.tool(
   "logtapper_chart",
@@ -1763,7 +1836,7 @@ server.tool(
   }
 );
 
-// ── 26. logtapper_timeline ────────────────────────────────────────────────
+// ── 27. logtapper_timeline ────────────────────────────────────────────────
 
 server.tool(
   "logtapper_timeline",
@@ -1791,7 +1864,7 @@ server.tool(
   }
 );
 
-// ── 27. logtapper_export ──────────────────────────────────────────────────
+// ── 28. logtapper_export ──────────────────────────────────────────────────
 
 server.tool(
   "logtapper_export",
@@ -1842,7 +1915,7 @@ server.tool(
   }
 );
 
-// ── 28. logtapper_processors ──────────────────────────────────────────────
+// ── 29. logtapper_processors ──────────────────────────────────────────────
 
 server.tool(
   "logtapper_processors",
@@ -1877,7 +1950,7 @@ server.tool(
   }
 );
 
-// ── 29. logtapper_marketplace ─────────────────────────────────────────────
+// ── 30. logtapper_marketplace ─────────────────────────────────────────────
 
 server.tool(
   "logtapper_marketplace",
@@ -1974,7 +2047,7 @@ server.tool(
   }
 );
 
-// ── 30. logtapper_stream ──────────────────────────────────────────────────
+// ── 31. logtapper_stream ──────────────────────────────────────────────────
 
 server.tool(
   "logtapper_stream",
@@ -2082,7 +2155,7 @@ server.tool(
   }
 );
 
-// ── 31. logtapper_settings ────────────────────────────────────────────────
+// ── 32. logtapper_settings ────────────────────────────────────────────────
 
 server.tool(
   "logtapper_settings",
@@ -2135,7 +2208,7 @@ server.tool(
   }
 );
 
-// ── 32. logtapper_activity ────────────────────────────────────────────────
+// ── 33. logtapper_activity ────────────────────────────────────────────────
 
 server.tool(
   "logtapper_activity",
@@ -2169,7 +2242,7 @@ server.tool(
   }
 );
 
-// ── 33. logtapper_focus ─────────────────────────────────────────────────────
+// ── 34. logtapper_focus ─────────────────────────────────────────────────────
 
 server.tool(
   "logtapper_focus",
@@ -2228,7 +2301,7 @@ server.tool(
   }
 );
 
-// ── 34. logtapper_navigate ───────────────────────────────────────────────────
+// ── 35. logtapper_navigate ───────────────────────────────────────────────────
 
 server.tool(
   "logtapper_navigate",
@@ -2259,7 +2332,7 @@ server.tool(
   }
 );
 
-// ── 35. logtapper_themes ─────────────────────────────────────────────────────
+// ── 36. logtapper_themes ─────────────────────────────────────────────────────
 
 server.tool(
   "logtapper_themes",

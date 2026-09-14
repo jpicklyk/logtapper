@@ -9,7 +9,7 @@
  * Two things are asserted:
  *  1. `ROUTE_TABLE` below has one row per `mcp_bridge::ROUTES` entry (parsed
  *     from `src-tauri/src/mcp_bridge/mod.rs` at test time, so this file
- *     cannot silently drift from the authoritative 69-entry table), and
+ *     cannot silently drift from the authoritative 83-entry table), and
  *     invoking each row's tool call produces a fetch to the expected method
  *     + path (+ a few representative query keys).
  *  2. A non-2xx bridge response becomes `{ isError: true }` with the
@@ -61,7 +61,7 @@ function parseBridgeRoutes(): string[] {
 // bare `{}` 200 when nothing was queued).
 // ---------------------------------------------------------------------------
 
-type RecordedCall = { method: string; url: string };
+type RecordedCall = { method: string; url: string; body: unknown };
 type QueuedResponse = { status: number; body: unknown };
 
 let recordedCalls: RecordedCall[] = [];
@@ -81,7 +81,9 @@ const originalFetch = globalThis.fetch;
 beforeAll(() => {
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
-    recordedCalls.push({ method: init?.method ?? "GET", url });
+    const rawBody = init?.body;
+    const body = typeof rawBody === "string" ? JSON.parse(rawBody) : undefined;
+    recordedCalls.push({ method: init?.method ?? "GET", url, body });
     const queued = queuedResponse;
     queuedResponse = null;
     return queued ? fakeResponse(queued.status, queued.body) : fakeResponse(200, {});
@@ -115,7 +117,7 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
-// The tool → route table. One row per `ROUTES` entry (69 total).
+// The tool → route table. One row per `ROUTES` entry (83 total).
 // ---------------------------------------------------------------------------
 
 const S = "s1"; // session id
@@ -218,6 +220,9 @@ const ROUTE_TABLE: Row[] = [
   { route: "GET /mcp/themes/{slug}", tool: "logtapper_themes", args: { action: "read", slug: "midnight" }, method: "GET", expectPath: "/mcp/themes/midnight" },
   { route: "PATCH /mcp/workspaces/{id}", tool: "logtapper_workspace", args: { action: "rename", workspace_id: "ws1", new_name: "Renamed" }, method: "PATCH", expectPath: "/mcp/workspaces/ws1" },
   { route: "DELETE /mcp/workspaces/{id}", tool: "logtapper_workspace", args: { action: "delete", workspace_id: "ws1" }, method: "DELETE", expectPath: "/mcp/workspaces/ws1" },
+  { route: "GET /mcp/sessions/{session_id}/chain", tool: "logtapper_chain", args: { session_id: S, action: "get" }, method: "GET", expectPath: `/mcp/sessions/${S}/chain` },
+  { route: "PUT /mcp/sessions/{session_id}/chain", tool: "logtapper_chain", args: { session_id: S, action: "set", active_processor_ids: [P] }, method: "PUT", expectPath: `/mcp/sessions/${S}/chain` },
+  { route: "PATCH /mcp/sessions/{session_id}/chain", tool: "logtapper_chain", args: { session_id: S, action: "add", processor_ids: [P] }, method: "PATCH", expectPath: `/mcp/sessions/${S}/chain` },
 ];
 
 const covered = new Set<string>();
@@ -234,11 +239,6 @@ const covered = new Set<string>();
 const ROUTES_WITH_NO_TOOL = new Set([
   "PUT /mcp/themes/{slug}",
   "DELETE /mcp/themes/{slug}",
-  // Agent-chain B1 landed the routes; M1 adds `logtapper_chain` and moves
-  // these three into ROUTE_TABLE.
-  "GET /mcp/sessions/{session_id}/chain",
-  "PUT /mcp/sessions/{session_id}/chain",
-  "PATCH /mcp/sessions/{session_id}/chain",
 ]);
 
 describe("mcp-server tool → route coverage", () => {
@@ -328,5 +328,118 @@ describe("bridge error envelope", () => {
 
     expect(result.isError).toBe(true);
     expect(recordedCalls).toHaveLength(0); // never reached the bridge
+  });
+});
+
+// ---------------------------------------------------------------------------
+// logtapper_chain — one test per action, asserting method + path + body,
+// plus the B1 error statuses (404 unknown session, 400 unknown id) mapping
+// through handleBridgeError the same way every other tool does.
+// ---------------------------------------------------------------------------
+
+describe("logtapper_chain", () => {
+  it("'get' reads the chain with no body", async () => {
+    const result = await client.callTool({ name: "logtapper_chain", arguments: { session_id: S, action: "get" } });
+
+    expect(result.isError).not.toBe(true);
+    expect(recordedCalls).toHaveLength(1);
+    expect(recordedCalls[0].method).toBe("GET");
+    expect(new URL(recordedCalls[0].url).pathname).toBe(`/mcp/sessions/${S}/chain`);
+    expect(recordedCalls[0].body).toBeUndefined();
+  });
+
+  it("'set' PUTs activeProcessorIds/disabledProcessorIds verbatim", async () => {
+    const result = await client.callTool({
+      name: "logtapper_chain",
+      arguments: {
+        session_id: S,
+        action: "set",
+        active_processor_ids: ["a@official", "b@official"],
+        disabled_processor_ids: ["b@official"],
+      },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(recordedCalls).toHaveLength(1);
+    expect(recordedCalls[0].method).toBe("PUT");
+    expect(new URL(recordedCalls[0].url).pathname).toBe(`/mcp/sessions/${S}/chain`);
+    expect(recordedCalls[0].body).toEqual({
+      activeProcessorIds: ["a@official", "b@official"],
+      disabledProcessorIds: ["b@official"],
+    });
+  });
+
+  it("'set' with neither field sends an empty body, clearing the chain", async () => {
+    const result = await client.callTool({ name: "logtapper_chain", arguments: { session_id: S, action: "set" } });
+
+    expect(result.isError).not.toBe(true);
+    expect(recordedCalls[0].method).toBe("PUT");
+    expect(recordedCalls[0].body).toEqual({});
+  });
+
+  it("'add' PATCHes { add } only", async () => {
+    const result = await client.callTool({
+      name: "logtapper_chain",
+      arguments: { session_id: S, action: "add", processor_ids: [P] },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(recordedCalls).toHaveLength(1);
+    expect(recordedCalls[0].method).toBe("PATCH");
+    expect(new URL(recordedCalls[0].url).pathname).toBe(`/mcp/sessions/${S}/chain`);
+    expect(recordedCalls[0].body).toEqual({ add: [P] });
+  });
+
+  it("'remove' PATCHes { remove } only", async () => {
+    const result = await client.callTool({
+      name: "logtapper_chain",
+      arguments: { session_id: S, action: "remove", processor_ids: [P] },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(recordedCalls).toHaveLength(1);
+    expect(recordedCalls[0].method).toBe("PATCH");
+    expect(new URL(recordedCalls[0].url).pathname).toBe(`/mcp/sessions/${S}/chain`);
+    expect(recordedCalls[0].body).toEqual({ remove: [P] });
+  });
+
+  it("'add' without processor_ids fails client-side without reaching the bridge", async () => {
+    const result = await client.callTool({ name: "logtapper_chain", arguments: { session_id: S, action: "add" } });
+
+    expect(result.isError).toBe(true);
+    expect(recordedCalls).toHaveLength(0);
+  });
+
+  it("'remove' without processor_ids fails client-side without reaching the bridge", async () => {
+    const result = await client.callTool({ name: "logtapper_chain", arguments: { session_id: S, action: "remove" } });
+
+    expect(result.isError).toBe(true);
+    expect(recordedCalls).toHaveLength(0);
+  });
+
+  it("a 404 (unknown session) on 'get' becomes isError:true with NOT_FOUND", async () => {
+    queuedResponse = { status: 404, body: { error: { code: "NOT_FOUND", message: "Session 's1' not found" } } };
+
+    const result = await client.callTool({ name: "logtapper_chain", arguments: { session_id: S, action: "get" } });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("NOT_FOUND");
+  });
+
+  it("a 400 (unknown processor id) on 'add' becomes isError:true with INVALID_ARGUMENT", async () => {
+    queuedResponse = {
+      status: 400,
+      body: { error: { code: "INVALID_ARGUMENT", message: "processor 'bogus' is not installed" } },
+    };
+
+    const result = await client.callTool({
+      name: "logtapper_chain",
+      arguments: { session_id: S, action: "add", processor_ids: ["bogus"] },
+    });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(text).toContain("INVALID_ARGUMENT");
   });
 });
