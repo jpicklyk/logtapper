@@ -6,6 +6,11 @@ import type { WorkspaceIdentity } from '@bridge/workspaceTypes';
 // `'../app'` also matches `App.tsx` on a case-insensitive filesystem and TS
 // refuses the program (TS1149) — always import the barrel via `/index`.
 import type { AppActions, SessionStore } from '../app/index';
+// L1's device picker/live-session path — reused as shipped, not forked. See
+// this file's module doc for why A1 pulls in the whole panel rather than a
+// second, narrower device list.
+import { StreamControlsPanel } from '../stream';
+import type { LiveStreamStore } from '../stream';
 import type { WorkspaceStore } from './workspaceStore';
 import styles from './workspaceHome.module.css';
 
@@ -43,6 +48,8 @@ export interface WorkspaceHomeProps {
   store: WorkspaceStore;
   sessions: SessionStore;
   actions: AppActions;
+  /** L1's live-session store — the attach action renders its picker in place. */
+  liveStream: LiveStreamStore;
 }
 
 /**
@@ -51,6 +58,19 @@ export interface WorkspaceHomeProps {
  * `design_docs/canvas/WorkspaceHome.dc.html`, not its pixels — the packs /
  * recent-analyses / presence sections of that board belong to other surfaces
  * already mounted elsewhere in the shell.
+ *
+ * **First-run attach (A1).** When the active workspace has no sessions — the
+ * resting state for a fresh app, and for any workspace nobody has opened
+ * anything in yet — the sessions section becomes a first-run panel offering
+ * exactly two ways in: "Attach a device" reveals L1's `StreamControlsPanel`
+ * (the same instance `stream-controls` uses; no second device picker was
+ * built — see the task's implementation-notes for why the whole panel is
+ * reused rather than a narrower device list) inline, and "Open a capture…"
+ * routes through the existing `openFileDialog` action. Neither "no device
+ * connected" nor "`adb` missing entirely" is treated as an error here: both
+ * surface as `StreamControlsPanel`'s own quiet hint/`devicesError` text, the
+ * same as the always-on `stream-controls` surface shows once a session is
+ * live.
  */
 export function WorkspaceHome(props: WorkspaceHomeProps): JSX.Element {
   const [view, setView] = createSignal<ViewMode>(readViewPref());
@@ -59,6 +79,7 @@ export function WorkspaceHome(props: WorkspaceHomeProps): JSX.Element {
   const [confirmingDeleteId, setConfirmingDeleteId] = createSignal<string | null>(null);
   const [deleteFile, setDeleteFile] = createSignal(false);
   const [actionError, setActionError] = createSignal('');
+  const [showAttach, setShowAttach] = createSignal(false);
 
   const setViewMode = (mode: ViewMode): void => {
     setView(mode);
@@ -290,16 +311,32 @@ export function WorkspaceHome(props: WorkspaceHomeProps): JSX.Element {
         <Show
           when={sessionCount() > 0}
           fallback={
-            <div class={styles.empty}>
-              No sessions in this workspace.{' '}
-              <button
-                type="button"
-                class={styles.inlineLink}
-                data-testid="sessions-empty-open-file"
-                onClick={() => void props.actions.openFileDialog()}
-              >
-                Open file…
-              </button>
+            <div class={styles.firstRun} data-testid="workspace-first-run">
+              <p class={styles.firstRunHint}>No sessions in this workspace yet. Two ways in:</p>
+              <div class={styles.firstRunActions}>
+                <button
+                  type="button"
+                  class={styles.primaryButton}
+                  data-testid="attach-device-toggle"
+                  aria-expanded={showAttach()}
+                  onClick={() => setShowAttach((v) => !v)}
+                >
+                  {showAttach() ? 'Hide device picker' : 'Attach a device'}
+                </button>
+                <button
+                  type="button"
+                  class={styles.actionButton}
+                  data-testid="sessions-empty-open-file"
+                  onClick={() => void props.actions.openFileDialog()}
+                >
+                  Open a capture…
+                </button>
+              </div>
+              <Show when={showAttach()}>
+                <div class={styles.attachPanel} data-testid="workspace-attach-panel">
+                  <StreamControlsPanel store={props.liveStream} />
+                </div>
+              </Show>
             </div>
           }
         >

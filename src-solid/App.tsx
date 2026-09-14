@@ -427,7 +427,9 @@ export function App(props: AppProps) {
       sessionKind={store.focused()?.kind ?? null}
       topBar={topBar}
       slots={{
-        'workspace-home': () => <WorkspaceHome store={workspace} sessions={store} actions={actions} />,
+        'workspace-home': () => (
+          <WorkspaceHome store={workspace} sessions={store} actions={actions} liveStream={liveStream} />
+        ),
         presence: () => <PresencePanel store={presence} />,
         sections: () => (
           <SectionsPanel
