@@ -104,6 +104,16 @@ export interface LiveStreamStoreDeps {
   analyzers?: LiveStreamAnalyzers;
   /** See {@link LiveStreamFilterHooks}. Optional (L4). */
   filter?: LiveStreamFilterHooks;
+  /**
+   * Dismiss the top bar's stale failure when a capture actually starts, the
+   * same way `openPath` clears it at the start of an open. Without this a
+   * startup-restore failure (a workspace naming a file on an unmounted drive,
+   * say) sits in the top bar beside a healthy running capture. Called only on
+   * the transition INTO streaming, never per batch — `handleBatch` republishes
+   * the streaming status on every payload, so clearing on each one would
+   * swallow any error raised during the capture.
+   */
+  clearError?: () => void;
   /** Injected for tests; defaults to the real bridge commands. */
   commands?: Partial<StreamCommands>;
 }
@@ -188,7 +198,11 @@ export function createLiveStreamStore(deps: LiveStreamStoreDeps): LiveStreamStor
         // A repeat 'streaming' status for a session that is already open
         // (there is no reconnect path today, but nothing here assumes that)
         // just re-focuses it rather than re-registering.
-        if (!sessions.byId(next.sessionId)) sessions.add(streamLoadResult(next));
+        if (!sessions.byId(next.sessionId)) {
+          sessions.add(streamLoadResult(next));
+          // Transition into streaming, not every batch — see `clearError`'s doc.
+          deps.clearError?.();
+        }
         sessions.setFocused(next.sessionId);
         // `handleBatch` republishes the status on every batch with the running
         // total, so this is where a live session's line count comes from —

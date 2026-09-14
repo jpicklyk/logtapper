@@ -27,6 +27,27 @@
 
 .error {
   color: var(--danger);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--p-space-2, 0.5rem);
+}
+
+/* A failure is an event, not app state: it must be closable. Without this a
+   startup-restore failure outlived every later success in the top bar. */
+.errorDismiss {
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+  padding: 0 var(--p-space-1, 0.25rem);
+  opacity: 0.7;
+}
+
+.errorDismiss:hover,
+.errorDismiss:focus-visible {
+  opacity: 1;
 }
 
 .empty {

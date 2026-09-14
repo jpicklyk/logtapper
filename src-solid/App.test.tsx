@@ -194,6 +194,32 @@ describe('App', () => {
     expect(screen.getByTestId('sessions-empty-open-file')).toBeTruthy();
   });
 
+  // A failure used to be clearable ONLY by starting another open, so a startup
+  // restore that could not reach a file (a workspace naming a path on an
+  // unmounted drive) parked its message in the top bar for the rest of the
+  // session, sitting there beside a healthy running capture. Reported from the
+  // running app. The dismiss control is what makes a failure an event rather
+  // than permanent state.
+  it('lets the user dismiss a failure from the top bar', async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const { loadLogFile } = await import('@bridge/commands');
+
+    vi.mocked(open).mockReset();
+    vi.mocked(loadLogFile).mockReset();
+    vi.mocked(open).mockResolvedValueOnce('/gone.log');
+    vi.mocked(loadLogFile).mockRejectedValueOnce(new Error('drive not mounted'));
+
+    render(() => <App />);
+    fireEvent.click(within(screen.getByTestId('top-bar')).getByRole('button', { name: /^open file/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('drive not mounted');
+
+    fireEvent.click(screen.getByRole('button', { name: /dismiss error/i }));
+
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('shows the empty state until a file is opened', () => {
     render(() => <App />);
     expect(screen.getByText(/no log open/i)).toBeTruthy();

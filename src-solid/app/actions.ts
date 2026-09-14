@@ -69,9 +69,21 @@ export interface AppActions {
    * tab's read, today). Keeps the top bar's error line single-sourced.
    */
   reportError(message: string): void;
+  /**
+   * Dismiss the current failure.
+   *
+   * The top bar's error line is the only place a failure is shown, and it used
+   * to be clearable ONLY by starting another open. A startup restore that
+   * cannot reach a file — a workspace naming a path on a drive that is not
+   * mounted, say — therefore parked its message in the top bar for the rest of
+   * the session, outliving every unrelated success including starting a live
+   * capture. A failure is an event, not app state; the user gets to close it.
+   */
+  clearError(): void;
   /** True while an open is in flight. */
   busy: Accessor<boolean>;
-  /** Last failure, or `''`. Cleared at the start of every open. */
+  /** Last failure, or `''`. Cleared at the start of every open, by
+   *  {@link AppActions.clearError}, and when a capture starts. */
   error: Accessor<string>;
 }
 
@@ -223,6 +235,7 @@ export function createAppActions(deps: AppActionsDeps): AppActions {
     close,
     focus: (sessionId) => store.setFocused(sessionId),
     reportError: (message) => setError(message),
+    clearError: () => setError(''),
     busy,
     error,
   };

@@ -117,6 +117,7 @@ export function App(props: AppProps) {
     registry,
     sessions: store,
     analyzers,
+    clearError: () => actions.clearError(),
     filter: {
       filterAst: () => liveFilterBinding()?.scan.currentFilter().ast ?? null,
       filterSessionId: () => liveFilterBinding()?.sessionId ?? null,
@@ -458,7 +459,18 @@ export function App(props: AppProps) {
         <span class={styles.session}>Loading…</span>
       </Show>
       <Show when={actions.error()}>
-        <span class={styles.error}>{actions.error()}</span>
+        <span class={styles.error} role="alert">
+          {actions.error()}
+          <button
+            type="button"
+            class={styles.errorDismiss}
+            aria-label="Dismiss error"
+            title="Dismiss"
+            onClick={actions.clearError}
+          >
+            ×
+          </button>
+        </span>
       </Show>
     </>
   );
