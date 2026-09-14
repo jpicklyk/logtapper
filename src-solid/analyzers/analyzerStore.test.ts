@@ -7,6 +7,7 @@ import type {
   PipelineProgress,
   PipelineCompleteEvent,
   ChainUpdateEvent,
+  WorkspaceRestoredEvent,
   MatchedLine,
 } from '@bridge/types';
 import {
@@ -100,10 +101,12 @@ interface Harness {
   unlisten: ReturnType<typeof vi.fn>;
   unlistenChain: ReturnType<typeof vi.fn>;
   unlistenComplete: ReturnType<typeof vi.fn>;
+  unlistenRestored: ReturnType<typeof vi.fn>;
   chooseFile: ReturnType<typeof vi.fn>;
   fireProgress: (payload: PipelineProgress) => void;
   fireChain: (payload: ChainUpdateEvent) => void;
   fireComplete: (payload: PipelineCompleteEvent) => void;
+  fireRestored: (payload: WorkspaceRestoredEvent) => void;
   setOrder: (ids: string[]) => void;
 }
 
@@ -151,9 +154,17 @@ function mount(commandOverrides: Partial<AnalyzerCommands> = {}, options: MountO
     completeCb = cb;
     return Promise.resolve(unlistenComplete);
   });
+  const unlistenRestored = vi.fn();
+  let restoredCb: ((payload: WorkspaceRestoredEvent) => void) | null = null;
+  const listenRestored = vi.fn((cb: (payload: WorkspaceRestoredEvent) => void) => {
+    restoredCb = cb;
+    return Promise.resolve(unlistenRestored);
+  });
   const sessions: AnalyzerSessions = { order: () => order() };
 
-  const store = createAnalyzerStore({ sessions, controller, listen, listenChain, listenComplete, commands, chooseFile });
+  const store = createAnalyzerStore({
+    sessions, controller, listen, listenChain, listenComplete, listenRestored, commands, chooseFile,
+  });
 
   return {
     store,
@@ -162,10 +173,12 @@ function mount(commandOverrides: Partial<AnalyzerCommands> = {}, options: MountO
     unlisten,
     unlistenChain,
     unlistenComplete,
+    unlistenRestored,
     chooseFile,
     fireProgress: (payload) => progressCb?.(payload),
     fireChain: (payload) => chainCb?.(payload),
     fireComplete: (payload) => completeCb?.(payload),
+    fireRestored: (payload) => restoredCb?.(payload),
     setOrder: (ids) => setOrderSignal(ids),
   };
 }
@@ -392,6 +405,37 @@ describe('analyzerStore', () => {
   });
 
   // ── chain-update (F1) ────────────────────────────────────────────────────
+
+  describe('workspace-restored', () => {
+    const restored = (sessionId: string, active: string[], disabled: string[] = []): WorkspaceRestoredEvent => ({
+      sessionId,
+      bookmarkCount: 0,
+      analysisCount: 0,
+      activeProcessorIds: active,
+      disabledProcessorIds: disabled,
+      source: 'workspace',
+    });
+
+    it('mirrors a restored per-session chain, disabled members included, and pushes it back unchanged', async () => {
+      const { store, setOrder, commands, fireRestored } = mount();
+      setOrder(['s1']);
+      fireRestored(restored('s1', ['a', 'b', PII_ANONYMIZER_ID], ['b']));
+      expect(store.chain('s1').order).toEqual(['a', 'b']);
+      expect(store.chain('s1').disabled).toEqual(['b']);
+      await tick();
+      // The full chain, not order − disabled: the backend already holds this
+      // exact state, so the push is a no-op there rather than a truncation.
+      expect(commands.setSessionPipelineMeta).toHaveBeenLastCalledWith('s1', ['a', 'b'], ['b']);
+    });
+
+    it('leaves a session on the shared template when the restore carries no chain', () => {
+      const { store, setOrder, fireRestored } = mount();
+      setOrder(['s1']);
+      store.add('s1', 'x');
+      fireRestored(restored('s1', []));
+      expect(store.chain('s1').order).toEqual(['x']);
+    });
+  });
 
   describe('chain-update', () => {
     it('a ui-caller chain-update is ignored even when its payload differs', () => {
@@ -1238,8 +1282,8 @@ describe('analyzerStore', () => {
   // ── Disposal ─────────────────────────────────────────────────────────────
 
   describe('dispose()', () => {
-    it('unlistens all three subscriptions and ignores further events', async () => {
-      const { store, setOrder, unlisten, unlistenChain, unlistenComplete, fireProgress, fireChain, fireComplete } = mount({
+    it('unlistens all four subscriptions and ignores further events', async () => {
+      const { store, setOrder, unlisten, unlistenChain, unlistenComplete, unlistenRestored, fireProgress, fireChain, fireComplete } = mount({
         runPipeline: vi.fn(() => new Promise<PipelineRunResult>(() => {})),
       });
       setOrder(['s1']);
@@ -1249,6 +1293,7 @@ describe('analyzerStore', () => {
       expect(unlisten).toHaveBeenCalledTimes(1);
       expect(unlistenChain).toHaveBeenCalledTimes(1);
       expect(unlistenComplete).toHaveBeenCalledTimes(1);
+      expect(unlistenRestored).toHaveBeenCalledTimes(1);
       expect(() => fireProgress({ sessionId: 's1', processorId: 'a', linesProcessed: 1, totalLines: 2, percent: 50 })).not.toThrow();
       expect(store.progress('s1').size).toBe(0);
       expect(() => fireChain(chainEvent('s1', ['x']))).not.toThrow();
@@ -1285,12 +1330,13 @@ describe('analyzerStore', () => {
         listen: () => late,
         listenChain: () => late,
         listenComplete: () => late,
+        listenRestored: () => late,
         commands: makeCommands(),
       });
       store.dispose();
       resolveListen(lateUnlisten);
       await tick();
-      expect(lateUnlisten).toHaveBeenCalledTimes(3); // once per late-settling subscription
+      expect(lateUnlisten).toHaveBeenCalledTimes(4); // once per late-settling subscription
     });
   });
 });

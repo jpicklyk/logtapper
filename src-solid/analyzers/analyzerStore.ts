@@ -88,7 +88,7 @@ import {
   getCorrelatorEvents,
   getProcessorVars,
 } from '@bridge/commands';
-import { onPipelineProgress, onChainUpdate, onPipelineComplete } from '@bridge/events';
+import { onPipelineProgress, onChainUpdate, onPipelineComplete, onWorkspaceRestored } from '@bridge/events';
 import { groupProcessorsByPack } from '@bridge/types';
 import type {
   Caller,
@@ -100,6 +100,7 @@ import type {
   PipelineProgress,
   PipelineCompleteEvent,
   ChainUpdateEvent,
+  WorkspaceRestoredEvent,
   MatchedLine,
   CorrelatorResult,
   AdbProcessorUpdate,
@@ -208,6 +209,8 @@ export interface AnalyzerStoreDeps {
   listenChain?: (cb: (payload: ChainUpdateEvent) => void) => Promise<UnlistenFn>;
   /** Injected for tests; defaults to `onPipelineComplete`. */
   listenComplete?: (cb: (payload: PipelineCompleteEvent) => void) => Promise<UnlistenFn>;
+  /** Injected for tests; defaults to `onWorkspaceRestored`. */
+  listenRestored?: (cb: (payload: WorkspaceRestoredEvent) => void) => Promise<UnlistenFn>;
   /** Injected for tests; defaults to the real bridge wrappers. */
   commands?: AnalyzerCommands;
   /** Injected for tests; defaults to the Tauri native dialog. */
@@ -412,6 +415,7 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
   const listen = deps.listen ?? onPipelineProgress;
   const listenChain = deps.listenChain ?? onChainUpdate;
   const listenComplete = deps.listenComplete ?? onPipelineComplete;
+  const listenRestored = deps.listenRestored ?? onWorkspaceRestored;
   const chooseFile = deps.chooseFile ?? openDialog;
 
   return createRoot((disposeRoot) => {
@@ -602,6 +606,23 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
 
     const addedBy = (sessionId: string, processorId: string): Caller | null =>
       addedByAgent[sessionId]?.[processorId] ?? null;
+
+    // A workspace restore put this session's saved chain into the backend
+    // (`workspace/restore.ts` → `restoreWorkspaceSession`); mirror it here or
+    // the panel shows an empty chain the first edit would then push back over
+    // the backend's restored one. React's `useWorkspaceRestore` does the same.
+    // A legacy workspace with no per-session chain sends an empty list and
+    // leaves the session on the shared template, as it always did.
+    track(
+      listenRestored((payload) => {
+        if (disposed) return;
+        if (payload.activeProcessorIds.length === 0) return;
+        applyWorkspaceChain(
+          { chain: payload.activeProcessorIds, disabledChainIds: payload.disabledProcessorIds },
+          payload.sessionId,
+        );
+      }),
+    );
 
     // An agent changed this session's chain (or an explicit-ids agent run
     // merged into it). Replace wholesale — the payload is the whole chain —
