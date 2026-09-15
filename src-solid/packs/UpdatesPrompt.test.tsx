@@ -11,7 +11,7 @@ afterEach(cleanup);
 const procUpdate = (id: string, sourceName = 'official'): UpdateAvailable =>
   ({ processorId: id, processorName: `Name ${id}`, sourceName, installedVersion: '1.0.0', availableVersion: '1.1.0' } as UpdateAvailable);
 const packUpdate = (id: string, sourceName = 'official'): PackUpdateAvailable =>
-  ({ packId: id, packName: `Pack ${id}`, sourceName, installedVersion: '1.0.0', availableVersion: '2.0.0', newProcessorIds: [] } as PackUpdateAvailable);
+  ({ packId: id, packName: `Pack ${id}`, sourceName, installedVersion: '1.0.0', availableVersion: '2.0.0', newProcessorIds: [] } as unknown as PackUpdateAvailable);
 
 /** A reactive `PacksStore` double covering only what the prompt reads. */
 function fakeStore(opts: {

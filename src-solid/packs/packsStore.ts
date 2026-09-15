@@ -27,7 +27,7 @@
  * preview of the pack's member processors (name + description), so nothing
  * here builds a one-click path that hides what is being added.
  */
-import { batch, createSignal } from 'solid-js';
+import { batch, createSignal, untrack } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { onUpdatesAvailable } from '@bridge/events';
@@ -410,11 +410,14 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
   // Both are consumed: the seed read covers the check finishing before this
   // window subscribed, the event covers it finishing after. Either one opens
   // the prompt once, and only if there is something the user can act on.
-  const offerPrompt = (): void => {
-    if (disposed || promptDismissed) return;
-    if (pendingUpdates().length === 0 && pendingPackUpdates().length === 0) return;
-    setUpdatePromptOpen(true);
-  };
+  const offerPrompt = (): void =>
+    // Runs from a promise/event callback — not a tracked scope, and must not
+    // become one: these reads are a one-shot decision, not a subscription.
+    untrack(() => {
+      if (disposed || promptDismissed) return;
+      if (pendingUpdates().length === 0 && pendingPackUpdates().length === 0) return;
+      setUpdatePromptOpen(true);
+    });
 
   const applyStartupResult = (updates: UpdateAvailable[], packUpdates: PackUpdateAvailable[]): void => {
     if (disposed) return;
