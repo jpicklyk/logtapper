@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { For, Show, createMemo, createSignal } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
 import type { JSX } from 'solid-js';
 import { createTier } from './tier';
 import { createMode } from './mode';
@@ -109,21 +109,42 @@ export function AppShell(props: AppShellProps) {
     ...drawerSurfaces(mode(), tier()),
   ]);
 
+  const drawerSurface = createMemo(() => {
+    const id = openDrawer();
+    return id ? (surfaceById(id) ?? null) : null;
+  });
+
+  /** How an open drawer sits next to the rail. On compact there is no room —
+   *  it overlays the single column as a sheet (backdrop, click-outside and
+   *  Escape close it). On standard and wider it is a real grid column that
+   *  pushes the navigator right, so opening Settings never hides sections
+   *  or bookmarks behind it. */
+  const drawerPlacement = createMemo<'overlay' | 'push'>(() => (tier() === 'compact' ? 'overlay' : 'push'));
+  const pushing = createMemo(() => drawerSurface() !== null && drawerPlacement() === 'push');
+
   const columns = createMemo(() =>
     [
       'var(--shell-rail-w)',
+      ...(pushing() ? ['var(--shell-drawer-w)'] : []),
       ...regions().map((region) =>
         region === 'viewer' ? 'minmax(0, 1fr)' : `${widths.width(region as ResizableRegion)}px`,
       ),
     ].join(' '),
   );
 
-  const drawerSurface = createMemo(() => {
-    const id = openDrawer();
-    return id ? (surfaceById(id) ?? null) : null;
-  });
-
   const toggleDrawer = (id: SurfaceId) => setOpenDrawer((current) => (current === id ? null : id));
+  const closeDrawer = () => setOpenDrawer(null);
+
+  // Escape closes an overlay drawer, the way a sheet should; a pushed column
+  // is persistent chrome and keeps Escape for whatever is focused inside it.
+  createEffect(() => {
+    if (drawerSurface() === null || drawerPlacement() !== 'overlay') return;
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') closeDrawer();
+    };
+    window.addEventListener('keydown', onKey);
+    onCleanup(() => window.removeEventListener('keydown', onKey));
+  });
 
   return (
     <div
@@ -161,6 +182,29 @@ export function AppShell(props: AppShellProps) {
         </For>
       </nav>
 
+      {/* Rendered before the regions on purpose: when the drawer is a pushed
+          column, grid auto-placement must reach it right after the rail. */}
+      <Show when={drawerSurface()}>
+        {(surface) => (
+          <>
+            <Show when={drawerPlacement() === 'overlay'}>
+              <div class={styles.drawerBackdrop} data-testid="drawer-backdrop" onClick={closeDrawer} />
+            </Show>
+            <aside class={styles.drawer} data-placement={drawerPlacement()} aria-label={surface().title}>
+              <header class={styles.drawerHeader}>
+                <span>{surface().title}</span>
+                <button type="button" class={styles.drawerClose} aria-label="Close" onClick={closeDrawer}>
+                  ×
+                </button>
+              </header>
+              <div class={styles.drawerBody}>
+                <SurfacePanel surface={surface()} slot={props.slots?.[surface().id]} />
+              </div>
+            </aside>
+          </>
+        )}
+      </Show>
+
       <For each={regions()}>
         {(region) => (
           <div class={styles.region} data-region={region}>
@@ -181,27 +225,6 @@ export function AppShell(props: AppShellProps) {
           </div>
         )}
       </For>
-
-      <Show when={drawerSurface()}>
-        {(surface) => (
-          <aside class={styles.drawer} aria-label={surface().title}>
-            <header class={styles.drawerHeader}>
-              <span>{surface().title}</span>
-              <button
-                type="button"
-                class={styles.drawerClose}
-                aria-label="Close"
-                onClick={() => setOpenDrawer(null)}
-              >
-                ×
-              </button>
-            </header>
-            <div class={styles.drawerBody}>
-              <SurfacePanel surface={surface()} slot={props.slots?.[surface().id]} />
-            </div>
-          </aside>
-        )}
-      </Show>
 
       <footer class={styles.statusBar}>
         {props.statusBar}
