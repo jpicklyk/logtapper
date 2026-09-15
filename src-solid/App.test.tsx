@@ -193,6 +193,7 @@ vi.mock('@bridge/events', () => ({
   onPipelineComplete: vi.fn(() => Promise.resolve(() => {})),
   onChainUpdate: vi.fn(() => Promise.resolve(() => {})),
   onCatalogUpdate: vi.fn(() => Promise.resolve(() => {})),
+  onUpdatesAvailable: vi.fn(() => Promise.resolve(() => {})),
   onAnalysisUpdate: vi.fn(() => Promise.resolve(() => {})),
   onBookmarkUpdate: vi.fn(() => Promise.resolve(() => {})),
   onWatchMatch: vi.fn(() => Promise.resolve(() => {})),

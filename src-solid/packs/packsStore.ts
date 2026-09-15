@@ -29,6 +29,8 @@
  */
 import { batch, createSignal } from 'solid-js';
 import type { Accessor } from 'solid-js';
+import type { UnlistenFn } from '@tauri-apps/api/event';
+import { onUpdatesAvailable } from '@bridge/events';
 import {
   fetchMarketplace,
   installFromMarketplace,
@@ -55,6 +57,7 @@ import type {
   PackUpdateAvailable,
   UpdateCheckResult,
   UpdateResult,
+  UpdatesAvailableEvent,
   SourceError,
 } from '@bridge/types';
 import { createGenerationGuard } from '../reactive';
@@ -135,6 +138,14 @@ export interface PacksStoreDeps {
   refreshSources?: () => void;
   /** Injected for tests; defaults to the real bridge wrappers. */
   commands?: Partial<PacksCommands>;
+  /** Injected for tests; defaults to `onUpdatesAvailable`. */
+  listenUpdates?: (cb: (payload: UpdatesAvailableEvent) => void) => Promise<UnlistenFn>;
+}
+
+/** What `updateAll()` could not update: the ids still pending afterwards. */
+export interface UpdateAllOutcome {
+  failedProcessorIds: string[];
+  failedPackIds: string[];
 }
 
 export interface PacksStore {
@@ -184,6 +195,21 @@ export interface PacksStore {
   updateAllFromSource(sourceName: string): Promise<void>;
   updatePack(sourceName: string, entry: MarketplacePackEntry): Promise<void>;
 
+  // ── Startup prompt ───────────────────────────────────────────────────────
+  /** True while the launch-time "updates available" dialog should be shown:
+   *  the startup check (seeded from `AppState` at construction, or arriving
+   *  as `updates-available`) found pending updates and the user has not yet
+   *  answered. Never re-opens in this session once dismissed. */
+  updatePromptOpen: Accessor<boolean>;
+  dismissUpdatePrompt(): void;
+  /** Update every pending processor (per source) and every pending pack,
+   *  sequentially; whatever is still pending afterwards failed. */
+  updateAll(): Promise<UpdateAllOutcome>;
+  updatingAll: Accessor<boolean>;
+  /** `done`/`total` steps of the current `updateAll()` — one per source plus
+   *  one per pack. */
+  updateAllProgress: Accessor<{ done: number; total: number }>;
+
   dispose(): void;
 }
 
@@ -208,7 +234,26 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
   const [updatesLoading, setUpdatesLoading] = createSignal(false);
   const [updateErrors, setUpdateErrors] = createSignal<SourceError[]>([]);
 
+  const [updatePromptOpen, setUpdatePromptOpen] = createSignal(false);
+  const [updatingAll, setUpdatingAll] = createSignal(false);
+  const [updateAllProgress, setUpdateAllProgress] = createSignal({ done: 0, total: 0 });
+  // "Later" is for the whole session: a late `updates-available` (or a
+  // re-seed) must not bring the dialog back once the user waved it off.
+  let promptDismissed = false;
+
   let disposed = false;
+  const unlisteners: UnlistenFn[] = [];
+  /** Unlisten-safe subscribe — a `listen()` promise that settles after
+   *  `dispose()` unlistens itself instead of leaking. Same pattern as
+   *  `analyzers/analyzerStore.ts`. */
+  const track = (pending: Promise<UnlistenFn>): void => {
+    void pending
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisteners.push(fn);
+      })
+      .catch(() => undefined);
+  };
 
   const fetchEntries = async (sourceName: string): Promise<void> => {
     setSelectedSource(sourceName);
@@ -359,8 +404,88 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
     if (!disposed) setPendingPackUpdates((list) => list.filter((u) => u.packId !== entry.id));
   };
 
+  // ── Startup prompt ───────────────────────────────────────────────────────
+  // The backend's `startup_update_check` runs on its own at launch and parks
+  // what it found in `AppState`; it also emits `updates-available` when done.
+  // Both are consumed: the seed read covers the check finishing before this
+  // window subscribed, the event covers it finishing after. Either one opens
+  // the prompt once, and only if there is something the user can act on.
+  const offerPrompt = (): void => {
+    if (disposed || promptDismissed) return;
+    if (pendingUpdates().length === 0 && pendingPackUpdates().length === 0) return;
+    setUpdatePromptOpen(true);
+  };
+
+  const applyStartupResult = (updates: UpdateAvailable[], packUpdates: PackUpdateAvailable[]): void => {
+    if (disposed) return;
+    batch(() => {
+      setPendingUpdates(updates);
+      setPendingPackUpdates(packUpdates);
+    });
+    offerPrompt();
+  };
+
+  void Promise.all([commands.getPendingUpdates(), commands.getPendingPackUpdates()])
+    .then(([updates, packUpdates]) => {
+      // Only a non-empty seed is authoritative: an empty one may simply mean
+      // the check has not finished yet, and the event will say so.
+      if (updates.length > 0 || packUpdates.length > 0) applyStartupResult(updates, packUpdates);
+    })
+    .catch(() => undefined);
+
+  track(
+    (deps.listenUpdates ?? onUpdatesAvailable)((payload) => {
+      applyStartupResult(payload.updates, payload.packUpdates);
+      // The check stamped `lastChecked` on every source it reached.
+      deps.refreshSources?.();
+    }),
+  );
+
+  const dismissUpdatePrompt = (): void => {
+    promptDismissed = true;
+    setUpdatePromptOpen(false);
+  };
+
+  const updateAll = async (): Promise<UpdateAllOutcome> => {
+    const sourceNames = [...new Set(pendingUpdates().map((u) => u.sourceName))];
+    const packs = [...pendingPackUpdates()];
+    batch(() => {
+      setUpdatingAll(true);
+      setUpdateAllProgress({ done: 0, total: sourceNames.length + packs.length });
+    });
+    const step = (): void => {
+      if (!disposed) setUpdateAllProgress((p) => ({ done: p.done + 1, total: p.total }));
+    };
+    try {
+      for (const sourceName of sourceNames) {
+        try {
+          await updateAllFromSource(sourceName);
+        } catch {
+          // A source that failed wholesale leaves its updates pending — that
+          // is the failure report; nothing else to do here.
+        }
+        step();
+      }
+      for (const pack of packs) {
+        try {
+          await updatePack(pack.sourceName, pack.entry);
+        } catch {
+          // Recorded by `withMutation` under `errorFor(pack.packId)`.
+        }
+        step();
+      }
+    } finally {
+      if (!disposed) setUpdatingAll(false);
+    }
+    return {
+      failedProcessorIds: pendingUpdates().map((u) => u.processorId),
+      failedPackIds: pendingPackUpdates().map((u) => u.packId),
+    };
+  };
+
   const dispose = (): void => {
     disposed = true;
+    for (const fn of unlisteners.splice(0)) fn();
   };
 
   return {
@@ -388,6 +513,11 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
     updateOne,
     updateAllFromSource,
     updatePack,
+    updatePromptOpen,
+    dismissUpdatePrompt,
+    updateAll,
+    updatingAll,
+    updateAllProgress,
     dispose,
   };
 }

@@ -4,7 +4,7 @@ import { createPacksStore } from './packsStore';
 import type { PacksCommands } from './packsStore';
 import type {
   MarketplaceEntry, MarketplacePackEntry, MarketplaceFetchResult, PackSummary, ProcessorSummary,
-  Source, UpdateAvailable, PackUpdateAvailable, UpdateCheckResult, UpdateResult,
+  Source, UpdateAvailable, PackUpdateAvailable, UpdateCheckResult, UpdateResult, UpdatesAvailableEvent,
 } from '@bridge/types';
 
 function noSources() {
@@ -292,5 +292,110 @@ describe('packsStore', () => {
     const store = createPacksStore({ sources, commands: baseCommands() });
     expect(store.sources()).toEqual([{ name: 'official', type: 'github', repo: 'jpicklyk/logtapper', enabled: true, autoUpdate: true }]);
     store.dispose();
+  });
+
+  describe('startup update prompt', () => {
+    const procUpdate = (id: string, sourceName = 'official'): UpdateAvailable =>
+      ({ processorId: id, processorName: id, sourceName, installedVersion: '1.0.0', availableVersion: '1.1.0', entry: procEntry });
+    const packUpdate = (id = 'wifi-pack', sourceName = 'official'): PackUpdateAvailable =>
+      ({ packId: id, packName: id, sourceName, installedVersion: '1.0.0', availableVersion: '2.0.0', newProcessorIds: [], entry: packEntry });
+
+    /** A fake `onUpdatesAvailable` whose callback the test can fire. */
+    function listener() {
+      let cb: ((p: UpdatesAvailableEvent) => void) | null = null;
+      const unlisten = vi.fn();
+      const listenUpdates = vi.fn((c: (p: UpdatesAvailableEvent) => void) => { cb = c; return Promise.resolve(unlisten); });
+      return { listenUpdates, unlisten, fire: (p: UpdatesAvailableEvent) => cb?.(p) };
+    }
+    const tick = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
+
+    it('opens the prompt from a non-empty seed even if the event never arrives', async () => {
+      const { listenUpdates } = listener();
+      const store = createPacksStore({
+        sources: noSources(), listenUpdates,
+        commands: baseCommands({ getPendingUpdates: vi.fn(() => Promise.resolve([procUpdate('a')])) }),
+      });
+      await tick();
+      expect(store.updatePromptOpen()).toBe(true);
+      expect(store.pendingUpdates()).toEqual([procUpdate('a')]);
+      store.dispose();
+    });
+
+    it('stays closed on an empty seed, then opens when the event reports updates and refreshes sources', async () => {
+      const { listenUpdates, fire } = listener();
+      const refreshSources = vi.fn();
+      const store = createPacksStore({ sources: noSources(), listenUpdates, refreshSources, commands: baseCommands() });
+      await tick();
+      expect(store.updatePromptOpen()).toBe(false);
+      fire({ updates: [], packUpdates: [packUpdate()], autoApplied: ['x@official'] });
+      expect(store.updatePromptOpen()).toBe(true);
+      expect(store.pendingPackUpdates()).toEqual([packUpdate()]);
+      expect(refreshSources).toHaveBeenCalledTimes(1);
+      store.dispose();
+    });
+
+    it('an event with only auto-applied updates opens nothing — there is nothing to decide', async () => {
+      const { listenUpdates, fire } = listener();
+      const store = createPacksStore({ sources: noSources(), listenUpdates, commands: baseCommands() });
+      await tick();
+      fire({ updates: [], packUpdates: [], autoApplied: ['x@official'] });
+      expect(store.updatePromptOpen()).toBe(false);
+      store.dispose();
+    });
+
+    it('Later dismisses for the session: a later event still updates the lists but never re-opens it', async () => {
+      const { listenUpdates, fire } = listener();
+      const store = createPacksStore({
+        sources: noSources(), listenUpdates,
+        commands: baseCommands({ getPendingUpdates: vi.fn(() => Promise.resolve([procUpdate('a')])) }),
+      });
+      await tick();
+      store.dismissUpdatePrompt();
+      expect(store.updatePromptOpen()).toBe(false);
+      fire({ updates: [procUpdate('a'), procUpdate('b')], packUpdates: [], autoApplied: [] });
+      expect(store.updatePromptOpen()).toBe(false);
+      expect(store.pendingUpdates()).toHaveLength(2);
+      store.dispose();
+    });
+
+    it('updateAll updates each source once and each pack once, reports what stayed pending, and counts progress', async () => {
+      const { listenUpdates, fire } = listener();
+      const updateAllFromSource = vi.fn((sourceName: string) => Promise.resolve(
+        sourceName === 'official'
+          ? [{ processorId: 'a', oldVersion: '1.0.0', newVersion: '1.1.0', success: true, error: null } as UpdateResult]
+          : [{ processorId: 'c', oldVersion: '1.0.0', newVersion: '1.1.0', success: false, error: 'boom' } as UpdateResult],
+      ));
+      const installPackFromMarketplace = vi.fn(() => Promise.reject(new Error('pack download failed')));
+      const store = createPacksStore({
+        sources: noSources(), listenUpdates,
+        commands: baseCommands({ updateAllFromSource, installPackFromMarketplace }),
+      });
+      await tick();
+      fire({ updates: [procUpdate('a'), procUpdate('b'), procUpdate('c', 'team')], packUpdates: [packUpdate()], autoApplied: [] });
+      const seen: number[] = [];
+      const run = store.updateAll();
+      expect(store.updatingAll()).toBe(true);
+      expect(store.updateAllProgress()).toEqual({ done: 0, total: 3 }); // 2 sources + 1 pack
+      const outcome = await run;
+      seen.push(store.updateAllProgress().done);
+      expect(updateAllFromSource).toHaveBeenCalledTimes(2);
+      expect(updateAllFromSource).toHaveBeenNthCalledWith(1, 'official');
+      expect(updateAllFromSource).toHaveBeenNthCalledWith(2, 'team');
+      expect(installPackFromMarketplace).toHaveBeenCalledTimes(1);
+      expect(store.updatingAll()).toBe(false);
+      expect(seen).toEqual([3]);
+      // 'a' succeeded; 'b' was never reported by its source; 'c' failed; the pack threw.
+      expect(outcome).toEqual({ failedProcessorIds: ['b', 'c'], failedPackIds: ['wifi-pack'] });
+      expect(store.errorFor('wifi-pack')).toContain('pack download failed');
+      store.dispose();
+    });
+
+    it('dispose unlistens the updates subscription', async () => {
+      const { listenUpdates, unlisten } = listener();
+      const store = createPacksStore({ sources: noSources(), listenUpdates, commands: baseCommands() });
+      await tick();
+      store.dispose();
+      expect(unlisten).toHaveBeenCalledTimes(1);
+    });
   });
 });

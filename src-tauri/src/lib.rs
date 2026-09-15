@@ -149,6 +149,7 @@ async fn startup_update_check(handle: tauri::AppHandle) {
 
     let mut pending = Vec::new();
     let mut pending_packs = Vec::new();
+    let mut auto_applied: Vec<String> = Vec::new();
 
     for source in &sources {
         let Ok(index) = registry::fetch_marketplace(&state.http_client, source).await else {
@@ -187,6 +188,7 @@ async fn startup_update_check(handle: tauri::AppHandle) {
                             procs.insert(qid.clone(), def);
                         }
                         eprintln!("Auto-updated {} from {} to {}", qid, inst_ver, entry.version);
+                        auto_applied.push(qid.clone());
                     }
                 }
             } else {
@@ -219,14 +221,14 @@ async fn startup_update_check(handle: tauri::AppHandle) {
     // Store pending updates.
     if !pending.is_empty() {
         if let Ok(mut pu) = state.pending_updates.lock() {
-            *pu = pending;
+            *pu = pending.clone();
         }
     }
 
     // Store pending pack updates.
     if !pending_packs.is_empty() {
         if let Ok(mut ppu) = state.pending_pack_updates.lock() {
-            *ppu = pending_packs;
+            *ppu = pending_packs.clone();
         }
     }
 
@@ -238,6 +240,26 @@ async fn startup_update_check(handle: tauri::AppHandle) {
             }
         }
     };
+
+    // Tell the UI what happened — after every lock above has dropped. The
+    // pending half drives the startup "Update all" prompt; the auto-applied
+    // half changed the installed catalog without any caller, so it also
+    // rides the same `catalog-update` every other install/update emits (the
+    // frontend seeds pending lists at construction too, in case this task
+    // finishes before the window has subscribed).
+    if !auto_applied.is_empty() {
+        services::processors::emit_catalog_update(
+            &commands::adapters::ui_ctx(&handle),
+            "update",
+            auto_applied.clone(),
+        );
+    }
+    if !pending.is_empty() || !pending_packs.is_empty() || !auto_applied.is_empty() {
+        let _ = handle.emit(
+            services::marketplace::UPDATES_AVAILABLE_EVENT,
+            services::marketplace::UpdatesAvailableEvent { updates: pending, pack_updates: pending_packs, auto_applied },
+        );
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

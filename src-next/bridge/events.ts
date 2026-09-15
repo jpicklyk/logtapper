@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { ActivityEntry, AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, PipelineProgress, PipelineCompleteEvent, ChainUpdateEvent, CatalogUpdateEvent, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent, WatchUpdateEvent, LoadResult, SessionClosedEvent, WorkspaceAutoSavedEvent, WorkspaceRestoredEvent, WorkspaceListChangedEvent, LtsEditorTabPayload, FocusContext, NavRequest } from './types';
+import type { ActivityEntry, AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, PipelineProgress, PipelineCompleteEvent, ChainUpdateEvent, CatalogUpdateEvent, UpdatesAvailableEvent, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent, WatchUpdateEvent, LoadResult, SessionClosedEvent, WorkspaceAutoSavedEvent, WorkspaceRestoredEvent, WorkspaceListChangedEvent, LtsEditorTabPayload, FocusContext, NavRequest } from './types';
 
 // ---------------------------------------------------------------------------
 // ADB streaming events
@@ -113,6 +113,14 @@ export function onCatalogUpdate(
   cb: (payload: CatalogUpdateEvent) => void,
 ): Promise<UnlistenFn> {
   return listen<CatalogUpdateEvent>('catalog-update', (e) => cb(e.payload));
+}
+
+/** The startup marketplace check found pending and/or auto-applied updates
+ *  (emitted once per launch, only when there is something to report). */
+export function onUpdatesAvailable(
+  cb: (payload: UpdatesAvailableEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<UpdatesAvailableEvent>('updates-available', (e) => cb(e.payload));
 }
 
 // ---------------------------------------------------------------------------

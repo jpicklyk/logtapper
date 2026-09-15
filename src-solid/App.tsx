@@ -35,7 +35,7 @@ import { WatchesPanel, createWatchesStore } from './watches';
 import { Switcher, WorkspaceHome, createWorkspaceStore } from './workspace';
 import { ExportDialog, createExportStore } from './export';
 import { SettingsPanel, createSettingsStore } from './settings';
-import { createPacksStore } from './packs';
+import { createPacksStore, UpdatesPrompt } from './packs';
 import { StreamControlsPanel, createLiveStreamStore } from './stream';
 import type { ThemeController } from './theme/applyTheme';
 import styles from './App.module.css';
@@ -505,166 +505,173 @@ export function App(props: AppProps) {
   );
 
   return (
-    <AppShell
-      workspaceId={workspace.activeId() ?? WORKSPACE_ID}
-      sessionKind={store.focused()?.kind ?? null}
-      // Land on workspace home when the app opens with nothing loaded, so A1's
-      // attach-a-device and open-a-capture actions are the first thing seen
-      // rather than sitting behind a rail glyph. Read once by the shell, so a
-      // restore that populates sessions a moment later does not yank it away,
-      // and closing it makes it stay closed.
-      initialDrawer={store.order().length === 0 ? 'workspace-home' : null}
-      topBar={topBar}
-      statusBar={statusBar}
-      slots={{
-        'workspace-home': () => (
-          <WorkspaceHome store={workspace} sessions={store} actions={actions} liveStream={liveStream} />
-        ),
-        presence: () => <PresencePanel store={presence} />,
-        sections: () => (
-          <SectionsPanel
-            store={sections}
-            sourceName={store.focused()?.load.sourceName}
-            firstTimestamp={store.focused()?.load.firstTimestamp}
-            lastTimestamp={store.focused()?.load.lastTimestamp}
-          />
-        ),
-        analyzers: () => (
-          <Show when={store.focused()}>
-            {(entry) => (
-              <AnalyzersPanel
-                store={analyzers}
-                controller={controller}
-                sessionId={entry().load.sessionId}
-                sessionName={entry().load.sourceName}
-                lastRunCaller={lastRunCaller}
-                onOpenDeviceState={(processorId) =>
-                  deviceState.setSelectedTracker(entry().load.sessionId, processorId)
-                }
-              />
-            )}
-          </Show>
-        ),
-        'device-state': () => (
-          <Show when={store.focused()}>
-            {(entry) => <DeviceStatePanel store={deviceState} sessionId={entry().load.sessionId} />}
-          </Show>
-        ),
-        analyses: () => <AnalysesPanel store={analyses} />,
-        bookmarks: () => <BookmarksPanel store={bookmarks} sessions={store} />,
-        watches: () => <WatchesPanel store={watches} sessions={store} callerFor={watchCaller} />,
-        viewer: () => (
-          <ViewerSplit
-            split={splitView}
-            // The same session can never be picked for both panes — cursor,
-            // query and view-mode state are keyed by session id on the
-            // controller, not by pane, so showing one session in two panes
-            // would make them share that state instead of each having its own.
-            secondaryOptions={() => {
-              const primaryId = store.focusedId();
-              return store
-                .order()
-                .filter((id) => id !== primaryId)
-                .map((id) => ({ sessionId: id, label: store.byId(id)?.load.sourceName ?? id }));
-            }}
-            primary={() => (
-              <>
-                <TabStrip
-                  tabs={tabs()}
-                  activeKey={activeSurface() === 'editor' ? editorStore.activeId() : store.focusedId()}
-                  onSelect={(key) => selectTab(key, tabs().find((t) => t.key === key)?.kind ?? 'session')}
-                  onClose={(key) => closeTab(key, tabs().find((t) => t.key === key)?.kind ?? 'session')}
-                />
-                <Show
-                  when={activeSurface() === 'editor' && editorStore.active()}
-                  fallback={
-                    <Show
-                      when={store.focused()}
-                      fallback={<div class={styles.empty}>No log open. Choose a file to begin.</div>}
-                    >
-                      {(entry) => (
-                        <>
-                          {/* Keyed on the session id: QueryBar snapshots its session at
-                              mount by design, so it must be remounted per session. The
-                              outer non-keyed Show does NOT remount on a truthy→truthy
-                              switch between two open tabs. */}
-                          <Show when={entry().load.sessionId} keyed>
-                            {(sid) => (
-                              <QueryBar
-                                sessionId={sid}
-                                store={queryStore}
-                                controller={controller}
-                                active={splitView.activePane() === 'main'}
-                                bindLiveFilter={bindLiveFilter}
-                              />
-                            )}
-                          </Show>
-                          <LogViewer
-                            dataSource={entry().dataSource}
-                            totalLineCount={renderedLineCount()}
-                            sessionId={entry().load.sessionId}
-                            tailMode={entry().kind === 'live'}
-                            controller={controller}
-                            onActivate={() => splitView.setActivePane('main')}
-                          />
-                        </>
-                      )}
-                    </Show>
+    <>
+      <AppShell
+        workspaceId={workspace.activeId() ?? WORKSPACE_ID}
+        sessionKind={store.focused()?.kind ?? null}
+        // Land on workspace home when the app opens with nothing loaded, so A1's
+        // attach-a-device and open-a-capture actions are the first thing seen
+        // rather than sitting behind a rail glyph. Read once by the shell, so a
+        // restore that populates sessions a moment later does not yank it away,
+        // and closing it makes it stay closed.
+        initialDrawer={store.order().length === 0 ? 'workspace-home' : null}
+        topBar={topBar}
+        statusBar={statusBar}
+        slots={{
+          'workspace-home': () => (
+            <WorkspaceHome store={workspace} sessions={store} actions={actions} liveStream={liveStream} />
+          ),
+          presence: () => <PresencePanel store={presence} />,
+          sections: () => (
+            <SectionsPanel
+              store={sections}
+              sourceName={store.focused()?.load.sourceName}
+              firstTimestamp={store.focused()?.load.firstTimestamp}
+              lastTimestamp={store.focused()?.load.lastTimestamp}
+            />
+          ),
+          analyzers: () => (
+            <Show when={store.focused()}>
+              {(entry) => (
+                <AnalyzersPanel
+                  store={analyzers}
+                  controller={controller}
+                  sessionId={entry().load.sessionId}
+                  sessionName={entry().load.sourceName}
+                  lastRunCaller={lastRunCaller}
+                  onOpenDeviceState={(processorId) =>
+                    deviceState.setSelectedTracker(entry().load.sessionId, processorId)
                   }
+                />
+              )}
+            </Show>
+          ),
+          'device-state': () => (
+            <Show when={store.focused()}>
+              {(entry) => <DeviceStatePanel store={deviceState} sessionId={entry().load.sessionId} />}
+            </Show>
+          ),
+          analyses: () => <AnalysesPanel store={analyses} />,
+          bookmarks: () => <BookmarksPanel store={bookmarks} sessions={store} />,
+          watches: () => <WatchesPanel store={watches} sessions={store} callerFor={watchCaller} />,
+          viewer: () => (
+            <ViewerSplit
+              split={splitView}
+              // The same session can never be picked for both panes — cursor,
+              // query and view-mode state are keyed by session id on the
+              // controller, not by pane, so showing one session in two panes
+              // would make them share that state instead of each having its own.
+              secondaryOptions={() => {
+                const primaryId = store.focusedId();
+                return store
+                  .order()
+                  .filter((id) => id !== primaryId)
+                  .map((id) => ({ sessionId: id, label: store.byId(id)?.load.sourceName ?? id }));
+              }}
+              primary={() => (
+                <>
+                  <TabStrip
+                    tabs={tabs()}
+                    activeKey={activeSurface() === 'editor' ? editorStore.activeId() : store.focusedId()}
+                    onSelect={(key) => selectTab(key, tabs().find((t) => t.key === key)?.kind ?? 'session')}
+                    onClose={(key) => closeTab(key, tabs().find((t) => t.key === key)?.kind ?? 'session')}
+                  />
+                  <Show
+                    when={activeSurface() === 'editor' && editorStore.active()}
+                    fallback={
+                      <Show
+                        when={store.focused()}
+                        fallback={<div class={styles.empty}>No log open. Choose a file to begin.</div>}
+                      >
+                        {(entry) => (
+                          <>
+                            {/* Keyed on the session id: QueryBar snapshots its session at
+                                mount by design, so it must be remounted per session. The
+                                outer non-keyed Show does NOT remount on a truthy→truthy
+                                switch between two open tabs. */}
+                            <Show when={entry().load.sessionId} keyed>
+                              {(sid) => (
+                                <QueryBar
+                                  sessionId={sid}
+                                  store={queryStore}
+                                  controller={controller}
+                                  active={splitView.activePane() === 'main'}
+                                  bindLiveFilter={bindLiveFilter}
+                                />
+                              )}
+                            </Show>
+                            <LogViewer
+                              dataSource={entry().dataSource}
+                              totalLineCount={renderedLineCount()}
+                              sessionId={entry().load.sessionId}
+                              tailMode={entry().kind === 'live'}
+                              controller={controller}
+                              onActivate={() => splitView.setActivePane('main')}
+                            />
+                          </>
+                        )}
+                      </Show>
+                    }
+                  >
+                    <EditorTabs store={editorStore} onError={actions.reportError} />
+                  </Show>
+                </>
+              )}
+              secondary={(sessionId) => (
+                <Show
+                  when={store.byId(sessionId)}
+                  fallback={<div class={styles.empty}>That session is no longer open.</div>}
                 >
-                  <EditorTabs store={editorStore} onError={actions.reportError} />
+                  {(entry) => (
+                    <>
+                      <Show when={entry().load.sessionId} keyed>
+                        {(sid) => (
+                          <QueryBar
+                            sessionId={sid}
+                            store={queryStore}
+                            controller={controller}
+                            active={splitView.activePane() === 'secondary'}
+                            bindLiveFilter={bindLiveFilter}
+                          />
+                        )}
+                      </Show>
+                      <LogViewer
+                        dataSource={entry().dataSource}
+                        totalLineCount={renderedLineCountFor(entry())}
+                        sessionId={entry().load.sessionId}
+                        tailMode={entry().kind === 'live'}
+                        controller={controller}
+                        paneId={SECONDARY_PANE_ID}
+                        onActivate={() => splitView.setActivePane('secondary')}
+                      />
+                    </>
+                  )}
                 </Show>
-              </>
-            )}
-            secondary={(sessionId) => (
-              <Show
-                when={store.byId(sessionId)}
-                fallback={<div class={styles.empty}>That session is no longer open.</div>}
-              >
-                {(entry) => (
-                  <>
-                    <Show when={entry().load.sessionId} keyed>
-                      {(sid) => (
-                        <QueryBar
-                          sessionId={sid}
-                          store={queryStore}
-                          controller={controller}
-                          active={splitView.activePane() === 'secondary'}
-                          bindLiveFilter={bindLiveFilter}
-                        />
-                      )}
-                    </Show>
-                    <LogViewer
-                      dataSource={entry().dataSource}
-                      totalLineCount={renderedLineCountFor(entry())}
-                      sessionId={entry().load.sessionId}
-                      tailMode={entry().kind === 'live'}
-                      controller={controller}
-                      paneId={SECONDARY_PANE_ID}
-                      onActivate={() => splitView.setActivePane('secondary')}
-                    />
-                  </>
-                )}
-              </Show>
-            )}
-          />
-        ),
-        timeline: () => (
-          <Show when={store.focused()}>
-            {(entry) => (
-              <TimelineStrip
-                store={deviceState}
-                controller={controller}
-                sessionId={entry().load.sessionId}
-                totalLines={entry().totalLines}
-              />
-            )}
-          </Show>
-        ),
-        export: () => <ExportDialog store={exportStore} />,
-        settings: () => <SettingsPanel store={settings} packs={packs} theme={props.theme} />,
-        'stream-controls': () => <StreamControlsPanel store={liveStream} />,
-      }}
-    />
+              )}
+            />
+          ),
+          timeline: () => (
+            <Show when={store.focused()}>
+              {(entry) => (
+                <TimelineStrip
+                  store={deviceState}
+                  controller={controller}
+                  sessionId={entry().load.sessionId}
+                  totalLines={entry().totalLines}
+                />
+              )}
+            </Show>
+          ),
+          export: () => <ExportDialog store={exportStore} />,
+          settings: () => <SettingsPanel store={settings} packs={packs} theme={props.theme} />,
+          'stream-controls': () => <StreamControlsPanel store={liveStream} />,
+        }}
+      />
+      {/* Launch-time updates prompt — over the whole window, whatever surface
+          the app opened on. Session-long dismissal lives in the packs store. */}
+      <Show when={packs.updatePromptOpen()}>
+        <UpdatesPrompt store={packs} />
+      </Show>
+    </>
   );
 }

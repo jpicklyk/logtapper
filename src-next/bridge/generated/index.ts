@@ -154,6 +154,7 @@ export type { Truncated } from './Truncated';
 export type { UpdateAvailable } from './UpdateAvailable';
 export type { UpdateCheckResult } from './UpdateCheckResult';
 export type { UpdateResult } from './UpdateResult';
+export type { UpdatesAvailableEvent } from './UpdatesAvailableEvent';
 export type { UserTheme } from './UserTheme';
 export type { VarMeta } from './VarMeta';
 export type { ViewLine } from './ViewLine';

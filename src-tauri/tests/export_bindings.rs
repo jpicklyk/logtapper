@@ -225,6 +225,8 @@ macro_rules! ROOT_TYPES {
             app_lib::services::pipeline::PipelineCompleteEvent,
             // --- B2: catalog-update event (processor/pack install provenance) ---
             app_lib::services::processors::CatalogUpdateEvent,
+            // --- startup update prompt: updates-available event -----------------
+            app_lib::services::marketplace::UpdatesAvailableEvent,
         ]
     };
 }

@@ -156,6 +156,23 @@ pub struct UpdateCheckResult {
     pub errors: Vec<SourceError>,
 }
 
+/// Payload of the `updates-available` Tauri event, emitted once by the
+/// startup marketplace check (`lib.rs::startup_update_check`) when it found
+/// anything to report: updates it left pending for the user, and processors
+/// it already applied silently for `auto_update` sources. The UI turns the
+/// pending half into the "Update all" prompt; the auto-applied half is
+/// informational (the catalog refresh rides on `catalog-update`).
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatesAvailableEvent {
+    pub updates: Vec<UpdateAvailable>,
+    pub pack_updates: Vec<PackUpdateAvailable>,
+    /// Qualified ids of processors auto-updated during this check.
+    pub auto_applied: Vec<String>,
+}
+
+pub const UPDATES_AVAILABLE_EVENT: &str = "updates-available";
+
 #[derive(Debug, Clone, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateResult {
