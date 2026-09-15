@@ -487,6 +487,16 @@ export function App(props: AppProps) {
       <Show when={actions.busy()}>
         <span class={styles.session}>Loading…</span>
       </Show>
+      {/* Restore warnings live on workspace home (the store keeps them until
+          dismissed); the footer only points there, since a restore that
+          reopened some sessions may have closed the home drawer. */}
+      <Show when={workspace.warnings().length > 0}>
+        <span class={styles.warning} data-testid="status-restore-warnings">
+          {workspace.warnings().length === 1
+            ? '1 restore warning — see Workspace'
+            : `${workspace.warnings().length} restore warnings — see Workspace`}
+        </span>
+      </Show>
       <Show when={actions.error()}>
         <span class={styles.error} role="alert">
           {actions.error()}

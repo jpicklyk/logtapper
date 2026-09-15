@@ -116,8 +116,13 @@ export interface WorkspaceStore {
   activeId: Accessor<string | null>;
   active: Accessor<WorkspaceIdentity | null>;
   dirty: Accessor<boolean>;
-  /** Warnings from the most recent restore, for W1b to surface. */
+  /** Warnings from the most recent restore — every session the `.ltw` named
+   *  that could not be reopened (the file was deleted, or its drive is gone)
+   *  or whose artifacts failed to land. Workspace home renders them; they
+   *  stay until the user dismisses them or the next restore replaces them. */
   warnings: Accessor<readonly string[]>;
+  /** Dismiss the restore warnings. */
+  clearWarnings(): void;
   /** Editor tabs a restore produced, waiting for W9 to adopt them. */
   pendingEditorTabs: Accessor<readonly LtwEditorTab[]>;
   /** Take the pending tabs, clearing them — W9 calls this once. */
@@ -533,6 +538,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       active,
       dirty,
       warnings,
+      clearWarnings: () => setWarnings([]),
       pendingEditorTabs,
       takePendingEditorTabs: () => {
         const tabs = [...pendingEditorTabs()];

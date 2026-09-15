@@ -27,6 +27,8 @@ function fakeWorkspaceStore(opts: {
   dirty?: boolean;
   rename?: ReturnType<typeof vi.fn>;
   remove?: ReturnType<typeof vi.fn>;
+  warnings?: () => readonly string[];
+  clearWarnings?: ReturnType<typeof vi.fn>;
 } = {}): WorkspaceStore {
   const list = opts.list ?? [];
   const activeId = opts.activeId ?? null;
@@ -35,7 +37,8 @@ function fakeWorkspaceStore(opts: {
     activeId: () => activeId,
     active: () => list.find((w) => w.id === activeId) ?? null,
     dirty: () => opts.dirty ?? false,
-    warnings: () => [],
+    warnings: opts.warnings ?? (() => []),
+    clearWarnings: opts.clearWarnings ?? vi.fn(),
     pendingEditorTabs: () => [],
     takePendingEditorTabs: vi.fn(() => []),
     markMutated: vi.fn(),
@@ -117,6 +120,31 @@ describe('WorkspaceHome', () => {
   it('shows the empty state when there are no workspaces yet', () => {
     render(() => <WorkspaceHome store={fakeWorkspaceStore()} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
     expect(screen.getByText(/no workspaces yet/i)).toBeTruthy();
+  });
+
+  it('renders restore warnings with the missing file named, and dismisses through the store', () => {
+    const clearWarnings = vi.fn();
+    const store = fakeWorkspaceStore({
+      list: [ws('w1')],
+      activeId: 'w1',
+      warnings: () => ['Failed to reopen "E:/usb/gone.log": Error: os error 3'],
+      clearWarnings,
+    });
+    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
+    const notice = screen.getByTestId('restore-warnings');
+    expect(notice.getAttribute('role')).toBe('alert');
+    expect(notice.textContent).toContain('Part of this workspace could not be restored');
+    expect(notice.textContent).toContain('E:/usb/gone.log');
+    // Tells the user why: the workspace links to the file, only .lts embeds it.
+    expect(notice.textContent).toMatch(/links to its log files/);
+    fireEvent.click(screen.getByLabelText('Dismiss restore warnings'));
+    expect(clearWarnings).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders no warning block when the last restore was clean', () => {
+    const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1' });
+    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
+    expect(screen.queryByTestId('restore-warnings')).toBeNull();
   });
 
   it('shows the empty state when the active workspace has no sessions', () => {

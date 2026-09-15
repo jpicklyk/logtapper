@@ -44,6 +44,12 @@ function formatSaved(ws: WorkspaceIdentity): string {
   return ws.filePath ? 'Saved' : 'Not saved yet';
 }
 
+function restoreWarningTitle(count: number): string {
+  return count === 1
+    ? 'Part of this workspace could not be restored'
+    : `${count} parts of this workspace could not be restored`;
+}
+
 export interface WorkspaceHomeProps {
   store: WorkspaceStore;
   sessions: SessionStore;
@@ -188,6 +194,37 @@ export function WorkspaceHome(props: WorkspaceHomeProps): JSX.Element {
       <Show when={actionError()}>
         <div class={styles.error} role="alert">
           {actionError()}
+        </div>
+      </Show>
+
+      {/* A `.ltw` links to its log files rather than copying them (only an
+          `.lts` export embeds the log), so an unplugged drive or a deleted
+          capture leaves the workspace with nothing to show. Say so, and name
+          the files, instead of landing on an empty home in silence. */}
+      <Show when={props.store.warnings().length > 0}>
+        <div class={styles.warning} role="alert" data-testid="restore-warnings">
+          <div class={styles.warningHeader}>
+            <span class={styles.warningTitle}>
+              {restoreWarningTitle(props.store.warnings().length)}
+            </span>
+            <button
+              type="button"
+              class={styles.iconButton}
+              aria-label="Dismiss restore warnings"
+              title="Dismiss"
+              onClick={() => props.store.clearWarnings()}
+            >
+              ×
+            </button>
+          </div>
+          <p class={styles.warningHint}>
+            A workspace links to its log files instead of copying them. Reconnect the drive or restore
+            the file, then reopen the workspace. To carry the logs with the workspace, export it as an
+            .lts bundle.
+          </p>
+          <ul class={styles.warningList}>
+            <For each={props.store.warnings()}>{(warning) => <li>{warning}</li>}</For>
+          </ul>
         </div>
       </Show>
 

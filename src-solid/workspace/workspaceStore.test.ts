@@ -251,6 +251,35 @@ describe('openWorkspace', () => {
     expect(fakes.opened).toEqual(['stale.log', 'fresh.log']);
   });
 
+  it('keeps a failed reopen as a warning naming the file until dismissed', async () => {
+    const fakes = makeFakes();
+    const realOpen = fakes.actions.openPath;
+    fakes.actions.openPath = (path) =>
+      path === 'E:/usb/gone.log'
+        ? Promise.reject(new Error('Failed to read metadata for E:/usb/gone.log: os error 3'))
+        : realOpen(path);
+    loadWorkspaceV4Mock.mockResolvedValue(ltw({
+      sessions: [manifestSession('E:/usb/gone.log'), manifestSession('c.log')],
+      sessionData: [emptySessionData(), emptySessionData()],
+    }));
+    const store = build(fakes);
+    await store.hydrate();
+    await store.openWorkspace('C:/ws/x.ltw');
+
+    // The surviving session still opens; the missing one is reported, not
+    // swallowed — the reopen failure itself, then the pairing step's note that
+    // the file's bookmarks/analyses stayed in the .ltw rather than landing on
+    // another session.
+    expect(fakes.opened).toEqual(['c.log']);
+    expect(store.warnings()).toHaveLength(2);
+    expect(store.warnings()[0]).toContain('E:/usb/gone.log');
+    expect(store.warnings()[0]).toContain('os error 3');
+    expect(store.warnings()[1]).toMatch(/E:\/usb\/gone.log .* artifacts were skipped/);
+
+    store.clearWarnings();
+    expect(store.warnings()).toEqual([]);
+  });
+
   it('hands the .ltw editor tabs to W9 rather than applying them itself', async () => {
     const tabs = [{ label: 'notes', content: '# hi', viewMode: 'editor', wordWrap: false, filePath: null }];
     loadWorkspaceV4Mock.mockResolvedValue(ltw({ editorTabs: tabs }));

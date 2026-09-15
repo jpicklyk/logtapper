@@ -93,6 +93,43 @@
   font-size: 12px;
 }
 
+.warning {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--p-radius-sm);
+  border: 1px solid var(--warning);
+  background: var(--warning-muted);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.warningHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.warningTitle {
+  font-weight: 600;
+  color: var(--warning);
+}
+
+.warningHint {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.warningList {
+  margin: 0;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
 .section {
   display: flex;
   flex-direction: column;

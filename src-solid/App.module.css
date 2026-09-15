@@ -25,6 +25,10 @@
   font-variant-numeric: tabular-nums;
 }
 
+.warning {
+  color: var(--warning);
+}
+
 .error {
   color: var(--danger);
   display: inline-flex;
