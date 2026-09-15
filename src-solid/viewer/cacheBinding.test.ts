@@ -264,7 +264,7 @@ describe('createCacheBinding', () => {
       h.dispose();
     });
 
-    it('discards an in-flight fetch so its bump never lands', async () => {
+    it("resets exactly once and never runs the stale fetch's phase 2", async () => {
       const src = makeDataSource();
       const h = mount({ dataSource: src.ds, revision: true });
       const before = h.binding.cacheVersion();
@@ -274,8 +274,39 @@ describe('createCacheBinding', () => {
       await flush();             // the pre-reset promise settles here
 
       expect(afterReset).toBe(before + 1);
-      // Only the reset's own bump plus any post-reset fetch — never the stale one.
+      // The stale fill may announce its landed lines (see the next test), but
+      // exactly one prefetch runs after the reset — its own, not the stale one's.
       expect(h.binding.cacheVersion()).toBeGreaterThanOrEqual(afterReset);
+      const prefetches = src.getLines.mock.calls.filter(([, count]) => count > 20);
+      expect(prefetches.length).toBeLessThanOrEqual(1);
+      h.dispose();
+    });
+
+    it('still announces a stale fill that landed in the unchanged source', async () => {
+      // Live finding: the viewport fill went stale mid-flight (a geometry
+      // change while the scheduler was unsettled), its lines landed anyway,
+      // and the scheduler deduped the re-report of the same range — so no
+      // bump ever fired and the first screen stayed skeletons until scrolled.
+      const src = makeDataSource();
+      const h = mount({ dataSource: src.ds, revision: true });
+      h.bumpRevision();          // the in-flight fill is now stale
+      src.fill(0, 1000);         // nothing a follow-up cycle could ask for is missing
+      const afterReset = h.binding.cacheVersion();
+      await flush();             // the stale fill lands
+
+      expect(h.binding.cacheVersion()).toBeGreaterThan(afterReset);
+      h.dispose();
+    });
+
+    it('does not announce a stale fill once the source has been swapped', async () => {
+      const src = makeDataSource();
+      const h = mount({ dataSource: src.ds });
+      const other = makeDataSource({ sourceId: 'other:full', cached: true });
+      h.setDataSource(other.ds); // swap resets; the swapped-in source has nothing to fetch
+      const afterSwap = h.binding.cacheVersion();
+      await flush();             // the first source's fill lands, for a cache nobody reads
+
+      expect(h.binding.cacheVersion()).toBe(afterSwap);
       h.dispose();
     });
 

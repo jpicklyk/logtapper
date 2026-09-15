@@ -185,7 +185,18 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
         const gen = fetchGuard.current();
         Promise.resolve(ds.getLines(viewport.offset, viewport.count))
           .then(() => {
-            if (!fetchGuard.isCurrent(gen)) { fetchInFlight = false; return; }
+            if (!fetchGuard.isCurrent(gen)) {
+              fetchInFlight = false;
+              // Stale, but the lines still landed in this source's cache, and
+              // nothing else is guaranteed to announce them: the scheduler
+              // dedups a re-report of the same range, so a geometry change
+              // mid-flight (the velocity reset below) left the first screen
+              // as skeletons until the user scrolled. A bump only re-reads
+              // the cache, so it is always safe for an unchanged source;
+              // only phase 2 is skipped.
+              if (ds === untrack(dataSource)) bumpCacheVersion();
+              return;
+            }
             bumpCacheVersion();
 
             // Phase 2: directional prefetch. No bump here — the forceFetch in
