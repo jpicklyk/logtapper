@@ -44,7 +44,6 @@ work_item_schemas:
         required: true
         description: "Structured review — plan alignment, test quality, simplification."
         guidance: "Run the review-quality framework. Verify all acceptance criteria from the requirements note are met in code. Check test substance against the test strategy — flag tautological assertions, mock-only tests, or missing edge cases. Run /simplify on changed files and document findings. Verdict: pass, fail (with blocking issues list), or pass-with-observations."
-        skill: "review"
 
   feature-task:
     lifecycle: auto
@@ -99,19 +98,18 @@ work_item_schemas:
         required: true
         description: "How the fix was verified and test results after fix."
         guidance: "Run tests and report results. Note if a new test was added to cover the fix. For UI bugs, describe manual verification performed."
+
       - key: session-tracking
         role: work
         required: true
         description: "Session context for retrospective."
         guidance: "Record outcome, files changed, deviations from plan, friction encountered, and test results. This feeds /session-retrospective -- focus on what future sessions need to know."
 
-
       - key: review-summary
         role: review
         required: true
         description: "Review the fix — root cause addressed, regression coverage, no side effects."
         guidance: "Run the review-quality framework. Verify the fix addresses the root cause identified in the root-cause note, not just the symptom. Check that test-verification covers the exact failure scenario from reproduction-steps. Look for unintended side effects in adjacent code paths. Run /simplify on changed files. Verdict: pass, fail (with blocking issues list), or pass-with-observations."
-        skill: "review"
 
   container:
     lifecycle: permanent
