@@ -175,7 +175,7 @@ export function AppShell(props: AppShellProps) {
               onClick={() => toggleDrawer(surface.id)}
             >
               <span class={styles.railGlyph} aria-hidden="true">
-                {surface.title.slice(0, 2)}
+                {surface.glyph}
               </span>
             </button>
           )}

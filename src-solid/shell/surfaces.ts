@@ -39,6 +39,9 @@ export type TierPlacements = readonly [Placement, Placement, Placement, Placemen
 export interface SurfaceDef {
   readonly id: SurfaceId;
   readonly title: string;
+  /** Two letters for the icon rail. Chosen by hand, not derived from the
+   *  title: `Sections`/`Settings` and `Analyzers`/`Analyses` share a prefix. */
+  readonly glyph: string;
   /** One line from brief §4, shown by the shell's placeholder panels. */
   readonly description: string;
   readonly modes: readonly Mode[];
@@ -64,6 +67,7 @@ export const SURFACES: readonly SurfaceDef[] = [
   {
     id: 'workspace-home',
     title: 'Workspace',
+    glyph: 'WO',
     description: 'Sessions, packs, recent analyses, agent activity, open and attach actions.',
     modes: BOTH,
     placement: [RAIL, RAIL, RAIL, RAIL],
@@ -71,6 +75,7 @@ export const SURFACES: readonly SurfaceDef[] = [
   {
     id: 'viewer',
     title: 'Viewer',
+    glyph: 'VW',
     description: 'Virtualized log view with one query bar: level, tag, time and regex chips.',
     modes: BOTH,
     placement: [R('viewer'), R('viewer'), R('viewer'), R('viewer')],
@@ -78,6 +83,7 @@ export const SURFACES: readonly SurfaceDef[] = [
   {
     id: 'sections',
     title: 'Sections',
+    glyph: 'SC',
     description: 'Bugreport and dumpstate section navigator.',
     modes: POSTMORTEM,
     placement: [RAIL, R('navigator'), R('navigator'), R('navigator')],
@@ -85,6 +91,7 @@ export const SURFACES: readonly SurfaceDef[] = [
   {
     id: 'analyzers',
     title: 'Analyzers',
+    glyph: 'AZ',
     description: 'The active analyzer set and its results; replaces chain, dashboard and library.',
     modes: BOTH,
     placement: [DRAWER, R('details'), R('details'), R('details')],
@@ -92,6 +99,7 @@ export const SURFACES: readonly SurfaceDef[] = [
   {
     id: 'device-state',
     title: 'Device state',
+    glyph: 'DS',
     description: "The analyzers' understanding of the device: cursor-tied post-mortem, now in live.",
     modes: BOTH,
     placement: [DRAWER, R('details'), R('details'), R('details')],
@@ -99,6 +107,7 @@ export const SURFACES: readonly SurfaceDef[] = [
   {
     id: 'analyses',
     title: 'Analyses',
+    glyph: 'AN',
     description: 'Line-anchored findings, agent- or human-authored, with their reader.',
     modes: POSTMORTEM,
     placement: [DRAWER, R('details'), R('analyses'), R('analyses')],
@@ -106,6 +115,7 @@ export const SURFACES: readonly SurfaceDef[] = [
   {
     id: 'bookmarks',
     title: 'Bookmarks',
+    glyph: 'BK',
     description: 'Shared line artifacts, each with its caller badge.',
     modes: BOTH,
     placement: [RAIL, R('navigator'), R('navigator'), R('navigator')],
@@ -113,6 +123,7 @@ export const SURFACES: readonly SurfaceDef[] = [
   {
     id: 'watches',
     title: 'Watches',
+    glyph: 'WA',
     description: 'Match badges, pause and resume, and the agent subscriptions in effect.',
     modes: LIVE,
     placement: [RAIL, R('navigator'), R('navigator'), R('navigator')],
@@ -120,6 +131,7 @@ export const SURFACES: readonly SurfaceDef[] = [
   {
     id: 'stream-controls',
     title: 'Stream',
+    glyph: 'ST',
     description: 'Device picker, package filter, start and stop, save capture.',
     modes: LIVE,
     placement: [RAIL, R('navigator'), R('navigator'), R('navigator')],
@@ -127,6 +139,7 @@ export const SURFACES: readonly SurfaceDef[] = [
   {
     id: 'timeline',
     title: 'Timeline',
+    glyph: 'TL',
     description: 'On-demand scrub strip inside the viewer, not a standing pane.',
     modes: POSTMORTEM,
     placement: [R('viewer'), R('viewer'), R('viewer'), R('viewer')],
@@ -134,6 +147,7 @@ export const SURFACES: readonly SurfaceDef[] = [
   {
     id: 'presence',
     title: 'Agent',
+    glyph: 'AG',
     description: 'Agent status, activity feed, consent prompts and focus handoff.',
     modes: BOTH,
     placement: [RAIL, R('details'), R('presence'), R('presence')],
@@ -141,6 +155,7 @@ export const SURFACES: readonly SurfaceDef[] = [
   {
     id: 'export',
     title: 'Export',
+    glyph: 'EX',
     description: 'Share a capture or a finding; the anonymize option is always explicit.',
     modes: BOTH,
     placement: [RAIL, RAIL, RAIL, RAIL],
@@ -148,6 +163,7 @@ export const SURFACES: readonly SurfaceDef[] = [
   {
     id: 'settings',
     title: 'Settings',
+    glyph: 'SE',
     description: 'MCP integration and agent access first, then packs and PII detectors.',
     modes: BOTH,
     placement: [RAIL, RAIL, RAIL, RAIL],

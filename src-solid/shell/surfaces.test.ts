@@ -28,6 +28,14 @@ describe('surface map', () => {
     }
   });
 
+  it('gives every surface a distinct two-letter rail glyph', () => {
+    // The rail once derived the glyph from the title's first two letters, so
+    // Sections and Settings both read "SE" and Analyzers and Analyses "AN".
+    const glyphs = SURFACES.map((s) => s.glyph);
+    expect(new Set(glyphs).size).toBe(glyphs.length);
+    for (const glyph of glyphs) expect(glyph).toMatch(/^[A-Z]{2}$/);
+  });
+
   it('places every surface at every tier of every mode it exists in', () => {
     for (const surface of SURFACES) {
       for (const mode of MODES) {
