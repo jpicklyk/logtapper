@@ -155,6 +155,15 @@
   border-radius: var(--p-radius-md);
 }
 
+/* A surface whose slot rendered no elements — a session-scoped panel with no
+   session open (`analyzers`, `device-state`, `timeline` are `<Show>`-gated in
+   App.tsx) — must not leave an empty bordered box behind; the chrome belongs
+   to the content, not to the placement. Panels that render their own empty
+   state (bookmarks' "No session loaded.") are unaffected. */
+.panel:not(:has(*)) {
+  display: none;
+}
+
 /* On the tiers that give analyses its own column it is the sole occupant: the
    list and the reader fill the column and scroll inside it. */
 .region[data-region='analyses'] > .panel[data-surface='analyses'] {
