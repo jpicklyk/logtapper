@@ -23,7 +23,7 @@
  *  3. The localStorage mirror — crash recovery only. See `restore.ts`'s
  *     "tab-mirror semantics".
  */
-import { createRoot, createSignal } from 'solid-js';
+import { createEffect, createRoot, createSignal, on } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import {
@@ -332,8 +332,16 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
     };
 
     const closeAllSessions = async (): Promise<void> => {
-      for (const id of [...deps.sessions.order()]) {
-        await deps.actions.close(id).catch(() => undefined);
+      // Teardown is not a mutation of the workspace being torn down: bracket
+      // it like a restore so the membership effect below stays quiet, or the
+      // outgoing workspace would be flagged dirty on every switch.
+      restoreDepth += 1;
+      try {
+        for (const id of [...deps.sessions.order()]) {
+          await deps.actions.close(id).catch(() => undefined);
+        }
+      } finally {
+        restoreDepth -= 1;
       }
     };
 
@@ -498,6 +506,22 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       setActiveId(result.state.activeId);
       if (result.migrated) persistAppState();
     };
+
+    // ── session membership ──────────────────────────────────────────────────
+    // The `.ltw` manifest is the list of open files, so opening or closing a
+    // session is workspace content and must autosave like a bookmark does —
+    // whichever caller did it (the user's dialog, an agent's `open_file`, a
+    // `session-closed` echo). Watched here rather than wired into each opener
+    // so no path can forget. `markMutated` already ignores a restore in flight.
+    createEffect(
+      on(
+        () => deps.sessions.order().join('\n'),
+        (ids, prev) => {
+          if (ids !== prev) markMutated();
+        },
+        { defer: true },
+      ),
+    );
 
     // ── listeners ───────────────────────────────────────────────────────────
 

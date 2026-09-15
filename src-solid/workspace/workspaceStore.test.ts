@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createSignal } from 'solid-js';
 import type { AppStateFile, LoadWorkspaceV4Result, WorkspaceEntry } from '@bridge/types';
 import {
   SOLID_MIRROR_KEY,
@@ -80,7 +81,9 @@ interface Fakes {
 }
 
 function makeFakes(): Fakes {
-  const order: string[] = [];
+  // Reactive like the real session store's `order`, so the store's membership
+  // effect (open/close → dirty) is exercised, not just the restore plumbing.
+  const [order, setOrder] = createSignal<readonly string[]>([]);
   const paths = new Map<string, string>();
   const opened: string[] = [];
   const closed: string[] = [];
@@ -94,22 +97,21 @@ function makeFakes(): Fakes {
       setItem: (k: string, v: string) => { store[k] = v; },
     },
     sessions: {
-      order: () => order,
-      focusedId: () => order[0] ?? null,
+      order,
+      focusedId: () => order()[0] ?? null,
       byId: (id) => (paths.has(id) ? { load: { filePath: paths.get(id)! } } : undefined),
     },
     actions: {
       openPath: (path) => {
         opened.push(path);
         const id = `sess-${opened.length}`;
-        order.push(id);
+        setOrder((prev) => [...prev, id]);
         paths.set(id, path);
         return Promise.resolve(id);
       },
       close: (id) => {
         closed.push(id);
-        const i = order.indexOf(id);
-        if (i >= 0) order.splice(i, 1);
+        setOrder((prev) => prev.filter((x) => x !== id));
         return Promise.resolve();
       },
     },
@@ -413,6 +415,46 @@ describe('autoSave', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(autoSaveWorkspaceMock).toHaveBeenCalledTimes(1);
     expect(store.dirty()).toBe(false);
+  });
+
+  it('opening or closing a session outside a restore marks the workspace dirty and autosaves', async () => {
+    vi.useFakeTimers();
+    const fakes = makeFakes();
+    const store = build(fakes);
+    await store.hydrate();
+    expect(store.dirty()).toBe(false);
+
+    // The user's dialog, an agent's open_file, a session-closed echo — all land
+    // in `sessions.order()`; the manifest is that list, so each must autosave.
+    const id = await fakes.actions.openPath('fresh.log');
+    expect(store.dirty()).toBe(true);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(autoSaveWorkspaceMock).toHaveBeenCalledTimes(1);
+    expect(store.dirty()).toBe(false);
+
+    await fakes.actions.close(id);
+    expect(store.dirty()).toBe(true);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(autoSaveWorkspaceMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('a restore or a workspace switch changes membership without dirtying anything', async () => {
+    vi.useFakeTimers();
+    loadWorkspaceV4Mock.mockResolvedValue(ltw({
+      sessions: [manifestSession('a.log')], sessionData: [emptySessionData()],
+    }));
+    const fakes = makeFakes();
+    const store = build(fakes);
+    await store.hydrate();
+    await store.openWorkspace('C:/ws/a.ltw');
+    expect(fakes.opened).toEqual(['a.log']);
+    expect(store.dirty()).toBe(false);
+
+    await store.newWorkspace(); // tears the restored session down
+    expect(fakes.closed).toEqual(['sess-1']);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(store.list().every((w) => !w.dirty)).toBe(true);
+    expect(autoSaveWorkspaceMock).not.toHaveBeenCalled();
   });
 
   it('is suppressed while a restore is in flight', async () => {
