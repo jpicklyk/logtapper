@@ -55,12 +55,17 @@ export interface AppShellProps {
   regionSlots?: RegionSlots;
 }
 
-/** A surface with no implementation yet still renders, so the shell is reviewable. */
+/** A surface with no implementation yet still renders, so the shell is reviewable.
+ *  `keyed`: the drawer reuses one panel and swaps `slot` in place when the
+ *  rail moves from one surface to another; a non-keyed Show would keep the
+ *  first slot's output (a different function is still truthy) while the
+ *  header above it changed. */
 function SurfacePanel(props: { surface: SurfaceDef; slot?: () => JSX.Element }) {
   return (
     <section class={styles.panel} aria-label={props.surface.title} data-surface={props.surface.id}>
       <Show
         when={props.slot}
+        keyed
         fallback={
           <>
             <header class={styles.panelHeader}>{props.surface.title}</header>
@@ -68,7 +73,7 @@ function SurfacePanel(props: { surface: SurfaceDef; slot?: () => JSX.Element }) 
           </>
         }
       >
-        {(slot) => slot()()}
+        {(slot) => slot()}
       </Show>
     </section>
   );

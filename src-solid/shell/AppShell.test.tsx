@@ -85,6 +85,31 @@ describe('AppShell', () => {
     expect(container.querySelector('aside[aria-label="Analyzers"]')).toBeNull();
   });
 
+  it('moving the drawer from one rail surface to another swaps its body, not just its title', () => {
+    setViewportWidth(1280);
+    const { container } = render(() => (
+      <AppShell
+        workspaceId="ws"
+        sessionKind="file"
+        slots={{
+          viewer: () => <div />,
+          'workspace-home': () => <div data-testid="home-body">home</div>,
+          export: () => <div data-testid="export-body">export</div>,
+        }}
+      />
+    ));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
+    expect(container.querySelector('aside[aria-label="Workspace"] [data-testid="home-body"]')).toBeTruthy();
+
+    // Same drawer, different surface: the previous body must be gone.
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+    const drawer = container.querySelector('aside[aria-label="Export"]');
+    expect(drawer).toBeTruthy();
+    expect(drawer?.querySelector('[data-testid="export-body"]')).toBeTruthy();
+    expect(drawer?.querySelector('[data-testid="home-body"]')).toBeNull();
+  });
+
   it('swaps the mode-only surfaces when the focused session is a live stream', () => {
     setViewportWidth(2600);
     const { container } = render(() => (
