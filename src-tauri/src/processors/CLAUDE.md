@@ -50,6 +50,10 @@ Installed processors are saved to `{app_data_dir}/processors/{id}.yaml` and load
 
 All `FilterRule` entries in a filter stage are **AND**-ed. Any `false` return exits `process_line` immediately (no extraction, no script, no emission). To OR multiple patterns, use a single `message_regex` with `pattern: "foo|bar"` or `message_contains_any`.
 
+## Metadata the UI needs before a pipeline run goes on `ProcessorSummary`
+
+If the UI needs processor metadata (sections, tracker mode, source types, the timeline flag) without requiring a pipeline run first, put it on `ProcessorSummary` — not on result types like `StateSnapshot` or `StateTrackerResult`, which are only populated after execution. The frontend's analyzer cards and picker read `ProcessorSummary` from `list_processors` before anything has run.
+
 ## YAML authoring gotchas
 
 - `validate_for_install()` only validates Rhai syntax — invalid filter regexes pass install but silently produce 0 matches at runtime.
