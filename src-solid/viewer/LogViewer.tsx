@@ -141,7 +141,7 @@ export function LogViewer(props: LogViewerProps) {
    * Absolute backend line → rendered row index. `null` when the line set is
    * empty (nothing is renderable, so there is nowhere to go). A line that is not
    * itself in the set resolves to the nearest row at or after it — the binary
-   * search `src-next` already ships and unit-tests.
+   * search `@viewer` ships and unit-tests.
    */
   const toRendered = (absLine: number): number | null => {
     const ln = lineSet();

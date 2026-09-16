@@ -5,7 +5,7 @@ import { writeClipboard } from '@viewport/copyText';
 import type { SettingsStore } from './settingsStore';
 import styles from './settings.module.css';
 
-// ── MCP agent setup (C1, ported from src-next/components/SettingsPanel) ────
+// ── MCP agent setup (C1, ported from the React SettingsPanel) ──────────────
 //
 // Two clients, two mechanisms:
 //

@@ -2,7 +2,7 @@
 // before Solid mounts; reads localStorage and applies data-theme
 // before any CSS paint. Reads the same 'logtapper-theme' key as
 // src-solid/theme/applyTheme.ts's createThemeController (and
-// src-next/context/ThemeContext.tsx's STORAGE_KEY), so both UIs
+// the React app's ThemeContext STORAGE_KEY), so both UIs
 // resolve to the same theme. Kept in sync with the four base themes
 // applyTheme.ts knows about ('system' resolves via prefers-color-scheme,
 // same as the live controller that takes over right after this runs).

@@ -24,7 +24,7 @@ export const SOLID_LAYOUT_VERSION = 1 as const;
 
 /**
  * React's top-level `layout.json` keys, mirrored from
- * `src-next/hooks/workspace/workspacePersistence.ts`'s `PersistedState`.
+ * the React `hooks/workspace/workspacePersistence.ts`'s `PersistedState`.
  *
  * Exported for the compatibility test only — nothing here reads or writes
  * them; they are simply part of "every unknown key survives". Duplicated

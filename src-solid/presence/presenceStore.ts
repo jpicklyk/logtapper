@@ -12,7 +12,7 @@
  * component body (same pattern as `theme/applyTheme.ts` and A1's
  * `createAgentState`). Every Tauri listener registered here is unlistened by
  * `dispose()`, including ones whose `listen()` promise resolves after dispose
- * (the StrictMode-safe pattern from `src-next/CLAUDE.md` — the concern is real
+ * (the StrictMode-safe pattern from the React `CLAUDE.md` — the concern is real
  * in Solid too: a test or a re-created store disposes before the promise
  * settles).
  */

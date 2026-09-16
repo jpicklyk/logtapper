@@ -1,4 +1,4 @@
-# src-next/bridge/ — Frontend IPC Layer
+# src-shared/bridge/ — Frontend IPC Layer
 
 All Tauri communication goes through this directory. Components and hooks **never** call
 `invoke()` or `listen()` directly.

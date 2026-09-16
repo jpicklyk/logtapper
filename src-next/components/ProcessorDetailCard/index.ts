@@ -1,1 +1,0 @@
-export { ProcessorDetailCard } from './ProcessorDetailCard';

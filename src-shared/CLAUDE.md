@@ -2,10 +2,10 @@
 
 Everything here is plain TypeScript: no React, no Solid, no JSX. `src-solid/` imports it
 through the aliases in `solid.aliases.ts` (mirrored in `tsconfig.json` `paths`, pinned by
-`src-solid/aliases.test.ts`); nothing here imports a frontend. ESLint Block 5 enforces
+`src-solid/aliases.test.ts`); nothing here imports a frontend. ESLint Block 2 enforces
 both directions.
 
-These modules were the shared half of the retired React app (`src-next/`). They kept their
+These modules were the shared half of the retired React app. They kept their
 unit tests, which run in the normal `npm test` suite.
 
 ## Module map
@@ -34,7 +34,7 @@ unit tests, which run in the normal `npm test` suite.
    lives here is the part a second frontend could reuse unchanged.
 2. **Barrels are the public API** (CLAUDE.md principle 9). The bottom eight modules in the
    table above are **barrel-only** from `src-solid/`: `from '@workspace'`, never
-   `from '@workspace/restorePlan'` — ESLint Block 4 fails the deep path, and
+   `from '@workspace/restorePlan'` — ESLint Block 1 fails the deep path, and
    `solid.aliases.ts`'s `solidBarrelAliases` is the list both it and the test read.
    `@bridge`, `@viewport`, `@cache`, `@filter` and `@bench` keep file-level reach on
    purpose: `@bridge/types` is the IPC type surface with ~100 importers, and

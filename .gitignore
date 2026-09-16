@@ -7,7 +7,6 @@ src-tauri/gen/
 
 # Node.js
 node_modules/
-dist/
 dist-solid/
 dist-ssr/
 *.local

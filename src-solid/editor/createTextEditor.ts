@@ -1,7 +1,7 @@
 /**
  * Framework-free CodeMirror 6 text editor.
  *
- * Mirrors the extension set of the React `src-next/viewport/TextEditor.tsx`
+ * Mirrors the extension set of the React `viewport/TextEditor.tsx`
  * (line numbers, active-line highlight, history, rectangular selection,
  * crosshair cursor, default + history + search keymaps, an optional placeholder,
  * a line-wrapping compartment and a read-only compartment) and adds what the

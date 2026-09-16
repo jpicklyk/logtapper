@@ -1,7 +1,7 @@
 import { createStore } from 'solid-js/store';
 
 /**
- * Solid port of `src-next/viewport/SelectionManager.ts` (`useSelectionManager`).
+ * Solid port of the React `viewport/SelectionManager.ts` (`useSelectionManager`).
  *
  * Same shape as the React `Selection` interface, so `buildCopyText` from
  * `@viewport/copyText` accepts this store's state unchanged (structural typing —

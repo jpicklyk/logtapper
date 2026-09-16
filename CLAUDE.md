@@ -10,12 +10,13 @@ per-session state keyed by session id, barrel imports across modules, static sty
 CSS modules with runtime values through custom properties) are in `src-solid/CLAUDE.md` —
 **read it before changing code there.**
 
-`src-next/` is the legacy React app. It is read-only and scheduled for removal; the
-framework-free modules the Solid app still imports from it (`bridge/`, `viewport/`,
-`cache/CacheManager`, `events/`, `filter/`, `bench/`, and a per-file allow-list under
-`hooks/` and `components/`) are moving to `src-shared/` — see `plans/solid-cutover.md`.
-Until then the aliases in `solid.aliases.ts` are the only sanctioned way across that
-boundary, and `eslint.config.js` Block 4 enforces the allow-list.
+The framework-free modules the frontend shares with the backend's generated bindings live
+in `src-shared/` (`bridge/`, `viewport/`, `cache/`, `filter/`, `bench/`, and the pure
+`workspace/`, `pipeline/`, `fileinfo/`, `processors/`, `analysis/`, `timeline/`, `viewer/`
+and `bookmarks/` rules) — see `src-shared/CLAUDE.md`. Nothing there may import a UI
+framework, and `src-solid/` reaches it only through the aliases in `solid.aliases.ts`;
+`eslint.config.js` enforces both directions. The legacy React tree was removed in the
+Solid cutover.
 
 
 ## Implementation Plans
@@ -70,10 +71,6 @@ npm run build          # TypeScript check + Vite bundle -> dist-solid/
 npm run dev            # Vite dev server standalone
 npm test               # Solid vitest suite
 
-# Legacy React app, until src-next/ is removed
-npm run tauri:react    # tauri dev with the React overlay
-npm run test:react
-
 # Rust backend (run from project root, not src-tauri/)
 cargo test --manifest-path src-tauri/Cargo.toml          # all tests
 cargo test --manifest-path src-tauri/Cargo.toml <name>   # single test by name
@@ -88,7 +85,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 
 Tauri 2.x desktop app. All IPC goes through typed `invoke()` calls and Tauri events — the frontend has no direct filesystem or network access. See `design_docs/log-viewer-architecture.md` for the full design spec.
 
-`src-solid/`, `src-tauri/src/`, and the module directories under `src-tauri/src/` have their own `CLAUDE.md` covering architecture, public API, and gotchas. These load on demand when you work under that directory — **read the relevant one before changing code there.** Backend-wide Rust gotchas are in `src-tauri/src/CLAUDE.md`; the Solid frontend's rules are in `src-solid/CLAUDE.md`; the legacy React tree's are in `src-next/CLAUDE.md` (read-only).
+`src-solid/`, `src-shared/`, `src-tauri/src/`, and the module directories under `src-tauri/src/` have their own `CLAUDE.md` covering architecture, public API, and gotchas. These load on demand when you work under that directory — **read the relevant one before changing code there.** Backend-wide Rust gotchas are in `src-tauri/src/CLAUDE.md`; the frontend's rules are in `src-solid/CLAUDE.md`; the shared modules' are in `src-shared/CLAUDE.md`.
 
 ## Security model: data tiers and external exposure
 
@@ -114,7 +111,7 @@ Produced by `run_pipeline` (file mode) or `flush_batch` (ADB streaming) after la
 
 ### Frontend display cache (never exposed externally)
 
-The unified `CacheManager` (`src-next/cache/`) is **not** a pathway for external access — the MCP bridge reads `AppState` directly and never sees it.
+The unified `CacheManager` (`src-shared/cache/`) is **not** a pathway for external access — the MCP bridge reads `AppState` directly and never sees it.
 
 ### MCP bridge — caller-based gates, not transport-based
 

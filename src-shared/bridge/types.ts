@@ -5,7 +5,7 @@
 // import surface for the ~127 files that import from it; only types with no backing
 // Rust struct, or whose Rust representation (`String`, `serde_json::Value`) ts-rs
 // cannot narrow, are hand-written below — each such case carries a one-line comment
-// explaining why. See `src-next/bridge/CLAUDE.md` for the full generated-types flow.
+// explaining why. See `src-shared/bridge/CLAUDE.md` for the full generated-types flow.
 
 import type * as Generated from './generated';
 

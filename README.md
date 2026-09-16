@@ -109,7 +109,7 @@ tool list, and troubleshooting.
 ```
 src-tauri/          Rust backend (Tauri commands, parsers, pipeline engine, MCP bridge)
 src-solid/          Frontend source (Solid UI: shell, viewer, stores, surfaces)
-src-next/           Legacy React frontend — read-only, being retired (framework-free modules move to src-shared/)
+src-shared/         Framework-free modules shared with the frontend (IPC bindings, cache, filter, viewport)
 mcp-server/         MCP server (Node.js, stdio transport)
 marketplace/        Processor marketplace (YAML definitions + pack manifests)
 docs/               Documentation

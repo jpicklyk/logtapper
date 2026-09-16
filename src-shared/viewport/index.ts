@@ -4,8 +4,8 @@
  * The framework-free half of the old React viewport: the data-source contract
  * a virtualized viewer reads through, the cache-backed implementation of it,
  * the fetch scheduler, the copy-text builder and the per-session scroll memory.
- * The rendering half (`ReadOnlyViewer`, `TextLine`, the React hooks) died with
- * `src-next/`; each frontend owns its own renderer.
+ * The rendering half (`ReadOnlyViewer`, `TextLine`, the React hooks) was removed
+ * with the React tree; a frontend owns its own renderer.
  */
 export type { DataSource } from './DataSource';
 export { DataSourceRegistry } from './DataSourceRegistry';

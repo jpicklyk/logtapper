@@ -1,8 +1,9 @@
 /**
  * Public API of the benchmark module (principle 9).
  *
- * Framework-free: importable from both `src-next/` (React) and `src-solid/`
- * (Solid, via the `@bench` alias). Nothing here imports a UI framework.
+ * Framework-free: it was installed by both frontends during the bench gate and
+ * is reached from `src-solid/` through the `@bench` alias. Nothing here imports
+ * a UI framework.
  */
 export {
   installBench,

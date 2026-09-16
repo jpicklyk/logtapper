@@ -1,9 +1,9 @@
 # src-solid/ — The shipped frontend (Solid 1.9)
 
 Every `.tsx` here starts with `/** @jsxImportSource solid-js */` (there is no global
-`jsxImportSource` because the shared modules reach React types through barrels). Build
-and test with the root scripts: `npm run dev`, `npm run build`, `npm test` (all Solid),
-`npx tauri dev` for the app. Never run this dev server and the React one at once.
+`jsxImportSource`, so a missing pragma is a compile error rather than a silent React
+build). Build and test with the root scripts: `npm run dev`, `npm run build`, `npm test`,
+`npx tauri dev` for the app.
 
 ## Architecture in one screen
 
@@ -53,8 +53,11 @@ and test with the root scripts: `npm run dev`, `npm run build`, `npm test` (all 
    A slow fetch against a partial index must not overwrite the complete one.
 4. **Barrel imports across modules only** (`../app/index`, never `../app` — a
    case-insensitive filesystem resolves `../app` to `App.tsx` and TS refuses the program).
-   Cross-module reach into `src-next` goes only through the aliases in `solid.aliases.ts`
-   and the per-file allow-list in `eslint.config.js` Block 4; never a React `.tsx`.
+   Shared framework-free code lives in `src-shared/` and is reached only through the
+   aliases in `solid.aliases.ts`; eight of them (`@workspace`, `@pipeline`, `@fileinfo`,
+   `@processors`, `@analysis`, `@timeline`, `@viewer`, `@bookmarks`) are barrel-only —
+   `from '@workspace'`, never a file inside it. `eslint.config.js` Block 1 enforces that;
+   `src-shared/CLAUDE.md` says why the other five keep file-level reach.
 5. **Static styling in the module CSS, tokens only.** Semantic/domain tokens from
    `styles/tokens.css`; a runtime value is a custom property the class consumes
    (`style={{ '--row-accent': … }}`). `theme/noRawColorLiterals.test.ts` fails on a literal

@@ -2,7 +2,7 @@
  * `FilterNode` → backend pre-filter extractor.
  *
  * A framework-free port of the extraction half of React's
- * `src-next/hooks/useLogViewer/useFilterScan.ts`. The comments below are the
+ * the React `hooks/useLogViewer/useFilterScan.ts`. The comments below are the
  * original's, because the *reasoning* is the asset here — every branch encodes
  * a false-positive/false-negative decision that is not obvious from the code.
  *

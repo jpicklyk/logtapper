@@ -9,7 +9,7 @@ import type { LineRefTarget } from './lineRefs';
 import styles from './editor.module.css';
 
 /**
- * The demo editor tab: the framework-free core of `src-next/components/EditorTab`
+ * The demo editor tab: the framework-free core of the React `components/EditorTab`
  * with the React-only parts left out.
  *
  * What is deliberately **not** ported here: the per-tab `localStorage` mirror
@@ -41,7 +41,7 @@ import styles from './editor.module.css';
  *   through `editorStore.save()` rather than its own hidden button).
  */
 
-/** Last path segment, for the tab title. `src-next/utils`' `basename` is not alias-reachable. */
+/** Last path segment, for the tab title. The React `utils`' `basename` is not alias-reachable. */
 export function basename(path: string): string {
   const match = /[^\\/]+$/.exec(path);
   return match ? match[0] : path;

@@ -1,1 +1,0 @@
-export { StreamFilterBar } from './StreamFilterBar';

@@ -33,7 +33,7 @@ export const solidAliasPaths: Record<string, string> = {
   "@filter": "src-shared/filter",
   "@bench": "src-shared/bench",
   // Barrel-only modules: import the alias bare (`from '@workspace'`), never a
-  // file inside it. ESLint Block 2 enforces that.
+  // file inside it. ESLint Block 1 enforces that.
   "@workspace": "src-shared/workspace",
   "@pipeline": "src-shared/pipeline",
   "@fileinfo": "src-shared/fileinfo",
@@ -55,7 +55,7 @@ export const solidAliases: Record<string, string> = Object.fromEntries(
  *
  * These replaced the per-file allow-list regexes that guarded the old reach
  * into the React tree: the barrel is now the public API (CLAUDE.md principle
- * 9). `eslint.config.js` Block 4 enforces it with one regex, and
+ * 9). `eslint.config.js` Block 1 enforces it with one regex, and
  * `src-solid/aliases.test.ts` pins that regex to this list.
  */
 export const solidBarrelAliases: readonly string[] = [

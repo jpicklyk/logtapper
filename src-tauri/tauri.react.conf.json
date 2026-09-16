@@ -1,8 +1,0 @@
-{
-  "build": {
-    "devUrl": "http://localhost:1420",
-    "frontendDist": "../dist",
-    "beforeDevCommand": "npm run build:mcpb && npm run dev:react",
-    "beforeBuildCommand": "npm run build:react && npm run build:mcpb"
-  }
-}

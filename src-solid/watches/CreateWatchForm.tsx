@@ -23,7 +23,7 @@ const ALL_LEVELS: { key: LogLevel; label: string }[] = [
   { key: 'Fatal', label: 'F' },
 ];
 
-/** Solid port of `src-next/components/WatchesPanel/CreateWatchForm.tsx`. Same
+/** Solid port of the React `components/WatchesPanel/CreateWatchForm.tsx`. Same
  *  fields, same "every `FilterCriteria` field is required (nullable) on the
  *  wire, start null and track whether anything was actually set" contract. */
 export function CreateWatchForm(props: CreateWatchFormProps): JSX.Element {

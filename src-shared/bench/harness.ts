@@ -3,7 +3,7 @@
  *
  * One module, zero dependencies, no React and no Solid imports — both viewers
  * install the *same* code so the numbers are comparable by construction:
- *   - React: one dev-gated `useEffect` in `src-next/viewport/ReadOnlyViewer.tsx`
+ *   - React: one dev-gated `useEffect` in the React viewer
  *   - Solid: one `createEffect` in `src-solid/viewer/LogViewer.tsx` (via `@bench`)
  *
  * `installBench()` registers `window.__bench`. Everything else is driven from

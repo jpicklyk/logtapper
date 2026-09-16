@@ -11,7 +11,7 @@ import styles from './editor.module.css';
 /**
  * One `AnalysisSection`, for the reader-parity phase.
  *
- * Structure follows `src-next/components/AnalysisReader/MarkdownSection.tsx`:
+ * Structure follows the React `components/AnalysisReader/MarkdownSection.tsx`:
  * a heading, an optional severity badge, the chip row of `SourceReference`s, then
  * the markdown body. The severity colour comes from the shared `severityColor()`
  * in `@bridge/types` (reused, not re-derived) and is handed to the stylesheet as

@@ -1,6 +1,6 @@
 /**
  * Global window-level keyboard shortcuts (C3), mirroring
- * `src-next/hooks/useFileShortcuts.ts:20-46`: Ctrl/Cmd+N new workspace, +O
+ * the React `hooks/useFileShortcuts.ts:20-46`: Ctrl/Cmd+N new workspace, +O
  * open file, +Shift+O open in editor, +Shift+S save workspace, +Shift+E open
  * export.
  *
