@@ -3,7 +3,8 @@ import { Index, Show, batch, createEffect, createMemo, createSignal, on, onClean
 import type { JSX } from 'solid-js';
 import type { DataSource } from '@viewport/DataSource';
 import { buildCopyText, writeClipboard } from '@viewport/copyText';
-import { createCacheBinding, OVERSCAN } from './cacheBinding';
+import { absoluteLineToFilteredIndex } from '@logviewer/scrollMapping';
+import { createCacheBinding } from './cacheBinding';
 import { DEFAULT_PANE_ID } from './controller';
 import type { ViewerController } from './controller';
 import { createVirtualBase, DEFAULT_ROW_HEIGHT } from './virtualBase';
@@ -16,15 +17,37 @@ import styles from './LogViewer.module.css';
 /**
  * Virtualized log viewer — the Solid render layer over the P2 viewer core.
  *
- * Windowing is hand-rolled (no third-party virtualizer): a `createMemo` over
- * `(scrollTop, viewportHeight, rowHeight)` produces `{ start, end }` with
- * `OVERSCAN` rows of margin, and `<Index>` renders that slice as absolutely
- * positioned rows inside a spacer of `renderCount × rowHeight` px.
+ * Windowing is hand-rolled (no third-party virtualizer): `createCacheBinding`'s
+ * `visibleRange` memo turns `(scrollTop, viewportHeight, rowHeight)` into
+ * `{ start, end }` with `OVERSCAN` rows of margin, and `<Index>` renders exactly
+ * that slice as absolutely positioned rows inside a spacer of
+ * `renderCount × rowHeight` px. The binding owns that arithmetic outright, so
+ * the rows drawn are by construction the rows fetched.
  *
  * `createVirtualBase`, `createCacheBinding` and `new ScrollControls(...)` are all
  * constructed in this component body, which is the owner their contract requires:
  * unmounting the viewer disposes the scheduler, detaches every listener, drops
  * the `onAppend` subscriptions and persists the scroll position.
+ *
+ * ## Coordinate systems
+ *
+ * This component is the **only** place the two line-number spaces meet, and the
+ * conversion lives here on purpose:
+ *
+ *  - **Absolute** — a backend file line. Everything outside the viewer speaks
+ *    this: `PaneHandle.jumpToLine` / `setSelection`, `controller.setCursor`,
+ *    `onCursorChange`, and therefore every analyzer, search hit, bookmark,
+ *    section, analysis, device-state transition and agent navigation.
+ *  - **Rendered** — a row index in whatever the data source currently shows.
+ *    `CacheDataSource.getLine(i)` indexes positionally into the active line set,
+ *    so with a filter on, row 0 may be file line 61 234. `virtualBase`,
+ *    `scrollTop / rowHeight`, `SelectionManager` and `Row`'s `data-line` are all
+ *    rendered space (React keeps selection in rendered space too).
+ *
+ * `toRendered` / `toAbsolute` below are the border. `controller.lineNumbers(sid)`
+ * is the mapping table; when it is `undefined` no line set is active and the two
+ * spaces coincide, which is why dropping the conversion looked correct for so
+ * long.
  */
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
@@ -50,7 +73,10 @@ export interface LogViewerProps {
   tailMode?: boolean;
   /** Override the measured `--viewer-row-h`. */
   rowHeight?: number;
-  /** Notified after a row is clicked (read-only — selection lives in the viewer). */
+  /**
+   * Notified after a row is clicked, with the **absolute backend line number**
+   * (read-only — selection lives in the viewer).
+   */
   onLineClick?: (lineNum: number) => void;
   /**
    * The app's `ViewerController`. When supplied, the viewer registers itself as
@@ -60,7 +86,7 @@ export interface LogViewerProps {
   controller?: ViewerController;
   /** Which pane this viewer is. Defaults to the controller's `'main'`. */
   paneId?: string;
-  /** Notified whenever the viewer's own cursor moves. */
+  /** Notified whenever the viewer's own cursor moves, in absolute line numbers. */
   onCursorChange?: (line: number) => void;
   /**
    * Notified when this pane gains pointer or keyboard focus — alongside the
@@ -85,10 +111,55 @@ export function LogViewer(props: LogViewerProps) {
   onMount(syncRowHeight);
   createEffect(on(() => props.rowHeight, syncRowHeight, { defer: true }));
 
+  // `--viewer-row-h` is a user setting written with
+  // `document.documentElement.style.setProperty` (the same channel
+  // `theme/applyTheme.ts` uses for its tokens). Nothing writes it at runtime
+  // *yet*, but the spacer height, the window maths and every `Row`'s `--row-top`
+  // are all derived from the value read at mount — so the first settings surface
+  // that exposes it would desync all three until the viewer remounted. Watching
+  // the one attribute it can arrive through costs one observer per pane.
+  onMount(() => {
+    if (typeof MutationObserver === 'undefined') return;
+    const observer = new MutationObserver(syncRowHeight);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+    onCleanup(() => observer.disconnect());
+  });
+
   // ── Viewer core (P2) ─────────────────────────────────────────────────────
   const dataSource = () => props.dataSource;
   const tailMode = () => props.tailMode;
   const totalLines = () => props.totalLineCount ?? props.dataSource.totalLines;
+
+  // ── Absolute ↔ rendered mapping ──────────────────────────────────────────
+  /** The active line set for this pane's session, or `undefined` when none is. */
+  const lineSet = (): number[] | undefined => {
+    const sid = props.sessionId;
+    return sid != null ? props.controller?.lineNumbers(sid) : undefined;
+  };
+
+  /**
+   * Absolute backend line → rendered row index. `null` when the line set is
+   * empty (nothing is renderable, so there is nowhere to go). A line that is not
+   * itself in the set resolves to the nearest row at or after it — the binary
+   * search `src-next` already ships and unit-tests.
+   */
+  const toRendered = (absLine: number): number | null => {
+    const ln = lineSet();
+    if (!ln) return absLine;
+    return absoluteLineToFilteredIndex(absLine, ln);
+  };
+
+  /**
+   * Rendered row index → absolute backend line. The fetched `ViewLine` is the
+   * cheapest source of truth (it carries the real `lineNum`); the line set is the
+   * fallback for a row whose data has not resolved yet.
+   */
+  const toAbsolute = (rendered: number): number => {
+    const resolved = props.dataSource.getLine(rendered);
+    if (resolved) return resolved.lineNum;
+    const ln = lineSet();
+    return ln ? (ln[rendered] ?? rendered) : rendered;
+  };
 
   const vb = createVirtualBase({
     sourceId: () => props.dataSource.sourceId,
@@ -97,7 +168,14 @@ export function LogViewer(props: LogViewerProps) {
     sessionId: () => props.sessionId,
   });
 
-  const scrollCtl = new ScrollControls({ tailMode, totalLines, dataSource });
+  // `renderedLineCount` is React's `effectiveTotalLines`: with a line set active
+  // it — not the stream total — is how many rows exist, in tail mode too.
+  const scrollCtl = new ScrollControls({
+    tailMode,
+    totalLines,
+    dataSource,
+    renderedLineCount: () => lineSet()?.length,
+  });
 
   const selection = new SelectionManager();
 
@@ -122,6 +200,7 @@ export function LogViewer(props: LogViewerProps) {
     viewportHeight,
     rowHeight,
     virtualBase: vb.virtualBase,
+    maxVirtualLines: vb.maxVirtualLines,
     liveTotalLines: scrollCtl.liveTotalLines,
     // A line set / view mode / highlight change remaps what this source renders
     // without moving its `sourceId`, so the binding needs the same reset.
@@ -141,17 +220,16 @@ export function LogViewer(props: LogViewerProps) {
 
   const visibleRows = createMemo(() => Math.max(1, Math.floor(viewportHeight() / Math.max(1, rowHeight()))));
 
+  // The rows rendered are exactly the rows the binding reports to the scheduler.
+  // There used to be a second copy of this arithmetic here, clamped differently
+  // (to `maxVirtualLines`, which the binding did not apply) — so the rows drawn
+  // and the rows fetched could silently disagree. The binding now takes
+  // `maxVirtualLines` and owns the maths alone.
   const windowIndices = createMemo<number[]>(() => {
-    const rh = Math.max(1, rowHeight());
-    const count = renderCount();
-    const h = viewportHeight();
-    if (count === 0 || h <= 0) return [];
-    const top = Math.max(0, scrollTop());
-    const start = Math.max(0, Math.floor(top / rh) - OVERSCAN);
-    const end = Math.min(count - 1, Math.ceil((top + h) / rh) - 1 + OVERSCAN);
-    if (end < start) return [];
-    const out: number[] = new Array(end - start + 1);
-    for (let i = 0; i < out.length; i++) out[i] = start + i;
+    const range = binding.visibleRange();
+    if (!range) return [];
+    const out: number[] = new Array(range.end - range.start + 1);
+    for (let i = 0; i < out.length; i++) out[i] = range.start + i;
     return out;
   });
 
@@ -240,18 +318,33 @@ export function LogViewer(props: LogViewerProps) {
     setScrollTop(el.scrollTop);
   };
 
-  /** Move the window if needed, then bring `absLine` into view. */
-  const jumpToLine = (absLine: number) => {
-    const rel = absLine - vb.current.value;
+  /**
+   * Move the window if needed, then bring a **rendered** row index into view.
+   * `virtualBase` and `pendingScrollTarget` are both rendered space.
+   */
+  const jumpToRendered = (rendered: number) => {
+    const rel = rendered - vb.current.value;
     if (rel >= 0 && rel < vb.maxVirtualLines()) {
       vb.pendingScrollTarget.value = null;
       scrollRelIntoView(rel);
       return;
     }
     // Target is outside the current virtual window — rebase and defer.
-    const newBase = Math.max(0, absLine - Math.floor(vb.maxVirtualLines() / 2));
-    vb.pendingScrollTarget.value = absLine;
+    const newBase = Math.max(0, rendered - Math.floor(vb.maxVirtualLines() / 2));
+    vb.pendingScrollTarget.value = rendered;
     vb.setVirtualBase(newBase);
+  };
+
+  /**
+   * `PaneHandle.jumpToLine` — takes an **absolute backend line number** and maps
+   * it through the active line set first. Without this, a "show matched lines"
+   * jump to line 61 234 in a 40-row filtered view set `scrollTop` to ~1.35 M px,
+   * which the browser clamps to 0: the jump silently did nothing.
+   */
+  const jumpToLine = (absLine: number) => {
+    const rendered = toRendered(absLine);
+    if (rendered == null) return; // empty line set — nothing is renderable
+    jumpToRendered(rendered);
   };
 
   // Consume the deferred scroll target after a rebase.
@@ -293,9 +386,13 @@ export function LogViewer(props: LogViewerProps) {
             selection.clear();
             return;
           }
+          // `range` is absolute; the selection set is rendered space (as React's
+          // is), so both ends cross the border here.
+          const start = toRendered(range[0]);
+          const end = toRendered(range[1]);
+          if (start == null || end == null) return;
           // Reuse the click path rather than adding a second range writer:
           // anchor on `start`, then shift-extend to `end`.
-          const [start, end] = range;
           selection.handleLineClick(start, { shiftKey: false, ctrlKey: false, metaKey: false });
           if (end !== start) {
             selection.handleLineClick(end, { shiftKey: true, ctrlKey: false, metaKey: false });
@@ -315,12 +412,16 @@ export function LogViewer(props: LogViewerProps) {
   );
 
   // Report the viewer's own cursor (click, arrow keys) back to the controller.
+  // `cursorLine` is a rendered row; every consumer of `controller.cursor`
+  // (bookmarks, device state, sections, analyses, the timeline strip) reads an
+  // absolute file line — so the conversion happens here, at the boundary.
   createEffect(
     on(cursorLine, (line) => {
       if (line == null) return;
+      const absolute = toAbsolute(line);
       const sid = props.sessionId;
-      if (sid != null) props.controller?.setCursor(sid, line);
-      props.onCursorChange?.(line);
+      if (sid != null) props.controller?.setCursor(sid, absolute);
+      props.onCursorChange?.(absolute);
     }),
   );
 
@@ -339,7 +440,7 @@ export function LogViewer(props: LogViewerProps) {
       setCursorLine(next);
       selection.handleLineClick(next, { shiftKey, ctrlKey: false, metaKey: false });
     });
-    jumpToLine(next);
+    jumpToRendered(next);
   };
 
   /** First line currently under the top edge of the viewport. */
@@ -422,7 +523,9 @@ export function LogViewer(props: LogViewerProps) {
       selection.handleLineClick(lineNum, e);
       setCursorLine(lineNum);
     });
-    props.onLineClick?.(lineNum);
+    // `lineNum` is the rendered row; the prop is documented as a line number and
+    // its only consumers are outside the viewer, so it gets the absolute one.
+    props.onLineClick?.(toAbsolute(lineNum));
   };
 
   const spacerStyle = (): JSX.CSSProperties =>

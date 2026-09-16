@@ -173,6 +173,8 @@ export function createStreamSession(options: StreamSessionOptions): StreamSessio
   // invariant, which is React-hooks-only and not importable from src-solid).
   let channelActive = false;
   let currentSessionId: string | null = null;
+  /** True between entering `start()` and `startAdbStream` settling — see `start`. */
+  let starting = false;
 
   // Processor-update batching: accumulate, flush once per macrotask. See the
   // module doc's "Live processor-update forwarding" section for why a
@@ -277,41 +279,59 @@ export function createStreamSession(options: StreamSessionOptions): StreamSessio
   };
 
   const start = async (deviceId?: string, opts: StreamStartOptions = {}): Promise<void> => {
-    // A prior stream owned by this instance is stopped first — mirrors the
-    // React hook's "stop the previous stream if one is still running" guard,
-    // minus the auto-reconnect/pane bookkeeping that belongs to later phases.
-    if (currentSessionId) {
-      await stop();
-    }
-
-    applyStatus({ phase: 'starting' });
-    channelActive = false;
-
-    let result: LoadResult;
-    try {
-      result = await startAdbStream(
-        deviceId,
-        opts.packageFilter,
-        opts.activeProcessorIds ?? [],
-        opts.maxRawLines,
-        handleChannelEvent,
-      );
-    } catch (e) {
-      channelActive = false;
-      currentSessionId = null;
-      applyStatus({ phase: 'error', message: String(e) });
+    // Re-entrancy latch. `currentSessionId` is only assigned *after*
+    // `startAdbStream` resolves, so the "stop the previous stream" guard below
+    // sees `null` for a second call issued while the first is still in flight —
+    // both streams then start in the backend, the loser's Channel messages are
+    // dropped by the `payload.sessionId !== currentSessionId` guards, and
+    // nothing will ever stop it. Reachable from a double-click on the stream
+    // control, or a bench `startStream` racing a UI start (both drive the same
+    // instance by design). `phase: 'starting'` was already published and never
+    // consulted; this is the missing consumer.
+    if (starting) {
+      console.warn('[createStreamSession] start() ignored — a start is already in flight');
       return;
     }
+    starting = true;
+    try {
+      // A prior stream owned by this instance is stopped first — mirrors the
+      // React hook's "stop the previous stream if one is still running" guard,
+      // minus the auto-reconnect/pane bookkeeping that belongs to later phases.
+      if (currentSessionId) {
+        await stop();
+      }
 
-    currentSessionId = result.sessionId;
-    channelActive = true;
-    applyStatus({
-      phase: 'streaming',
-      sessionId: result.sessionId,
-      sourceName: result.sourceName,
-      sourceType: result.sourceType as SourceType,
-      totalLines: result.totalLines,
-    });
+      applyStatus({ phase: 'starting' });
+      channelActive = false;
+
+      let result: LoadResult;
+      try {
+        result = await startAdbStream(
+          deviceId,
+          opts.packageFilter,
+          opts.activeProcessorIds ?? [],
+          opts.maxRawLines,
+          handleChannelEvent,
+        );
+      } catch (e) {
+        channelActive = false;
+        currentSessionId = null;
+        applyStatus({ phase: 'error', message: String(e) });
+        return;
+      }
+
+      currentSessionId = result.sessionId;
+      channelActive = true;
+      applyStatus({
+        phase: 'streaming',
+        sessionId: result.sessionId,
+        sourceName: result.sourceName,
+        sourceType: result.sourceType as SourceType,
+        totalLines: result.totalLines,
+      });
+    } finally {
+      starting = false;
+    }
   };
 
   const stop = async (): Promise<void> => {

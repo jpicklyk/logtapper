@@ -9,15 +9,30 @@ const click = (o: Partial<{ shiftKey: boolean; ctrlKey: boolean; metaKey: boolea
   shiftKey: false, ctrlKey: false, metaKey: false, ...o,
 });
 
-function boxEvent(alt = true): BoxPointerEvent & { setPointerCapture: ReturnType<typeof vi.fn> } {
-  const setPointerCapture = vi.fn();
-  const target = { setPointerCapture } as unknown as EventTarget;
+interface CaptureSpies {
+  setPointerCapture: ReturnType<typeof vi.fn>;
+  releasePointerCapture: ReturnType<typeof vi.fn>;
+  hasPointerCapture: ReturnType<typeof vi.fn>;
+}
+
+function boxEvent(alt = true): BoxPointerEvent & CaptureSpies {
+  const captured = new Set<number>();
+  const setPointerCapture = vi.fn((id: number) => { captured.add(id); });
+  const releasePointerCapture = vi.fn((id: number) => { captured.delete(id); });
+  const hasPointerCapture = vi.fn((id: number) => captured.has(id));
+  const target = {
+    setPointerCapture,
+    releasePointerCapture,
+    hasPointerCapture,
+  } as unknown as EventTarget;
   return {
     altKey: alt,
     pointerId: 7,
     currentTarget: target,
     preventDefault: vi.fn(),
     setPointerCapture,
+    releasePointerCapture,
+    hasPointerCapture,
   };
 }
 
@@ -151,6 +166,29 @@ describe('SelectionManager', () => {
       sm.handlePointerMove(9, 9);
       expect(sm.selection.mode).toBe('line');
       expect(lines(sm.selection)).toEqual([1]);
+    });
+
+    it('releases the pointer capture it took (the pointercancel path)', () => {
+      const sm = new SelectionManager();
+      const e = boxEvent();
+      sm.handlePointerDown(2, 4, e);
+      expect(e.setPointerCapture).toHaveBeenCalledWith(7);
+
+      // `handlePointerUp` is also the `onPointerCancel` handler, where nothing
+      // else releases the capture and the element keeps swallowing pointer
+      // events for that id.
+      sm.handlePointerUp();
+
+      expect(e.releasePointerCapture).toHaveBeenCalledWith(7);
+      expect(sm.capturedElement).toBeNull();
+    });
+
+    it('releases nothing when no box drag was started', () => {
+      const sm = new SelectionManager();
+      const e = boxEvent(false);
+      sm.handlePointerDown(2, 4, e);
+      sm.handlePointerUp();
+      expect(e.releasePointerCapture).not.toHaveBeenCalled();
     });
 
     it('pointerup ends the drag but keeps the selection', () => {

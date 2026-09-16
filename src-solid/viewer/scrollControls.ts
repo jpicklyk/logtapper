@@ -27,6 +27,17 @@ export interface ScrollControlsOptions {
   tailMode: Accessor<boolean | undefined>;
   /** Authoritative total from the session (used in file mode). */
   totalLines: Accessor<number>;
+  /**
+   * Size of the active line set (filter / search / section / matched), or
+   * `undefined` when no line set is active — React's `effectiveTotalLines`.
+   *
+   * When a line set is active it IS the rendered index space, in tail mode as
+   * much as in file mode: `CacheDataSource.getLine(i)` indexes positionally into
+   * it. Trusting the stream total there sizes a filtered live capture to the
+   * unfiltered session (300 k rows for 500 matches), and every row past the
+   * line set's end is a skeleton no fetch can ever resolve.
+   */
+  renderedLineCount?: Accessor<number | undefined>;
   /** Current data source; re-subscribes to `onAppend` when it changes. */
   dataSource: Accessor<DataSource>;
   /**
@@ -43,7 +54,10 @@ export class ScrollControls {
   readonly autoScroll: Accessor<boolean>;
   /** Reactive "N new lines" badge count. */
   readonly newLinesCount: Accessor<number>;
-  /** Stream total in tail mode, `totalLines` prop in file mode. */
+  /**
+   * How many rows exist in the rendered index space: the line set's length when
+   * one is active, else the stream total in tail mode / `totalLines` in file mode.
+   */
   readonly liveTotalLines: Accessor<number>;
   /** Non-reactive mirrors, for reads inside DOM listeners. */
   readonly autoScrollRef: Ref<boolean> = { value: true };
@@ -58,6 +72,7 @@ export class ScrollControls {
 
   constructor(options: ScrollControlsOptions) {
     const { tailMode, totalLines, dataSource, bumpCacheVersion } = options;
+    const renderedLineCount = options.renderedLineCount;
 
     const [autoScroll, setAutoScroll] = createSignal(true);
     const [newLinesCount, setNewLines] = createSignal(0);
@@ -68,7 +83,11 @@ export class ScrollControls {
     this._setNewLines = setNewLines;
     this._setStreamTotal = setStreamTotal;
 
-    this.liveTotalLines = createMemo(() => (tailMode() ? streamTotal() : totalLines()));
+    this.liveTotalLines = createMemo(() => {
+      const rendered = renderedLineCount?.();
+      if (rendered != null) return rendered;
+      return tailMode() ? streamTotal() : totalLines();
+    });
 
     // ── Re-enable auto-scroll when entering tail mode ────────────────────
     createEffect(

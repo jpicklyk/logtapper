@@ -56,6 +56,12 @@ export const solidAliasPaths: Record<string, string> = {
   // W5's device-state timeline strip reuses it verbatim rather than
   // reimplementing the same math. File-level ESLint allow-list, same shape.
   "@statetimeline": "src-next/components/StateTimeline",
+  // The viewer's absolute-line ↔ rendered-index mapping. `src-next/components/
+  // LogViewer/` is React territory; `scrollMapping.ts` is its one framework-free
+  // file (a binary search over the sorted line-set array, unit-tested next to
+  // it). The Solid viewer reuses it verbatim rather than shipping a second copy
+  // of the same search — same file-level ESLint allow-list pattern as `@hooks`.
+  "@logviewer": "src-next/components/LogViewer",
   // W7's markdown export — the one framework-free file in `BookmarkPanel/`
   // (everything else there is a React component). Same file-level ESLint
   // allow-list pattern as `@hooks`/`@analysisPanel`/`@analysisReader`.

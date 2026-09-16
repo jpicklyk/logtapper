@@ -102,6 +102,48 @@ describe('createVirtualBase', () => {
       expect(vb.current.value).toBe(7_500);
       vb.dispose();
     });
+
+    // M7: `sourceId` is `${sessionId}:${'filtered' | 'full'}`. Only the session
+    // half may restore a saved position — the saved value is a *file-line*
+    // offset, which means nothing in a filtered index space.
+    it('resets to 0 — not the saved file-line offset — when a filter is applied', () => {
+      sessionScrollPositions.set(SESSIONS[0], 2_200_000);
+      const [sourceId, setSourceId] = createSignal(`${SESSIONS[0]}:full`);
+      const vb = mount({ sourceId, sessionId: () => SESSIONS[0] });
+      expect(vb.virtualBase()).toBe(2_200_000);
+
+      // A 120-match filter arrives: restoring 2.2 M here clamps renderCount to
+      // 0 and leaves a permanently blank viewer.
+      setSourceId(`${SESSIONS[0]}:filtered`);
+
+      expect(vb.virtualBase()).toBe(0);
+      expect(vb.current.value).toBe(0);
+      vb.dispose();
+    });
+
+    it('resets to 0 again when the filter is cleared', () => {
+      const [sourceId, setSourceId] = createSignal(`${SESSIONS[0]}:filtered`);
+      const vb = mount({ sourceId, sessionId: () => SESSIONS[0] });
+      vb.setVirtualBase(60);
+
+      setSourceId(`${SESSIONS[0]}:full`);
+
+      expect(vb.virtualBase()).toBe(0);
+      vb.dispose();
+    });
+
+    it('still restores the saved position for a genuine session switch', () => {
+      sessionScrollPositions.set(SESSIONS[1], 4_321);
+      const [sourceId, setSourceId] = createSignal(`${SESSIONS[0]}:full`);
+      const [sessionId, setSessionId] = createSignal<string | undefined>(SESSIONS[0]);
+      const vb = mount({ sourceId, sessionId });
+
+      setSessionId(SESSIONS[1]);
+      setSourceId(`${SESSIONS[1]}:full`);
+
+      expect(vb.virtualBase()).toBe(4_321);
+      vb.dispose();
+    });
   });
 
   // ── Tail mode ────────────────────────────────────────────────────────────

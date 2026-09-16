@@ -47,6 +47,7 @@ export class SelectionManager {
   private _boxDragging = false;
   private _boxAnchor: { line: number; col: number } | null = null;
   private _capturedElement: Element | null = null;
+  private _capturedPointerId: number | null = null;
 
   constructor() {
     const [state, setState] = createStore<Selection>(emptySelection());
@@ -82,6 +83,7 @@ export class SelectionManager {
     this._boxAnchor = { line: lineNum, col };
     const target = e.currentTarget as Element | null;
     this._capturedElement = target;
+    this._capturedPointerId = e.pointerId;
     target?.setPointerCapture?.(e.pointerId);
     this._set({
       anchor: lineNum,
@@ -113,7 +115,21 @@ export class SelectionManager {
   handlePointerUp(): void {
     this._boxDragging = false;
     this._boxAnchor = null;
+    // Release what `handlePointerDown` captured. `pointerup` releases implicit
+    // capture on its own, but this handler is also the `pointercancel` path —
+    // where nothing releases it and the element keeps swallowing every
+    // subsequent pointer event for that id.
+    const captured = this._capturedElement;
+    const pointerId = this._capturedPointerId;
+    if (captured && pointerId != null) {
+      try {
+        if (captured.hasPointerCapture?.(pointerId)) captured.releasePointerCapture?.(pointerId);
+      } catch {
+        // The element may already be detached — releasing is best-effort.
+      }
+    }
     this._capturedElement = null;
+    this._capturedPointerId = null;
   }
 
   /** Reset to the empty line-mode selection. */

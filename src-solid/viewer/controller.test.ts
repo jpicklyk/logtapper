@@ -4,6 +4,7 @@ import { createComputed, createRoot } from 'solid-js';
 import { createViewerController, intersectSorted, DEFAULT_PANE_ID } from './controller';
 import type { PaneHandle, ViewerController } from './controller';
 import type { HighlightSpan } from '@bridge/generated/HighlightSpan';
+import { sessionScrollPositions } from '@viewport/sessionScrollPositions';
 
 const SID = 'session-a';
 
@@ -431,6 +432,121 @@ describe('createViewerController — dispose', () => {
   });
 });
 
+describe('createViewerController — structural calls do not steal focus (L7)', () => {
+  it('attachPane leaves the focus target where it was', () => {
+    const { controller } = build();
+    const main = makePane();
+    controller.attachPane(DEFAULT_PANE_ID, main);
+
+    // S1: the split mounts a secondary pane while the user is typing in `main`.
+    const side = makePane();
+    controller.attachPane('side', side);
+
+    controller.focus();
+    expect(main.focus).toHaveBeenCalledTimes(1);
+    expect(side.focus).not.toHaveBeenCalled();
+    controller.dispose();
+  });
+
+  it('bindSession leaves the focus target where it was', () => {
+    const { controller } = build();
+    const main = makePane();
+    const side = makePane();
+    controller.attachPane(DEFAULT_PANE_ID, main);
+    controller.attachPane('side', side);
+    controller.focusPane(DEFAULT_PANE_ID);
+
+    // A background pane picking up a session is structural, not a focus event.
+    controller.bindSession('other', 'side');
+
+    controller.focus();
+    expect(main.focus).toHaveBeenCalledTimes(1);
+    expect(side.focus).not.toHaveBeenCalled();
+    // The binding itself still happened.
+    expect(controller.paneForSession('other')).toBe('side');
+    controller.dispose();
+  });
+
+  it('a navigation jump still retargets focus', () => {
+    const { controller } = build();
+    const main = makePane();
+    const side = makePane();
+    controller.attachPane(DEFAULT_PANE_ID, main);
+    controller.attachPane('side', side);
+    controller.bindSession(SID, 'side');
+
+    controller.scrollToLine(SID, 10);
+    controller.focus();
+    expect(side.focus).toHaveBeenCalledTimes(1);
+    controller.dispose();
+  });
+});
+
+describe('createViewerController — setLineSet untracks its own read (M9)', () => {
+  it('does not subscribe the calling computation to the sets signal', () => {
+    const { controller } = build();
+    let runs = 0;
+    createRoot((dispose) => {
+      createComputed(() => {
+        runs += 1;
+        // A caller inside a reactive scope, with no `untrack` of its own.
+        controller.setLineSet(SID, 'filter', new Set([1, 2, 3]));
+      });
+      // Without the internal untrack this self-triggers and Solid throws
+      // (or loops); with it, the computation runs exactly once.
+      expect(runs).toBe(1);
+      dispose();
+    });
+    expect(controller.lineNumbers(SID)).toEqual([1, 2, 3]);
+    controller.dispose();
+  });
+});
+
+describe('createViewerController — the matched line set', () => {
+  it('intersects alongside the other keys and clears independently', () => {
+    const { controller } = build();
+    controller.setLineSet(SID, 'matched', new Set([5, 9, 12]));
+    expect(controller.lineNumbers(SID)).toEqual([5, 9, 12]);
+
+    controller.setLineSet(SID, 'filter', new Set([9, 12, 40]));
+    expect(controller.lineNumbers(SID)).toEqual([9, 12]);
+
+    controller.setLineSet(SID, 'matched', null);
+    expect(controller.lineNumbers(SID)).toEqual([9, 12, 40]);
+    controller.dispose();
+  });
+});
+
+describe('createViewerController — forgetSession', () => {
+  it('drops the session view state, its pane binding and its scroll position', () => {
+    const { controller } = build();
+    const main = makePane();
+    controller.attachPane('side', main);
+    controller.bindSession(SID, 'side');
+    controller.setLineSet(SID, 'filter', new Set([3, 4]));
+    controller.setHighlights(SID, new Map([[3, []]]));
+    sessionScrollPositions.set(SID, 2_200_000);
+
+    controller.forgetSession(SID);
+
+    expect(controller.lineNumbers(SID)).toBeUndefined();
+    expect(controller.highlights(SID)).toBeNull();
+    expect(controller.revision(SID)).toBe(0);
+    expect(controller.paneForSession(SID)).toBe(DEFAULT_PANE_ID);
+    expect(sessionScrollPositions.get(SID)).toBe(0);
+    controller.dispose();
+  });
+
+  it('is a no-op for a session it has never seen, and leaves others intact', () => {
+    const { controller } = build();
+    controller.setLineSet(SID, 'filter', new Set([7]));
+
+    expect(() => controller.forgetSession('never-opened')).not.toThrow();
+    expect(controller.lineNumbers(SID)).toEqual([7]);
+    controller.dispose();
+  });
+});
+
 describe('the frozen surface', () => {
   it('exposes every member downstream packages code against', () => {
     const { controller } = build();
@@ -438,7 +554,7 @@ describe('the frozen surface', () => {
       'scrollToLine', 'setViewMode', 'viewMode', 'setLineSet', 'lineNumbers',
       'setHighlights', 'highlights', 'revision', 'cursor', 'onCursorChange',
       'setCursor', 'focus', 'attachPane', 'bindSession', 'paneForSession',
-      'focusPane', 'dispose',
+      'focusPane', 'forgetSession', 'dispose',
     ];
     for (const key of keys) expect(typeof controller[key]).toBe('function');
     controller.dispose();

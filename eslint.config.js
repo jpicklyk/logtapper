@@ -344,6 +344,14 @@ export default tseslint.config(
             message:
               'Only exportMarkdown (framework-free) is shared with src-solid/ — the rest of BookmarkPanel/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
           },
+          // Same pattern, for the one framework-free file under
+          // `src-next/components/LogViewer/` — the absolute-line ↔
+          // rendered-index binary search the Solid viewer reuses verbatim.
+          {
+            regex: '^@logviewer/(?!scrollMapping$).*',
+            message:
+              'Only scrollMapping (framework-free) is shared with src-solid/ — the rest of components/LogViewer/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
+          },
           {
             group: ['@tauri-apps/api/core'],
             importNames: ['invoke', 'Channel'],

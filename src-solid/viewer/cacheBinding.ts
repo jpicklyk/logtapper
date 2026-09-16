@@ -32,6 +32,13 @@ export interface CacheBindingOptions {
   rowHeight?: Accessor<number> | number;
   /** Window offset from `createVirtualBase`. */
   virtualBase: Accessor<number>;
+  /**
+   * `createVirtualBase`'s `maxVirtualLines` — the row cap the browser's 2^25 px
+   * scroll limit imposes. The render layer renders exactly `visibleRange`, so
+   * the binding has to apply the same clamp the spacer does; without it the two
+   * disagree above the cap and rows get fetched that are never drawn.
+   */
+  maxVirtualLines?: Accessor<number>;
   /** Total lines including streaming appends. Defaults to `dataSource().totalLines`. */
   liveTotalLines?: Accessor<number>;
   /**
@@ -80,6 +87,7 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
       : () => (options.rowHeight as number | undefined) ?? DEFAULT_ROW_HEIGHT;
 
   const liveTotalLines = options.liveTotalLines ?? (() => dataSource().totalLines);
+  const maxVirtualLines = options.maxVirtualLines ?? (() => Number.POSITIVE_INFINITY);
 
   const scheduler = options.scheduler ?? new FetchScheduler();
   const [cacheVersion, setCacheVersion] = createSignal(0);
@@ -87,6 +95,17 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
 
   let fetchInFlight = false;
   const fetchGuard = createGenerationGuard();
+  /**
+   * Release the single-flight flag — but only when nothing has superseded this
+   * fetch. Every site that bumps the guard (a `sourceId` swap, a `revision`
+   * bump, the fast-scroll cancel below) already clears the flag itself and may
+   * have started a *newer* fetch since; a stale completion clearing it again
+   * would let a third fetch through the `if (fetchInFlight) return` gate and run
+   * concurrently with the second, multiplying IPC during filter typing.
+   */
+  const releaseInFlight = (gen: number): void => {
+    if (fetchGuard.isCurrent(gen)) fetchInFlight = false;
+  };
   let initialFetchDone = false;
   let disposed = false;
 
@@ -100,7 +119,7 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
   // ── Visible window ───────────────────────────────────────────────────────
   const visibleRange = createMemo<VisibleRange | null>(() => {
     const rh = Math.max(1, rowHeight());
-    const count = Math.max(0, liveTotalLines() - virtualBase());
+    const count = Math.min(Math.max(0, liveTotalLines() - virtualBase()), maxVirtualLines());
     if (count === 0 || viewportHeight() <= 0) return null;
     const top = Math.max(0, scrollTop());
     const first = Math.max(0, Math.floor(top / rh) - overscan);
@@ -172,7 +191,7 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
             })
             .catch(console.error)
             .finally(() => {
-              fetchInFlight = false;
+              releaseInFlight(gen);
               // The viewport may have moved while this prefetch was in flight;
               // reportScroll's queued range was swallowed by the guard above.
               if (!disposed) scheduler.forceFetch();
@@ -186,7 +205,8 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
         Promise.resolve(ds.getLines(viewport.offset, viewport.count))
           .then(() => {
             if (!fetchGuard.isCurrent(gen)) {
-              fetchInFlight = false;
+              // NOT `fetchInFlight = false`: whoever bumped the guard already
+              // cleared it, and a newer fetch may own it by now.
               // Stale, but the lines still landed in this source's cache, and
               // nothing else is guaranteed to announce them: the scheduler
               // dedups a re-report of the same range, so a geometry change
@@ -206,13 +226,13 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
               .then(() => { if (!fetchGuard.isCurrent(pfGen)) return; })
               .catch(console.error)
               .finally(() => {
-                fetchInFlight = false;
+                releaseInFlight(pfGen);
                 if (!disposed) scheduler.forceFetch();
               });
           })
           .catch((err) => {
             console.error(err);
-            fetchInFlight = false;
+            releaseInFlight(gen);
             if (!disposed) scheduler.forceFetch();
           });
       });

@@ -38,7 +38,10 @@
       "@statetimeline/*": ["src-next/components/StateTimeline/*"],
       // Directory alias, file-level allow-list: ESLint lets exactly
       // `exportMarkdown` through.
-      "@bookmarkPanel/*": ["src-next/components/BookmarkPanel/*"]
+      "@bookmarkPanel/*": ["src-next/components/BookmarkPanel/*"],
+      // Directory alias, file-level allow-list: ESLint lets exactly
+      // `@logviewer/scrollMapping` through.
+      "@logviewer/*": ["src-next/components/LogViewer/*"]
     }
   },
   "include": ["src-solid"],

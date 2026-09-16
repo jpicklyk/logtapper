@@ -11,10 +11,22 @@ const ROW_H = 22;
 /** Flush pending microtasks so promise-chained fetch phases settle. */
 const flush = () => new Promise<void>((resolve) => { setTimeout(resolve, 0); });
 
-function makeDataSource(opts: { sourceId?: string; totalLines?: number; cached?: boolean } = {}) {
+function makeDataSource(
+  opts: { sourceId?: string; totalLines?: number; cached?: boolean; manual?: boolean } = {},
+) {
   const resident = new Set<number>();
   let appendCb: ((lines: ViewLine[], total: number) => void) | null = null;
+  /** Manual mode: every `getLines` stays pending until `settle(i)` resolves it. */
+  const pending: Array<() => void> = [];
   const getLines = vi.fn((offset: number, count: number) => {
+    if (opts.manual) {
+      return new Promise<ViewLine[]>((resolve) => {
+        pending.push(() => {
+          for (let i = offset; i < offset + count; i++) resident.add(i);
+          resolve([]);
+        });
+      });
+    }
     for (let i = offset; i < offset + count; i++) resident.add(i);
     return Promise.resolve([] as ViewLine[]);
   });
@@ -29,6 +41,8 @@ function makeDataSource(opts: { sourceId?: string; totalLines?: number; cached?:
     ds,
     pushLines: (total: number) => appendCb?.([], total),
     getLines,
+    pending,
+    settle: (i: number) => pending[i]?.(),
     fill: (offset: number, count: number) => {
       for (let i = offset; i < offset + count; i++) resident.add(i);
     },
@@ -42,8 +56,11 @@ function mount(opts: {
   virtualBase?: number;
   liveTotalLines?: number;
   revision?: boolean;
+  maxVirtualLines?: number;
+  /** Passed straight to the `FetchScheduler` (tests that need deterministic timing). */
+  schedulerConfig?: ConstructorParameters<typeof FetchScheduler>[0];
 } = {}) {
-  const scheduler = new FetchScheduler();
+  const scheduler = new FetchScheduler(opts.schedulerConfig);
   const reportScroll = vi.spyOn(scheduler, 'reportScroll');
   const forceFetch = vi.spyOn(scheduler, 'forceFetch');
   const ds = opts.dataSource ?? makeDataSource().ds;
@@ -63,6 +80,7 @@ function mount(opts: {
       rowHeight: ROW_H,
       virtualBase,
       liveTotalLines: total,
+      ...(opts.maxVirtualLines != null ? { maxVirtualLines: () => opts.maxVirtualLines! } : {}),
       ...(opts.revision ? { revision } : {}),
       scheduler,
     });
@@ -352,6 +370,60 @@ describe('createCacheBinding', () => {
       h.binding.dispose();
       h.binding.dispose();
       expect(schedulerDispose).toHaveBeenCalledTimes(1);
+      h.dispose();
+    });
+  });
+  // ── Single-flight across overlapping fetches (M6) ─────────────────────────
+  describe('single-flight guard with two fetches in flight', () => {
+    /** Always "settled", so every reportScroll executes synchronously. */
+    const IMMEDIATE = { velocityThreshold: Number.POSITIVE_INFINITY };
+
+    it('does not let a stale fetch release the flag a newer fetch holds', async () => {
+      const src = makeDataSource({ manual: true });
+      const h = mount({ dataSource: src.ds, revision: true, schedulerConfig: IMMEDIATE });
+
+      // F1 was issued at mount and is still pending.
+      expect(src.getLines).toHaveBeenCalledTimes(1);
+
+      // A revision bump supersedes F1 and clears the flag; the scroll that
+      // follows issues F2, which now owns the single-flight slot.
+      h.bumpRevision();
+      h.setScrollTop(100 * ROW_H);
+      expect(src.getLines).toHaveBeenCalledTimes(2);
+
+      // F1 resolves *after* F2 started. It is stale — it must not touch the flag.
+      src.settle(0);
+      await flush();
+
+      // With the flag wrongly cleared, this scroll issues a third fetch that
+      // runs concurrently with F2 — the exact IPC multiplication the guard exists
+      // to prevent.
+      h.setScrollTop(200 * ROW_H);
+      expect(src.getLines).toHaveBeenCalledTimes(2);
+
+      // Once F2 itself resolves the slot is free again.
+      src.settle(1);
+      await flush();
+      h.setScrollTop(300 * ROW_H);
+      expect(src.getLines.mock.calls.length).toBeGreaterThan(2);
+
+      h.dispose();
+    });
+  });
+
+  // ── The window the binding reports is the window the viewer renders (M4) ──
+  describe('maxVirtualLines clamp', () => {
+    it('never reports a row past the browser scroll-height cap', () => {
+      // 1 M lines would otherwise fill the viewport+overscan window (0..19);
+      // the cap says only 15 rows exist, so the last reportable row is 14.
+      const h = mount({ liveTotalLines: 1_000_000, maxVirtualLines: 15 });
+      expect(h.binding.visibleRange()).toEqual({ start: 0, end: 14 });
+      h.dispose();
+    });
+
+    it('is unclamped when no cap is supplied', () => {
+      const h = mount({ liveTotalLines: 1_000_000 });
+      expect(h.binding.visibleRange()!.end).toBe(9 + OVERSCAN);
       h.dispose();
     });
   });
