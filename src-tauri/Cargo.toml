@@ -80,7 +80,7 @@ tauri-plugin-window-state = "2"
 
 # Opening external URLs in the OS default handler. Markdown prose (including
 # analyses published by an MCP agent) can contain http/https/mailto links; the
-# navigation guard in `navigation.rs` refuses to let the webview follow them, so
+# navigation guard in `webview_guard.rs` refuses to let the webview follow them, so
 # the frontend hands them to this plugin instead. Scoped to `opener:allow-open-url`
 # in `capabilities/default.json` — no `open_path`, no `reveal_item_in_dir`.
 tauri-plugin-opener = "2"
