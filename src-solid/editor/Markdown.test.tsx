@@ -175,6 +175,24 @@ describe('Markdown component', () => {
     expect(openExternalUrl).not.toHaveBeenCalled();
   });
 
+  it('blocks a relative href but leaves a fragment href to the browser', () => {
+    // A relative href would otherwise navigate the chrome-less webview with no
+    // way back — it must be default-prevented even though there is nothing to
+    // hand to the OS. A fragment href is a same-page scroll and must NOT be
+    // prevented, or in-document navigation breaks.
+    const { container } = render(() => (
+      <Markdown content="[rel](./notes.md) [frag](#h)" />
+    ));
+    const [relAnchor, fragAnchor] = container.querySelectorAll('a');
+
+    const relDispatched = fireEvent.click(relAnchor);
+    const fragDispatched = fireEvent.click(fragAnchor);
+
+    expect(relDispatched).toBe(false); // preventDefault() ran
+    expect(fragDispatched).toBe(true); // left to the browser
+    expect(openExternalUrl).not.toHaveBeenCalled();
+  });
+
   it('keeps the line-reference path untouched by the external-link check', () => {
     const onLineRef = vi.fn();
     const { container } = render(() => (

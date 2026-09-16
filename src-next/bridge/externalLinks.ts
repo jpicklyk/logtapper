@@ -21,40 +21,77 @@ import { openExternalUrl } from './commands';
  * The only schemes handed to the OS.
  *
  * Mirrors the scope on `opener:allow-open-url` in
- * `src-tauri/capabilities/default.json` — keep the two in step. Anything else
- * (`file:`, a custom scheme, a relative or fragment-only href) is left alone
- * here and separately refused by the backend scope check, so a mismatch fails
- * closed.
+ * `src-tauri/capabilities/default.json` — keep the two in step. A scheme
+ * outside this list (`file:`, `data:`, a custom scheme) is not opened here and
+ * is separately refused by the backend scope check, so a mismatch fails
+ * closed. A path-relative or protocol-relative href is not a scheme mismatch
+ * at all — see {@link classifyLinkHref}, which is what decides whether such a
+ * click is blocked instead of left alone.
  */
 export const EXTERNAL_LINK_SCHEMES: readonly string[] = ['http:', 'https:', 'mailto:'];
 
-/** `scheme:` of an absolute URL, lowercased. `null` for a relative href. */
+/** `scheme:` of an absolute URL, lowercased. `null` for a relative or scheme-less href. */
 function schemeOf(href: string): string | null {
   const match = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(href);
   return match === null ? null : `${match[1].toLowerCase()}:`;
 }
 
+/**
+ * How a click handler should treat an anchor's `href` attribute.
+ *
+ * - `'external'` — a scheme in {@link EXTERNAL_LINK_SCHEMES}; hand it to the OS.
+ * - `'fragment'` — an in-document anchor (`#heading`); leave it to the
+ *   browser's own default action so same-page scrolling keeps working.
+ * - `'blocked'` — anything else rendered markdown can produce: a
+ *   path-relative href (`./x`, `x`, `/x`, `../x`, `?q`), a protocol-relative
+ *   `//host`, or a scheme the allow-list doesn't cover (`javascript:`,
+ *   `file:`, `data:`, …). The webview has no browser chrome, so letting the
+ *   default action run would replace the whole app with no way back — this
+ *   must be cancelled even though there is nothing useful to do with it.
+ */
+export type LinkHrefKind = 'external' | 'fragment' | 'blocked';
+
+/** Classify a raw `href` attribute value. `null`/`undefined`/empty → no href at all. */
+export function classifyLinkHref(href: string | null | undefined): LinkHrefKind | null {
+  if (!href) return null;
+  if (href.startsWith('#')) return 'fragment';
+  const scheme = schemeOf(href);
+  if (scheme !== null && EXTERNAL_LINK_SCHEMES.includes(scheme)) return 'external';
+  return 'blocked';
+}
+
 /** Whether `href` is one this module will open externally. */
 export function isExternalLinkHref(href: string | null | undefined): href is string {
-  if (!href) return false;
-  const scheme = schemeOf(href);
-  return scheme !== null && EXTERNAL_LINK_SCHEMES.includes(scheme);
+  return classifyLinkHref(href) === 'external';
+}
+
+/** An anchor's `href` attribute plus its classification. */
+interface AnchorHrefInfo {
+  readonly href: string;
+  readonly kind: LinkHrefKind;
 }
 
 /**
- * The external href of the anchor `target` sits in, or `null`.
+ * The anchor `target` sits in, classified, or `null` if there is none (or it
+ * carries no `href` at all — a generated line-reference anchor, for example).
  *
  * Reads the `href` *attribute* rather than the `.href` property: the property
- * resolves relative hrefs against the app origin, which would turn `./notes` —
- * a link this module deliberately does not open — into an absolute `http://…`
- * that it does.
+ * resolves relative hrefs against the app origin, which would turn `./notes`
+ * into an absolute `http://…` and hide that it was ever relative.
  */
-export function externalLinkHrefFrom(target: EventTarget | null): string | null {
+function anchorHrefInfoFrom(target: EventTarget | null): AnchorHrefInfo | null {
   if (!(target instanceof globalThis.Element)) return null;
   const anchor = target.closest('a');
   if (anchor === null) return null;
   const href = anchor.getAttribute('href');
-  return isExternalLinkHref(href) ? href : null;
+  const kind = classifyLinkHref(href);
+  return kind === null ? null : { href: href as string, kind };
+}
+
+/** The external href of the anchor `target` sits in, or `null`. */
+export function externalLinkHrefFrom(target: EventTarget | null): string | null {
+  const info = anchorHrefInfoFrom(target);
+  return info !== null && info.kind === 'external' ? info.href : null;
 }
 
 /**
@@ -80,17 +117,31 @@ export interface InterceptableEvent {
 }
 
 /**
- * Delegated handler: if the event landed inside an external anchor, cancel the
- * navigation and open the URL externally instead.
+ * Delegated handler: classifies the anchor (if any) the event landed inside.
  *
- * Returns whether it handled the event, so a container that also has its own
- * anchor semantics (the Solid renderer's line references) can tell the two
- * apart. Safe to attach to a container that has no links at all.
+ * - `external` → cancel the navigation and open the URL externally.
+ * - `blocked` (path-relative, protocol-relative, or a disallowed scheme) →
+ *   cancel the navigation and do nothing else; a `console.warn` is the only
+ *   trace, since the caller is a click handler with nowhere else to report.
+ *   Left unhandled, the chrome-less webview would navigate to it directly —
+ *   the same unrecoverable failure an external link would cause, just with no
+ *   OS handler to hand it to.
+ * - `fragment` (`#heading`) or no anchor/no href at all → not handled; the
+ *   browser's default action runs, which is what makes same-page scrolling
+ *   and the Solid renderer's own line-reference anchors keep working.
+ *
+ * Returns whether it handled (cancelled) the event, so a container that also
+ * has its own anchor semantics (the Solid renderer's line references) can
+ * tell the two apart. Safe to attach to a container that has no links at all.
  */
 export function openExternalLinkFromEvent(event: InterceptableEvent): boolean {
-  const href = externalLinkHrefFrom(event.target);
-  if (href === null) return false;
+  const info = anchorHrefInfoFrom(event.target);
+  if (info === null || info.kind === 'fragment') return false;
   event.preventDefault();
-  openExternalLink(href);
+  if (info.kind === 'external') {
+    openExternalLink(info.href);
+  } else {
+    console.warn('[externalLinks] blocked a relative or unsupported link', { href: info.href });
+  }
   return true;
 }
