@@ -904,6 +904,73 @@ describe('backend envelope cache (pushEnvelope)', () => {
     });
   });
 
+  it('adopts a session opened with no active workspace into a fresh default workspace', async () => {
+    // The way a user reaches "no workspace": delete the active one from
+    // workspace home with nothing open. `hydrate` alone never yields a null
+    // active id while disk has a list, so go through the real path.
+    getAppStateMock.mockResolvedValue(appState([entry('a')], 'a'));
+    deleteMock.mockResolvedValue(undefined);
+    const fakes = makeFakes();
+    const store = build(fakes);
+    await store.hydrate();
+    await store.delete('a', { force: true });
+    expect(store.activeId()).toBeNull();
+    syncWorkspaceEnvelopeMock.mockClear();
+
+    await fakes.actions.openPath('orphan.log');
+
+    const adopted = store.active();
+    expect(adopted).not.toBeNull();
+    expect(adopted!.id).not.toBe('a');
+    expect(adopted!.name).toBe('Untitled');
+    expect(store.list().map((w) => w.id)).toEqual([adopted!.id]);
+    expect(store.dirty()).toBe(true);
+    expect(fakes.closed).toEqual([]);
+    expect(syncWorkspaceEnvelopeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: adopted!.id, ltwPath: null }),
+    );
+    // The open is workspace content: it autosaves into the adopted workspace.
+    await vi.waitFor(() =>
+      expect(autoSaveWorkspaceMock).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: adopted!.id })),
+    );
+  });
+
+  it('"New workspace" after an adopted open leaves that file in the adopted workspace', async () => {
+    getAppStateMock.mockResolvedValue(appState([entry('a')], 'a'));
+    deleteMock.mockResolvedValue(undefined);
+    const fakes = makeFakes();
+    const store = build(fakes);
+    await store.hydrate();
+    await store.delete('a', { force: true });
+    await fakes.actions.openPath('orphan.log');
+    const adoptedId = store.activeId()!;
+
+    await store.newWorkspace();
+
+    // The adopted workspace survives with its file flushed; the new one is empty
+    // and active, and the teardown closed the session as every switch does.
+    expect(store.activeId()).not.toBe(adoptedId);
+    expect(store.list().some((w) => w.id === adoptedId)).toBe(true);
+    expect(autoSaveWorkspaceMock).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: adoptedId }));
+    expect(fakes.closed).toEqual(['sess-1']);
+  });
+
+  it('a forced delete of the active workspace re-homes its still-open sessions', async () => {
+    getAppStateMock.mockResolvedValue(appState([entry('a')], 'a'));
+    deleteMock.mockResolvedValue(undefined);
+    const fakes = makeFakes();
+    const store = build(fakes);
+    await store.hydrate();
+    await fakes.actions.openPath('keep-me.log');
+
+    await store.delete('a', { force: true });
+
+    expect(store.activeId()).not.toBeNull();
+    expect(store.activeId()).not.toBe('a');
+    expect(store.list().map((w) => w.id)).toEqual([store.activeId()]);
+    expect(fakes.closed).toEqual([]);
+  });
+
   it('caches the envelope for a fresh "new workspace", keyed on its own fresh id', async () => {
     const store = build(makeFakes());
     await store.hydrate();

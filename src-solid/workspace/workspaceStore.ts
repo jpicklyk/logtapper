@@ -631,6 +631,22 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       pushEnvelope();
     };
 
+    /**
+     * Give sessions that have no workspace a fresh default one and make it
+     * active. The `newWorkspace` bookkeeping minus the teardown: nothing is
+     * closed, because the whole point is to keep what is open. Callers decide
+     * whether a session is actually orphaned; this only creates the home.
+     */
+    const adoptOrphanSessions = (): void => {
+      const fresh = createEmptyWorkspace();
+      setList((prev) => [...prev, fresh]);
+      setActiveId(fresh.id);
+      lastLayoutBlob = null;
+      persistAppState();
+      persistMirror();
+      pushEnvelope();
+    };
+
     const rename = async (id: string, name: string): Promise<void> => {
       const entry = await renameWorkspace({ workspaceId: id, newName: name });
       patch(id, { name: entry.name });
@@ -656,6 +672,13 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       if (activeId() === id) {
         setActiveId(null);
         lastLayoutBlob = null;
+        // The sessions that were open in the deleted workspace are still open;
+        // leaving them with no workspace is the orphan case the membership
+        // effect guards against, so give them a home right away.
+        if (deps.sessions.order().length > 0) {
+          adoptOrphanSessions();
+          markMutated();
+        }
       }
     };
 
@@ -669,6 +692,13 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
         disk,
       );
       if (result.createDefault) {
+        // A session opened before this hydrate settled (a CLI startup file) may
+        // already have adopted a fresh workspace; replacing the list here would
+        // orphan it again.
+        if (activeId() !== null && list().some((w) => w.id === activeId())) {
+          persistAppState();
+          return;
+        }
         const fresh = createEmptyWorkspace();
         setList([fresh]);
         setActiveId(fresh.id);
@@ -695,11 +725,24 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
     // whichever caller did it (the user's dialog, an agent's `open_file`, a
     // `session-closed` echo). Watched here rather than wired into each opener
     // so no path can forget. `markMutated` already ignores a restore in flight.
+    //
+    // A session that opens while NO workspace is active (app-state whose active
+    // id is null — a forced delete of the active workspace leaves it that way,
+    // and so does a first launch whose hydrate lost the race with a CLI file)
+    // would otherwise belong to nothing: no autosave tracks it, and the next
+    // "New workspace" tears every session down before creating the empty one,
+    // so the file the user just opened is simply gone. Adopt it into a fresh
+    // default workspace first, exactly as if the user had clicked New
+    // workspace before opening the file.
     createEffect(
       on(
         () => deps.sessions.order().join('\n'),
         (ids, prev) => {
-          if (ids !== prev) markMutated();
+          if (ids === prev) return;
+          if (activeId() === null && restoreDepth === 0 && deps.sessions.order().length > 0) {
+            adoptOrphanSessions();
+          }
+          markMutated();
         },
         { defer: true },
       ),
