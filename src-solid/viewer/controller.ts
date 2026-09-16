@@ -351,6 +351,12 @@ export function createViewerController(deps: ViewerControllerDeps): ViewerContro
       viewMode: (sessionId) => stateFor(sessionId).viewMode(),
 
       setLineSet: (sessionId, key, lines) => {
+        // Clearing a key on a session this controller does not hold is a no-op:
+        // the per-session prune sweeps (sections, bookmarks, watches) run off
+        // `sessions.order()` *after* `forgetSession` has already run for the
+        // same close, and `stateFor` would otherwise re-create the state the
+        // close just released (feature review, W5/W6 seam).
+        if (lines === null && !sessions.has(sessionId)) return;
         const state = stateFor(sessionId);
         // `writeSets` merges the other keys, which means reading `sets()` — a
         // signal read inside a setter. Untracked here, once, so no caller has to
@@ -361,6 +367,9 @@ export function createViewerController(deps: ViewerControllerDeps): ViewerContro
       lineNumbers: (sessionId) => stateFor(sessionId).lineNumbers(),
 
       setHighlights: (sessionId, spans) => {
+        // Same rule as `setLineSet`: a null write on an unknown session is a
+        // no-op rather than a state re-creation.
+        if (spans === null && !sessions.has(sessionId)) return;
         const state = stateFor(sessionId);
         state.writeHighlights(spans);
         state.bump();

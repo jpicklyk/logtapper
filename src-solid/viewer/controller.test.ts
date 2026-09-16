@@ -545,6 +545,25 @@ describe('createViewerController — forgetSession', () => {
     expect(controller.lineNumbers(SID)).toEqual([7]);
     controller.dispose();
   });
+
+  // The per-session prune sweeps (sections, bookmarks, watches) run off
+  // `sessions.order()`, i.e. after `forgetSession` has already run for the same
+  // close, and release their keys with a null write. That write must not
+  // re-create the state the close just dropped — a re-created state would have
+  // been bumped, so a revision of 0 afterwards is the proof it was not.
+  it('treats a null write on a forgotten session as a no-op instead of re-creating it', () => {
+    const { controller } = build();
+    controller.setLineSet(SID, 'section', new Set([1, 2, 3]));
+    controller.setHighlights(SID, new Map([[1, []]]));
+    controller.forgetSession(SID);
+
+    controller.setLineSet(SID, 'section', null);
+    controller.setHighlights(SID, null);
+
+    expect(controller.revision(SID)).toBe(0);
+    expect(controller.lineNumbers(SID)).toBeUndefined();
+    controller.dispose();
+  });
 });
 
 describe('the frozen surface', () => {
