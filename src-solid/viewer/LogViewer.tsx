@@ -182,17 +182,27 @@ export function LogViewer(props: LogViewerProps) {
   // ── Benchmark harness (?bench=1) ─────────────────────────────────────────
   // Installed ahead of `createCacheBinding` so this effect runs before the
   // scheduler's first fetch — `firstPaintedRowMs` then measures fetch-to-paint.
-  createEffect(() => {
-    if (!location.search.includes('bench=1')) return;
-    const bench = installBench({
-      label: 'solid',
-      getScrollEl: () => container ?? null,
-      getTotalLines: () => scrollCtl.liveTotalLines(),
-      rowHeight: () => rowHeight(),
-      isReady: () => container?.querySelector('[data-line]:not([data-skeleton])') != null,
-    });
-    if (props.sessionId != null) bench.markLinePage();
-  });
+  // Keyed on `props.sessionId` alone (review A-L9): the effect used to track
+  // whatever it happened to read, so an unrelated signal could re-run the
+  // install. `installBench` is a module singleton that only re-points its
+  // `current`, so a re-run on a session switch is harmless, but the dependency
+  // is now the one this code actually means.
+  createEffect(
+    on(
+      () => props.sessionId,
+      (sessionId) => {
+        if (!location.search.includes('bench=1')) return;
+        const bench = installBench({
+          label: 'solid',
+          getScrollEl: () => container ?? null,
+          getTotalLines: () => scrollCtl.liveTotalLines(),
+          rowHeight: () => rowHeight(),
+          isReady: () => container?.querySelector('[data-line]:not([data-skeleton])') != null,
+        });
+        if (sessionId != null) bench.markLinePage();
+      },
+    ),
+  );
 
   const binding = createCacheBinding({
     dataSource,
