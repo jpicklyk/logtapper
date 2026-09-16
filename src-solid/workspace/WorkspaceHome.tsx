@@ -63,6 +63,12 @@ export interface WorkspaceHomeProps {
    * bugreport; here they have a home that scrolls with the workspace.
    */
   bookmarks?: JSX.Element;
+  /**
+   * The analyses index (titles only — the reader stays a surface of its own,
+   * a document wants a column, not a drawer), rendered after the bookmarks so
+   * this pane lists everything the workspace file contains.
+   */
+  analyses?: JSX.Element;
 }
 
 /**
@@ -427,6 +433,13 @@ export function WorkspaceHome(props: WorkspaceHomeProps): JSX.Element {
       <Show when={props.bookmarks}>
         <section class={styles.section} data-testid="workspace-bookmarks">
           {props.bookmarks}
+        </section>
+      </Show>
+
+      <Show when={props.analyses}>
+        <section class={styles.section} data-testid="workspace-analyses">
+          <h3 class={styles.sectionLabel}>Analyses</h3>
+          {props.analyses}
         </section>
       </Show>
     </div>

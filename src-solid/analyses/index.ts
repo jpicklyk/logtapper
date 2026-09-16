@@ -15,6 +15,9 @@ export type {
 export { AnalysesPanel } from './AnalysesPanel';
 export type { AnalysesPanelProps } from './AnalysesPanel';
 
+export { AnalysesIndex } from './AnalysesIndex';
+export type { AnalysesIndexProps } from './AnalysesIndex';
+
 export { AnalysisReader } from './AnalysisReader';
 export type { AnalysisReaderProps } from './AnalysisReader';
 

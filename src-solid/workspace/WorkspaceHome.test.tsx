@@ -117,6 +117,23 @@ function fakeLiveStreamStore(
 }
 
 describe('WorkspaceHome', () => {
+  it('renders the bookmarks and analyses slots as sections of the pane', () => {
+    render(() => (
+      <WorkspaceHome
+        store={fakeWorkspaceStore()}
+        sessions={fakeSessions()}
+        actions={fakeActions()}
+        liveStream={fakeLiveStreamStore()}
+        bookmarks={<div data-testid="bm-slot" />}
+        analyses={<div data-testid="an-slot" />}
+      />
+    ));
+    expect(screen.getByTestId('workspace-bookmarks').contains(screen.getByTestId('bm-slot'))).toBe(true);
+    const analyses = screen.getByTestId('workspace-analyses');
+    expect(analyses.contains(screen.getByTestId('an-slot'))).toBe(true);
+    expect(within(analyses).getByText('Analyses')).toBeTruthy();
+  });
+
   it('shows the empty state when there are no workspaces yet', () => {
     render(() => <WorkspaceHome store={fakeWorkspaceStore()} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
     expect(screen.getByText(/no workspaces yet/i)).toBeTruthy();

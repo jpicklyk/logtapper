@@ -1,3 +1,57 @@
+/* ── Workspace-pane index (AnalysesIndex) ────────────────────────────── */
+
+.index {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.indexEmpty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.indexRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.indexRow:hover,
+.indexRow:focus-visible {
+  border-color: var(--accent-border);
+}
+
+.indexRow[aria-current='true'] {
+  border-color: var(--accent);
+}
+
+.indexTitle {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.indexMeta {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .panel {
   display: flex;
   flex-direction: column;

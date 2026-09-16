@@ -35,7 +35,7 @@ import type { ConfirmClose, EditorStore } from './editor';
 import { SectionsPanel, createSectionsStore } from './sections';
 import { AnalyzersPanel, createAnalyzerStore } from './analyzers';
 import type { CallerLike } from './ui';
-import { AnalysesPanel, createAnalysesStore } from './analyses';
+import { AnalysesIndex, AnalysesPanel, createAnalysesStore } from './analyses';
 import { DeviceStatePanel, TimelineStrip, createDeviceStateStore } from './devicestate';
 import { BookmarksPanel, createBookmarksStore } from './bookmarks';
 import { WatchesPanel, createWatchesStore } from './watches';
@@ -650,6 +650,15 @@ export function App(props: AppProps) {
               actions={actions}
               liveStream={liveStream}
               bookmarks={<BookmarksPanel store={bookmarks} sessions={store} />}
+              analyses={
+                <AnalysesIndex
+                  store={analyses}
+                  // On compact the analyses surface is a drawer; `applyDrawer`
+                  // opens it only where it IS a drawer (standard and wider
+                  // already show it as a column), so this is a no-op there.
+                  onOpen={() => shellBox.current?.applyDrawer('analyses')}
+                />
+              }
             />
           ),
           presence: () => <PresencePanel store={presence} />,

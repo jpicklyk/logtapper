@@ -117,6 +117,17 @@ describe('AnalysesPanel', () => {
     expect(await screen.findByTestId('analysis-reader')).toBeTruthy();
   });
 
+  it('opens the reader when the selection is made outside the panel (the workspace index, an agent)', async () => {
+    const store = fakeStore({ list: [artifact('a')] });
+    render(() => <AnalysesPanel store={store} />);
+    expect(screen.getByText(/title a/i)).toBeTruthy();
+
+    store.select('a');
+
+    await screen.findByRole('button', { name: /back/i });
+    expect(screen.queryByTestId('analysis-card')).toBeNull();
+  });
+
   it('"New analysis" captures the draft seed and opens the editor', () => {
     const store = fakeStore();
     render(() => <AnalysesPanel store={store} />);

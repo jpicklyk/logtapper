@@ -62,7 +62,8 @@ function groupBySession(artifacts: readonly AnalysisArtifact[], labels: Readonly
   return order.map((label) => ({ label, entries: byLabel.get(label)! }));
 }
 
-function relativeTime(epochMs: number): string {
+/** Shared with `AnalysesIndex` so both lists date an artifact the same way. */
+export function relativeTime(epochMs: number): string {
   const diff = Date.now() - epochMs;
   if (diff < 60_000) return 'just now';
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
@@ -222,12 +223,15 @@ export function AnalysesPanel(props: AnalysesPanelProps): JSX.Element {
   // An `analysis-update` `deleted` for the artifact the reader is showing
   // clears `selectedId` in the store; without this the panel sat in
   // 'reading' mode showing "Select an analysis from the list." and a Back
-  // button.
+  // button. The other direction matters too: a selection made outside this
+  // panel (the workspace pane's analyses index, an agent) must open the
+  // reader, or the store selects an artifact nothing shows.
   createEffect(
     on(
       () => props.store.selected(),
       (selected) => {
         if (!selected && mode() === 'reading') setMode('list');
+        if (selected && mode() === 'list') setMode('reading');
       },
       { defer: true },
     ),
