@@ -233,7 +233,7 @@ describe('createAnalysesStore', () => {
     });
   });
 
-  describe('draft seed (pendingSelection.ts reuse)', () => {
+  describe('draft seed (analyses/draftSeed.ts)', () => {
     it('round-trips the controller cursor into a SourceReference, consumed once', () => {
       controller.scrollToLine('s1', 42, { source: 'user' });
       store.captureDraftSeed();
@@ -263,6 +263,28 @@ describe('createAnalysesStore', () => {
         highlightType: 'Anchor',
         sessionId: 's2',
       });
+    });
+  });
+
+  describe('error channel', () => {
+    it('surfaces a listAnalyses rejection, and clears it on the next success', async () => {
+      (commands.listAnalyses as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('bridge down'));
+      const failing = createAnalysesStore({
+        sessions: sessionStore,
+        controller,
+        commands,
+        listen: listen.listen as never,
+      });
+      await flush();
+      expect(failing.error()).toContain('bridge down');
+
+      (commands.listAnalyses as ReturnType<typeof vi.fn>).mockResolvedValueOnce([artifact('a1')]);
+      failing.retry();
+      await flush();
+      // A stale message used to survive every later success, forever.
+      expect(failing.error()).toBeNull();
+      expect(failing.list()).toEqual([artifact('a1')]);
+      failing.dispose();
     });
   });
 

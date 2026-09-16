@@ -6,8 +6,11 @@
 export {
   createBookmarksStore,
   BOOKMARK_CATEGORIES,
+  LINE_DISPLAY_BASE,
   categoryLabel,
   categoryAccentVar,
+  formatLineRange,
+  formatLineLabel,
 } from './bookmarksStore';
 export type {
   BookmarksStore,

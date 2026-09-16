@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { For, Show, createMemo, createSignal } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup } from 'solid-js';
 import type { JSX } from 'solid-js';
 import type { Bookmark } from '@bridge/types';
 import { CallerBadge } from '../ui';
@@ -8,7 +8,7 @@ import { CallerBadge } from '../ui';
 import type { SessionStore } from '../app/index';
 import { writeClipboard } from '../viewer';
 import { CreateBookmarkDialog } from './CreateBookmarkDialog';
-import { categoryAccentVar } from './bookmarksStore';
+import { categoryAccentVar, formatLineRange } from './bookmarksStore';
 import type { BookmarksStore } from './bookmarksStore';
 import styles from './bookmarks.module.css';
 
@@ -17,11 +17,8 @@ export interface BookmarksPanelProps {
   sessions: SessionStore;
 }
 
-function formatLineRef(b: Bookmark): string {
-  return b.lineNumberEnd != null && b.lineNumberEnd > b.lineNumber
-    ? `L${b.lineNumber + 1}–${b.lineNumberEnd + 1}`
-    : `L${b.lineNumber + 1}`;
-}
+/** How long the "Copied!" acknowledgement stays up. */
+const COPIED_MS = 2_000;
 
 interface RowProps {
   bookmark: Bookmark;
@@ -37,7 +34,7 @@ function BookmarkRow(props: RowProps): JSX.Element {
   const [noteDraft, setNoteDraft] = createSignal('');
   const [confirmingDelete, setConfirmingDelete] = createSignal(false);
 
-  const startEditLabel = (e: MouseEvent): void => {
+  const startEditLabel = (e: Event): void => {
     e.stopPropagation();
     setLabelDraft(props.bookmark.label);
     setEditingLabel(true);
@@ -49,7 +46,7 @@ function BookmarkRow(props: RowProps): JSX.Element {
     setEditingLabel(false);
   };
 
-  const startEditNote = (e: MouseEvent): void => {
+  const startEditNote = (e: Event): void => {
     e.stopPropagation();
     setNoteDraft(props.bookmark.note ?? '');
     setEditingNote(true);
@@ -61,12 +58,15 @@ function BookmarkRow(props: RowProps): JSX.Element {
     setEditingNote(false);
   };
 
+  // The row itself is NOT `role="button"` any more: it contains buttons, an
+  // input and a textarea, which may not live inside a button role, and it had
+  // no key handler, so a keyboard user could focus every row and jump to none.
+  // Clicking the row is kept as a mouse convenience; the keyboard/AT path is
+  // the real `<button>` on the line reference.
   return (
     <div
       class={styles.row}
       style={{ '--row-accent': categoryAccentVar(props.bookmark.category ?? 'custom') } as JSX.CSSProperties}
-      role="button"
-      tabIndex={0}
       data-testid="bookmark-row"
       onClick={() => { if (!editingLabel() && !editingNote()) props.onJump(); }}
     >
@@ -93,6 +93,17 @@ function BookmarkRow(props: RowProps): JSX.Element {
           />
         </Show>
         <CallerBadge caller={props.bookmark.createdBy} />
+        <Show when={!editingLabel()}>
+          <button
+            type="button"
+            class={styles.iconButton}
+            title="Rename bookmark"
+            aria-label={`Rename ${props.bookmark.label}`}
+            onClick={startEditLabel}
+          >
+            {'✎'}
+          </button>
+        </Show>
         <Show
           when={confirmingDelete()}
           fallback={
@@ -119,7 +130,14 @@ function BookmarkRow(props: RowProps): JSX.Element {
         </Show>
       </div>
       <div class={styles.metaRow}>
-        <span class={styles.lineRef}>{formatLineRef(props.bookmark)}</span>
+        <button
+          type="button"
+          class={styles.lineRef}
+          title="Jump to this line"
+          onClick={(e) => { e.stopPropagation(); props.onJump(); }}
+        >
+          {formatLineRange(props.bookmark.lineNumber, props.bookmark.lineNumberEnd)}
+        </button>
       </div>
       <Show when={props.bookmark.snippet?.[0]}>
         <div class={styles.snippet}>{props.bookmark.snippet![0]}</div>
@@ -135,9 +153,9 @@ function BookmarkRow(props: RowProps): JSX.Element {
               </button>
             }
           >
-            <div class={styles.note} onClick={startEditNote} title="Click to edit note">
+            <button type="button" class={styles.note} onClick={startEditNote} title="Click to edit note">
               {props.bookmark.note}
-            </div>
+            </button>
           </Show>
         }
       >
@@ -161,15 +179,34 @@ function BookmarkRow(props: RowProps): JSX.Element {
 /** The `bookmarks` shell surface (rail placement): categorised list for the
  *  focused session, "Bookmark selection" launches `CreateBookmarkDialog`. */
 export function BookmarksPanel(props: BookmarksPanelProps): JSX.Element {
-  const [createOpen, setCreateOpen] = createSignal(false);
+  /** The session + line the open create dialog belongs to, captured when it
+   *  opens. Resolving the session at *submit* time let a tab switch write the
+   *  bookmark into the newly focused session, at the old session's line. */
+  const [createFor, setCreateFor] = createSignal<{ sessionId: string; line: number } | null>(null);
   const [exportStatus, setExportStatus] = createSignal<'idle' | 'copied'>('idle');
+  const [actionError, setActionError] = createSignal<string | null>(null);
 
   const sessionId = createMemo(() => props.sessions.focusedId());
+  const cursorLine = createMemo(() => {
+    const sid = sessionId();
+    return sid ? props.store.cursorLine(sid) : null;
+  });
   const groups = createMemo(() => {
     const sid = sessionId();
     return sid ? props.store.categories(sid) : [];
   });
   const total = createMemo(() => groups().reduce((sum, g) => sum + g.count, 0));
+  const fetchError = createMemo(() => {
+    const sid = sessionId();
+    return sid ? props.store.error(sid) : null;
+  });
+
+  // Belt and braces with the captured session id above: a dialog for a session
+  // that is no longer focused has no visible context, so close it outright.
+  createEffect(on(sessionId, () => setCreateFor(null), { defer: true }));
+
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => { if (copiedTimer !== undefined) clearTimeout(copiedTimer); });
 
   const handleExport = (): void => {
     const sid = sessionId();
@@ -177,7 +214,26 @@ export function BookmarksPanel(props: BookmarksPanelProps): JSX.Element {
     const markdown = props.store.exportMarkdown(sid);
     writeClipboard(markdown);
     setExportStatus('copied');
-    setTimeout(() => setExportStatus('idle'), 2000);
+    // Without the cleanup above, closing the drawer inside the window left this
+    // timer writing into a disposed signal.
+    if (copiedTimer !== undefined) clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => setExportStatus('idle'), COPIED_MS);
+  };
+
+  const openCreate = (): void => {
+    const sid = sessionId();
+    const line = cursorLine();
+    if (!sid || line === null) return;
+    setCreateFor({ sessionId: sid, line });
+  };
+
+  /** Every store call from this panel is a promise; an unhandled rejection
+   *  used to leave the row on screen with no explanation. */
+  const surface = (p: Promise<unknown>): void => {
+    void p.then(
+      () => setActionError(null),
+      (e: unknown) => setActionError(String(e)),
+    );
   };
 
   return (
@@ -195,15 +251,44 @@ export function BookmarksPanel(props: BookmarksPanelProps): JSX.Element {
                   {exportStatus() === 'copied' ? 'Copied!' : 'Export'}
                 </button>
               </Show>
-              <button type="button" class={styles.newButton} onClick={() => setCreateOpen(true)}>
+              <button
+                type="button"
+                class={styles.newButton}
+                // With no cursor the dialog silently offered "Bookmark Line 1"
+                // as though the user had picked line 1.
+                disabled={cursorLine() === null}
+                title={cursorLine() === null ? 'Select a line in the viewer first' : undefined}
+                onClick={openCreate}
+              >
                 Bookmark selection
               </button>
             </header>
 
+            <Show when={fetchError()}>
+              {(message) => (
+                <div class={styles.error} role="alert" data-testid="bookmarks-error">
+                  <span class={styles.errorText}>Could not load bookmarks: {message()}</span>
+                  <button type="button" class={styles.retryButton} onClick={() => props.store.retry(sid())}>
+                    Retry
+                  </button>
+                </div>
+              )}
+            </Show>
+            <Show when={actionError()}>
+              {(message) => (
+                <div class={styles.error} role="alert" data-testid="bookmarks-action-error">
+                  <span class={styles.errorText}>{message()}</span>
+                  <button type="button" class={styles.retryButton} onClick={() => setActionError(null)}>
+                    Dismiss
+                  </button>
+                </div>
+              )}
+            </Show>
+
             <Show when={props.store.loading(sid()) && total() === 0}>
               <div class={styles.empty}>Loading{'…'}</div>
             </Show>
-            <Show when={!props.store.loading(sid()) && total() === 0}>
+            <Show when={!props.store.loading(sid()) && total() === 0 && !fetchError()}>
               <div class={styles.empty}>No bookmarks yet.</div>
             </Show>
 
@@ -219,8 +304,8 @@ export function BookmarksPanel(props: BookmarksPanelProps): JSX.Element {
                         <BookmarkRow
                           bookmark={b}
                           onJump={() => props.store.jumpTo(b)}
-                          onEdit={(patch) => void props.store.update(b.id, patch)}
-                          onDelete={() => void props.store.remove(b.id)}
+                          onEdit={(patch) => surface(props.store.update(b.id, patch))}
+                          onDelete={() => surface(props.store.remove(b.id))}
                         />
                       )}
                     </For>
@@ -229,12 +314,14 @@ export function BookmarksPanel(props: BookmarksPanelProps): JSX.Element {
               </For>
             </div>
 
-            <Show when={createOpen()}>
-              <CreateBookmarkDialog
-                initialLine={props.store.cursorLine(sid()) ?? 0}
-                onCreate={(input) => props.store.create(sid(), input)}
-                onClose={() => setCreateOpen(false)}
-              />
+            <Show when={createFor()}>
+              {(target) => (
+                <CreateBookmarkDialog
+                  initialLine={target().line}
+                  onCreate={(input) => props.store.create(target().sessionId, input)}
+                  onClose={() => setCreateFor(null)}
+                />
+              )}
             </Show>
           </>
         )}

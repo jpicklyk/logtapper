@@ -275,6 +275,13 @@ describe('createBookmarksStore', () => {
       expect(commands.updateBookmark).not.toHaveBeenCalled();
     });
 
+    it('remove() rejects for an unknown bookmark id, symmetrically with update()', async () => {
+      // Resolving here told the caller the delete had succeeded when nothing
+      // was ever sent to the backend.
+      await expect(store.remove('missing')).rejects.toThrow(/Unknown bookmark/);
+      expect(commands.deleteBookmark).not.toHaveBeenCalled();
+    });
+
     it('remove() resolves the owning session, calls deleteBookmark, and drops the entry', async () => {
       sessionStore.add(load('s1'));
       listen.emit(updateEvent('created', bookmark('b1')));
@@ -282,6 +289,66 @@ describe('createBookmarksStore', () => {
       await store.remove('b1');
       expect(commands.deleteBookmark).toHaveBeenCalledWith('s1', 'b1');
       expect(store.list('s1')).toEqual([]);
+    });
+  });
+
+  describe('events for sessions this UI does not have', () => {
+    it('ignores a "created" for a session that is not open', () => {
+      sessionStore.add(load('s1'));
+      listen.emit(updateEvent('created', bookmark('ghost', { sessionId: 'closed-session' })));
+      expect(store.list('closed-session')).toEqual([]);
+      // And nothing was minted for it: an `update` for that id cannot resolve
+      // an owner, which is only true if no phantom state was created.
+      expect(store.list('s1')).toEqual([]);
+    });
+
+    it('ignores an "updated"/"deleted" for a session with no state', () => {
+      const b = bookmark('b1', { sessionId: 'never-focused' });
+      listen.emit(updateEvent('updated', b));
+      listen.emit(updateEvent('deleted', b));
+      expect(store.list('never-focused')).toEqual([]);
+    });
+
+    it('prunes a session\'s bookmarks when it closes, and re-fetches if it reopens', async () => {
+      const b = bookmark('b1');
+      (commands.listBookmarks as ReturnType<typeof vi.fn>).mockResolvedValue([b]);
+      sessionStore.add(load('s1'));
+      await flush();
+      expect(store.list('s1')).toEqual([b]);
+
+      sessionStore.remove('s1');
+      await flush();
+      expect(store.list('s1')).toEqual([]);
+
+      // A close followed by a late event must not resurrect the state.
+      listen.emit(updateEvent('updated', bookmark('b1', { label: 'late' })));
+      expect(store.list('s1')).toEqual([]);
+
+      (commands.listBookmarks as ReturnType<typeof vi.fn>).mockClear();
+      sessionStore.add(load('s1'));
+      await flush();
+      expect(commands.listBookmarks).toHaveBeenCalledWith('s1');
+    });
+  });
+
+  describe('fetch failures', () => {
+    it('surfaces a listBookmarks rejection and re-fetches on retry()', async () => {
+      (commands.listBookmarks as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('bridge down'));
+      sessionStore.add(load('s1'));
+      await flush();
+
+      // Previously this rendered as "No bookmarks yet." and never retried —
+      // the fetch effect's only dependency (`focusedId`) had not changed.
+      expect(store.error('s1')).toContain('bridge down');
+      expect(store.loading('s1')).toBe(false);
+
+      const b = bookmark('b1');
+      (commands.listBookmarks as ReturnType<typeof vi.fn>).mockResolvedValueOnce([b]);
+      store.retry('s1');
+      await flush();
+
+      expect(store.error('s1')).toBeNull();
+      expect(store.list('s1')).toEqual([b]);
     });
   });
 

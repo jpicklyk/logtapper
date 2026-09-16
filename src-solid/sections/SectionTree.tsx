@@ -19,8 +19,8 @@ export type FlatRow =
       label: string;
       count: number;
       totalLines: number;
-      /** Every section name this header's checkbox governs (itself included for `parent`). */
-      names: readonly string[];
+      /** Every section `startLine` this header's checkbox governs (itself included for `parent`). */
+      startLines: readonly number[];
     };
 
 /** Flatten a section tree into keyboard-navigable rows, honouring which groups are open. */
@@ -39,7 +39,7 @@ export function flattenRows(rows: readonly SectionRow[], isExpanded: (key: strin
         label: row.prefix.trim(),
         count: row.sections.length,
         totalLines: row.totalLines,
-        names: row.sections.map((item) => item.section.name),
+        startLines: row.sections.map((item) => item.section.startLine),
       });
       if (isExpanded(key)) {
         for (const item of row.sections) {
@@ -56,7 +56,7 @@ export function flattenRows(rows: readonly SectionRow[], isExpanded: (key: strin
       label: row.section.name,
       count: row.children.length,
       totalLines: row.totalLines,
-      names: [row.section.name, ...row.children.map((c) => c.section.name)],
+      startLines: [row.section.startLine, ...row.children.map((c) => c.section.startLine)],
     });
     if (isExpanded(key)) {
       for (const child of row.children) {
@@ -67,11 +67,14 @@ export function flattenRows(rows: readonly SectionRow[], isExpanded: (key: strin
   return out;
 }
 
-/** 'all' | 'some' | 'none' selected among `names`, for a group's checkbox state. */
-function groupCheckState(names: readonly string[], isSelected: (name: string) => boolean): 'all' | 'some' | 'none' {
-  const selectedCount = names.filter(isSelected).length;
+/** 'all' | 'some' | 'none' selected among `startLines`, for a group's checkbox state. */
+function groupCheckState(
+  startLines: readonly number[],
+  isSelected: (startLine: number) => boolean,
+): 'all' | 'some' | 'none' {
+  const selectedCount = startLines.filter(isSelected).length;
   if (selectedCount === 0) return 'none';
-  return selectedCount === names.length ? 'all' : 'some';
+  return selectedCount === startLines.length ? 'all' : 'some';
 }
 
 function lineCount(section: SectionEntry): number {
@@ -82,24 +85,36 @@ export interface SectionTreeProps {
   rows: readonly FlatRow[];
   activeStartLine: number;
   focusedKey: string | null;
-  isSelected: (name: string) => boolean;
+  isSelected: (startLine: number) => boolean;
   isExpanded: (key: string) => boolean;
-  onToggle: (name: string) => void;
-  onToggleGroup: (names: readonly string[]) => void;
+  onToggle: (startLine: number) => void;
+  onToggleGroup: (startLines: readonly number[]) => void;
   onToggleExpanded: (key: string) => void;
   onJump: (section: SectionEntry) => void;
   onFocusRow: (key: string) => void;
 }
 
-/** The tree itself — a flat, virtualization-free list (bugreports rarely exceed a few hundred sections). */
+/**
+ * The tree itself — a flat, virtualization-free list (bugreports rarely exceed
+ * a few hundred sections).
+ *
+ * Rows are `div role="treeitem"`, not `button`. Two reasons: HTML forbids
+ * interactive descendants inside a `button`, and the checkbox each row carries
+ * was one; and a native button per row put 586 stops in the tab order for a
+ * large dumpstate, where a tree should expose exactly one. Focus is roving
+ * (`tabIndex` 0 on the focused row, -1 elsewhere), driven by `SectionsPanel`'s
+ * Arrow/Enter/Space handling — which is also what makes the `tabIndex={-1}`
+ * checkbox keyboard-operable (Space on the focused row).
+ */
 export function SectionTree(props: SectionTreeProps) {
+  const rowTabIndex = (key: string): number => (key === props.focusedKey ? 0 : -1);
+
   return (
     <div class={styles.tree} role="tree">
       <For each={props.rows}>
         {(row) =>
           row.type === 'leaf' ? (
-            <button
-              type="button"
+            <div
               class={styles.row}
               classList={{
                 [styles.rowActive]: row.section.startLine === props.activeStartLine,
@@ -108,7 +123,8 @@ export function SectionTree(props: SectionTreeProps) {
               }}
               role="treeitem"
               data-row-key={row.key}
-              aria-selected={props.isSelected(row.section.name)}
+              tabIndex={rowTabIndex(row.key)}
+              aria-level={row.child ? 2 : 1}
               title={getSectionDescription(row.section.name) ?? row.section.name}
               onClick={() => props.onJump(row.section)}
               onFocus={() => props.onFocusRow(row.key)}
@@ -116,21 +132,23 @@ export function SectionTree(props: SectionTreeProps) {
               <input
                 type="checkbox"
                 class={styles.checkbox}
-                checked={props.isSelected(row.section.name)}
+                tabIndex={-1}
+                checked={props.isSelected(row.section.startLine)}
                 onClick={(event) => event.stopPropagation()}
-                onChange={() => props.onToggle(row.section.name)}
+                onChange={() => props.onToggle(row.section.startLine)}
                 aria-label={`Filter to ${row.section.name}`}
               />
               <span class={styles.rowName}>{row.section.name}</span>
               <span class={styles.rowLines}>{lineCount(row.section).toLocaleString()}</span>
-            </button>
+            </div>
           ) : (
-            <button
-              type="button"
+            <div
               class={styles.groupRow}
               classList={{ [styles.rowFocused]: row.key === props.focusedKey }}
               role="treeitem"
               data-row-key={row.key}
+              tabIndex={rowTabIndex(row.key)}
+              aria-level={1}
               aria-expanded={props.isExpanded(row.key)}
               onClick={() => props.onToggleExpanded(row.key)}
               onFocus={() => props.onFocusRow(row.key)}
@@ -138,14 +156,15 @@ export function SectionTree(props: SectionTreeProps) {
               <input
                 type="checkbox"
                 class={styles.checkbox}
-                checked={groupCheckState(row.names, props.isSelected) === 'all'}
+                tabIndex={-1}
+                checked={groupCheckState(row.startLines, props.isSelected) === 'all'}
                 // The native `indeterminate` DOM property has no declarative
                 // JSX form; rather than an imperative ref effect, the partial
                 // state is a plain data attribute the stylesheet paints —
                 // fully declarative, consistent with the rest of this file.
-                data-partial={groupCheckState(row.names, props.isSelected) === 'some' ? '' : undefined}
+                data-partial={groupCheckState(row.startLines, props.isSelected) === 'some' ? '' : undefined}
                 onClick={(event) => event.stopPropagation()}
-                onChange={() => props.onToggleGroup(row.names)}
+                onChange={() => props.onToggleGroup(row.startLines)}
                 aria-label={`Filter to all of ${row.label}`}
               />
               <span class={styles.rowName}>{row.label}</span>
@@ -154,7 +173,7 @@ export function SectionTree(props: SectionTreeProps) {
               <span class={styles.chevron} classList={{ [styles.chevronOpen]: props.isExpanded(row.key) }} aria-hidden="true">
                 {'›'}
               </span>
-            </button>
+            </div>
           )
         }
       </For>

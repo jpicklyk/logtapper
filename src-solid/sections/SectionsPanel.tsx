@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { Show, createEffect, createMemo, createSignal } from 'solid-js';
+import { Show, createEffect, createMemo, createSignal, on, untrack } from 'solid-js';
 import type { JSX } from 'solid-js';
 import { formatDuration, formatTimestamp } from '@fileinfo/formatters';
 import { buildSectionTree, filterSections } from '@fileinfo/sectionTree';
@@ -54,10 +54,19 @@ export function SectionsPanel(props: SectionsPanelProps): JSX.Element {
 
   // Sticky auto-expand: once the cursor lands inside a collapsed group, open
   // it. Mirrors React's `useEffect(() => { if (hasActive) setExpanded(true) })`.
-  createEffect(() => {
-    const key = containingGroupKey(tree(), activeStartLine());
-    if (key && !props.store.isExpanded(key)) props.store.toggleExpanded(key);
-  });
+  //
+  // Tracking only the group *key* is load-bearing. Reading `isExpanded` in the
+  // tracked body subscribed this effect to the same `expanded` signal it
+  // writes, so collapsing the group the cursor sits in re-fired the effect and
+  // re-expanded it immediately — that group could not be closed at all.
+  createEffect(
+    on(
+      () => containingGroupKey(tree(), activeStartLine()),
+      (key) => {
+        if (key && !untrack(() => props.store.isExpanded(key))) props.store.toggleExpanded(key);
+      },
+    ),
+  );
 
   const rows = createMemo<FlatRow[]>(() => flattenRows(tree(), props.store.isExpanded));
 
@@ -89,8 +98,8 @@ export function SectionsPanel(props: SectionsPanelProps): JSX.Element {
   const toggleFocusedCheckbox = (): void => {
     const row = focusedRow();
     if (!row) return;
-    if (row.type === 'leaf') props.store.toggle(row.section.name);
-    else props.store.toggleGroup(row.names);
+    if (row.type === 'leaf') props.store.toggle(row.section.startLine);
+    else props.store.toggleGroup(row.startLines);
   };
 
   const onKeyDown = (event: KeyboardEvent): void => {
@@ -188,9 +197,28 @@ export function SectionsPanel(props: SectionsPanelProps): JSX.Element {
             {(message) => <div class={styles.notice}>{message()}</div>}
           </Show>
 
+          {/* Without this, a rejected `getSections` rendered as "No sections
+              found." — a perfectly good dumpstate reported as empty, with
+              nothing retrying because the fetch effect's dependency never
+              changed again. */}
+          <Show when={props.store.error()}>
+            {(message) => (
+              <div class={styles.error} role="alert" data-testid="sections-error">
+                <span class={styles.errorText}>Could not load sections: {message()}</span>
+                <button type="button" class={styles.retryButton} onClick={() => props.store.retry()}>
+                  Retry
+                </button>
+              </div>
+            )}
+          </Show>
+
           <Show
             when={rows().length > 0}
-            fallback={<p class={styles.empty}>{query() ? 'No sections match.' : 'No sections found.'}</p>}
+            fallback={
+              <Show when={!props.store.error()}>
+                <p class={styles.empty}>{query() ? 'No sections match.' : 'No sections found.'}</p>
+              </Show>
+            }
           >
             <SectionTree
               rows={rows()}

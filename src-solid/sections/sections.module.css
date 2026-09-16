@@ -201,3 +201,33 @@
 .chevronOpen {
   transform: rotate(90deg);
 }
+
+/* ── Fetch error ─────────────────────────────────────────────────────── */
+
+.error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  background: var(--danger-muted);
+  color: var(--danger);
+}
+
+.errorText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.retryButton {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  color: var(--danger);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  padding: 0;
+}

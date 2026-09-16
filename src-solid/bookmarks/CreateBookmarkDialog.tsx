@@ -1,8 +1,8 @@
 /** @jsxImportSource solid-js */
-import { For, createSignal } from 'solid-js';
+import { For, createSignal, createUniqueId, onCleanup, onMount } from 'solid-js';
 import type { JSX } from 'solid-js';
 import type { Bookmark } from '@bridge/types';
-import { BOOKMARK_CATEGORIES } from './bookmarksStore';
+import { BOOKMARK_CATEGORIES, formatLineLabel } from './bookmarksStore';
 import type { CreateBookmarkInput } from './bookmarksStore';
 import styles from './bookmarks.module.css';
 
@@ -18,7 +18,9 @@ export interface CreateBookmarkDialogProps {
  * "Bookmark selection" — a fresh instance mounted (via `<Show>` at the call
  * site, the same pattern `AddAnalyzer` uses) each time the panel opens it, so
  * `initialLine` is read once at construction, not a race with a not-yet-
- * mounted consumer.
+ * mounted consumer. The *session* the bookmark lands in is captured by the
+ * panel at the same moment and closed over by `onCreate`, so a tab switch
+ * while this dialog is open cannot redirect the write.
  *
  * `ViewerController` exposes only `{sessionId, line}` — no selection range —
  * so every bookmark created here is single-line (`endLine` stays unset). A
@@ -27,11 +29,29 @@ export interface CreateBookmarkDialogProps {
  */
 export function CreateBookmarkDialog(props: CreateBookmarkDialogProps): JSX.Element {
   const line = props.initialLine;
+  const titleId = createUniqueId();
 
   const [label, setLabel] = createSignal('');
   const [category, setCategory] = createSignal<string>(BOOKMARK_CATEGORIES[0].id);
   const [note, setNote] = createSignal('');
   const [submitting, setSubmitting] = createSignal(false);
+
+  // Escape-to-close and focus restore, the two things the shell's own drawer
+  // backdrop already does and this dialog did not.
+  const previouslyFocused = typeof document === 'undefined' ? null : (document.activeElement as HTMLElement | null);
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      props.onClose();
+    }
+  };
+  onMount(() => {
+    document.addEventListener('keydown', onKeyDown);
+  });
+  onCleanup(() => {
+    document.removeEventListener('keydown', onKeyDown);
+    previouslyFocused?.focus?.();
+  });
 
   const handleSubmit = async (e: Event): Promise<void> => {
     e.preventDefault();
@@ -47,10 +67,21 @@ export function CreateBookmarkDialog(props: CreateBookmarkDialogProps): JSX.Elem
   };
 
   return (
-    <div class={styles.overlay} data-testid="create-bookmark-dialog">
+    <div
+      class={styles.overlay}
+      data-testid="create-bookmark-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      // Click on the scrim (never on the form itself) dismisses, like the
+      // shell's `drawerBackdrop`.
+      onClick={(event) => { if (event.target === event.currentTarget) props.onClose(); }}
+    >
       <form class={styles.dialog} onSubmit={handleSubmit}>
         <div class={styles.dialogHeader}>
-          <span class={styles.dialogTitle}>Bookmark Line {line + 1}</span>
+          <span class={styles.dialogTitle} id={titleId}>
+            Bookmark {formatLineLabel(line)}
+          </span>
           <button type="button" class={styles.iconButton} onClick={() => props.onClose()} aria-label="Close">
             ×
           </button>
@@ -61,7 +92,7 @@ export function CreateBookmarkDialog(props: CreateBookmarkDialogProps): JSX.Elem
             class={styles.input}
             type="text"
             value={label()}
-            placeholder={`Line ${line + 1}`}
+            placeholder={formatLineLabel(line)}
             autofocus
             onInput={(e) => setLabel(e.currentTarget.value)}
           />
