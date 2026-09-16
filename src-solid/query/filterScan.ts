@@ -33,7 +33,7 @@
  * root down. Nothing here touches the viewer controller — W2b reads `lines()`
  * and forwards it with `controller.setLineSet(sessionId, 'filter', lines)`.
  */
-import { batch, createRoot, createSignal } from 'solid-js';
+import { batch, createRoot, createSignal, untrack } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import { FilterParseError, matchesFilter, parseFilter, extractPackageNames } from '@filter/index';
 import type { FilterNode } from '@filter/index';
@@ -78,6 +78,16 @@ export interface FilterScanDeps {
 /** Default `getLines` window for the fallback scan. Matches React's `BATCH`. */
 export const DEFAULT_PAGE_SIZE = 20_000;
 
+/**
+ * The backend's own per-request cap on `get_filtered_lines`:
+ * `filter.get_page(offset, count.min(MAX_LINES_PAGE))` with
+ * `MAX_LINES_PAGE = 1_000` (`src-tauri/src/services/filters.rs`). A single
+ * request can therefore never satisfy a progress tick that reports more new
+ * matches than this, which is why `handleProgress` pages in a loop and
+ * advances by what each page actually returned.
+ */
+export const MAX_FILTERED_PAGE = 1_000;
+
 /** Fallback scan flushes to `lines()` every N windows (~60K lines). React's `FLUSH_EVERY`. */
 const FLUSH_EVERY = 3;
 
@@ -92,7 +102,17 @@ export class FilterScan {
   readonly error: Accessor<string | null>;
   /** A `FilterParseError` from the expression itself. */
   readonly parseError: Accessor<string | null>;
-  /** The matched set. `null` = no filter active (render everything). */
+  /**
+   * The matched set. `null` = no filter active (render everything).
+   *
+   * Read-only to consumers, and **not** to be retained: a non-null value is
+   * the current generation's live `merged` Set, mutated in place and
+   * republished as matches arrive (M9), so a stored reference keeps changing
+   * under whoever holds it. Copy what you need (`controller.setLineSet`
+   * already materialises its own ascending array). The signal is declared
+   * `equals: false` for exactly this reason — the reference does not change
+   * between flushes, the contents do.
+   */
   readonly lines: Accessor<Set<number> | null>;
 
   private readonly setPhase: (v: FilterScanPhase) => void;
@@ -125,25 +145,24 @@ export class FilterScan {
    */
   private committedAst: FilterNode | null = null;
   /**
-   * The active generation's own scan-confirmed matches — what used to be the
-   * local `matches` array inside `runBackendScan`/`runFallbackScan`, promoted
-   * to a field so `appendMatches` (called from outside those methods) can
-   * flush through the exact same merge as the scan's own progress/completion
-   * flushes, per `flush()`'s doc comment. Reset to `[]` at the top of every
-   * new generation, same moment as `committedAst`.
+   * The active generation's matched line numbers — the scan's own confirmed
+   * matches *and* whatever `appendMatches` reported for live batches, in one
+   * membership `Set` that is **mutated in place** and republished by
+   * `flush()` (M9). It replaced a `scanMatches`/`liveMatches` array pair that
+   * `flush()` re-unioned into a brand-new `Set` on every call: with a broad
+   * filter on a busy capture (200k matches, a batch every ~50 ms) that copied
+   * every match into a fresh `Set` twenty times a second. Appending is now
+   * O(new lines).
+   *
+   * Replaced by a **fresh** `Set` (never cleared in place — a consumer may
+   * still hold the previous instance) at the top of every `setExpression`,
+   * `cancel` and `dispose`, synchronously and before any `await`, same moment
+   * as `committedAst`. That ordering is what stops a stale live batch from
+   * resurrecting a superseded expression's results: by the time a new
+   * generation's scan can publish anything, this Set has already been
+   * replaced for it.
    */
-  private scanMatches: number[] = [];
-  /**
-   * Line numbers reported by `appendMatches` for the *current* generation —
-   * i.e. live batches matched against `committedAst`. Reset to `[]` in the
-   * same place and at the same time as `scanMatches`/`committedAst`, so an
-   * expression change discards any live matches that belonged to the
-   * superseded expression before the new scan's first `flush()` runs. This
-   * is what stops a stale live batch from resurrecting results from an old
-   * scan: by the time a new generation's scan can publish anything, this
-   * array has already been cleared to `[]` for it.
-   */
-  private liveMatches: number[] = [];
+  private merged = new Set<number>();
 
   constructor(deps: FilterScanDeps) {
     this.deps = deps;
@@ -155,7 +174,9 @@ export class FilterScan {
       const [total, setTotal] = createSignal(0);
       const [error, setError] = createSignal<string | null>(null);
       const [parseError, setParseError] = createSignal<string | null>(null);
-      const [lines, setLines] = createSignal<Set<number> | null>(null);
+      // `equals: false`: `flush()` republishes the *same* mutated Set (M9), so
+      // reference equality would swallow every update after the first.
+      const [lines, setLines] = createSignal<Set<number> | null>(null, { equals: false });
       return {
         phase, setPhase, matched, setMatched, total, setTotal,
         error, setError, parseError, setParseError, lines, setLines,
@@ -191,8 +212,7 @@ export class FilterScan {
     // `await` below — see the fields' own doc comments for why the ordering
     // matters.
     this.committedAst = null;
-    this.scanMatches = [];
-    this.liveMatches = [];
+    this.merged = new Set();
 
     if (!expr || !expr.trim()) {
       this.teardownBackendFilter();
@@ -208,7 +228,7 @@ export class FilterScan {
     } catch (e) {
       this.teardownBackendFilter();
       batch(() => {
-        this.setLines(null);
+        this.clearLines();
         this.setMatched(0);
         this.setError(null);
         this.setParseError(e instanceof FilterParseError ? e.message : String(e));
@@ -274,8 +294,7 @@ export class FilterScan {
   cancel(): void {
     this.guard.bump();
     this.committedAst = null;
-    this.scanMatches = [];
-    this.liveMatches = [];
+    this.merged = new Set();
     this.teardownBackendFilter();
     this.clearState('idle');
   }
@@ -286,8 +305,7 @@ export class FilterScan {
     this.disposed = true;
     this.guard.bump();
     this.committedAst = null;
-    this.scanMatches = [];
-    this.liveMatches = [];
+    this.merged = new Set();
     this.teardownBackendFilter();
     this.disposeRoot();
   }
@@ -318,19 +336,18 @@ export class FilterScan {
    * A no-op when there is no committed filter (`currentFilter().ast` is
    * `null`): a live batch matched against an expression that has since been
    * cleared, cancelled or superseded has nothing left to append to.
-   * `committedAst` and `liveMatches` are both reset to their new
-   * generation's values synchronously, before any `await`, at the top of
-   * every `setExpression`/`cancel`/`dispose` call — so by the time a call
-   * here could be "for the old expression", `currentFilter().ast` has
-   * already moved on (or gone `null`) and `liveMatches` has already been
-   * cleared for the new generation. A late call therefore either targets the
-   * live matches that legitimately belong to whatever generation is current
-   * right now, or is silently dropped — it can never resurrect results into
-   * a scan that superseded it.
+   * `committedAst` and `merged` are both reset to their new generation's
+   * values synchronously, before any `await`, at the top of every
+   * `setExpression`/`cancel`/`dispose` call — so by the time a call here
+   * could be "for the old expression", `currentFilter().ast` has already
+   * moved on (or gone `null`) and `merged` has already been replaced for the
+   * new generation. A late call therefore either targets the generation that
+   * is current right now, or is silently dropped — it can never resurrect
+   * results into a scan that superseded it.
    */
   appendMatches(lineNums: number[]): void {
     if (lineNums.length === 0 || this.committedAst === null) return;
-    this.liveMatches.push(...lineNums);
+    for (const lineNum of lineNums) this.merged.add(lineNum);
     this.flush();
   }
 
@@ -358,10 +375,9 @@ export class FilterScan {
       // rejection has nothing to match against (see `currentFilter()`'s
       // contract: `null` on any parse/backend error, not just while idle).
       this.committedAst = null;
-      this.scanMatches = [];
-      this.liveMatches = [];
+      this.merged = new Set();
       batch(() => {
-        this.setLines(null);
+        this.clearLines();
         this.setMatched(0);
         this.setError(e instanceof Error ? e.message : String(e));
         this.setPhase('error');
@@ -394,26 +410,42 @@ export class FilterScan {
         return;
       }
 
-      const newCount = progress.matchedSoFar - lastFetched;
-      if (newCount > 0) {
+      // One request can only ever return `MAX_FILTERED_PAGE` lines (the
+      // backend caps it — see that constant), while a progress tick fires
+      // every 50 000 scanned lines and can report far more new matches than
+      // that. Page in a loop until `lastFetched` has caught up, advancing by
+      // what each page **actually returned**, never by what was asked for:
+      // advancing by the asked-for count is H1, which silently dropped every
+      // match past the first 1000 of each tick (any filter with a >2% hit
+      // rate) while still reporting `phase 'done'`.
+      while (lastFetched < progress.matchedSoFar) {
+        const want = Math.min(progress.matchedSoFar - lastFetched, MAX_FILTERED_PAGE);
+        let page: FilteredLinesResult;
         try {
-          const page = await commands.getFilteredLines(filterId, lastFetched, newCount);
-          if (listenerDone || !this.guard.isCurrent(gen)) return;
-          lastFetched = progress.matchedSoFar;
-
-          // JS second pass: only needed when the backend criteria is a superset
-          // (e.g. backend filtered by level:E but the user also wants
-          // tag:Activity — JS confirms the tag).
-          const confirmed = needsJsPass
-            ? page.lines.filter((line: ViewLine) => matchesFilter(ast, line, this.packagePids))
-            : page.lines;
-
-          if (confirmed.length > 0) {
-            for (const line of confirmed) this.scanMatches.push(line.lineNum);
-            this.flush();
-          }
+          page = await commands.getFilteredLines(filterId, lastFetched, want);
         } catch {
-          // Ignore transient fetch errors; the next progress event retries.
+          // Transient fetch error. `lastFetched` stays put, so the next
+          // progress event refetches this same offset — except on the final
+          // event, which has no next one: that case is reported below.
+          break;
+        }
+        if (listenerDone || !this.guard.isCurrent(gen)) return;
+        // A short (or empty) page means the backend has nothing more to give
+        // for this offset right now; stop rather than spin on it.
+        if (page.lines.length === 0) break;
+        lastFetched += page.lines.length;
+
+        // JS second pass: only needed when the backend criteria is a superset
+        // (e.g. backend filtered by level:E but the user also wants
+        // tag:Activity — JS confirms the tag). It narrows what is *kept*, not
+        // how far the backend's own match cursor advanced.
+        const confirmed = needsJsPass
+          ? page.lines.filter((line: ViewLine) => matchesFilter(ast, line, this.packagePids))
+          : page.lines;
+
+        if (confirmed.length > 0) {
+          for (const line of confirmed) this.merged.add(line.lineNum);
+          this.flush();
         }
       }
 
@@ -423,9 +455,20 @@ export class FilterScan {
         commands.closeFilter(filterId).catch(() => {});
         unlisten?.();
         if (this.unlisten === unlisten) this.unlisten = null;
+        // L10: the final page fetch has no later progress event to retry it,
+        // so a failure (or a short page) here means the result is missing
+        // matches. Say so instead of reporting a clean `done` over a
+        // silently truncated set.
+        const missing = progress.matchedSoFar - lastFetched;
         if (this.guard.isCurrent(gen)) {
           batch(() => {
             this.flush();
+            if (missing > 0) {
+              this.setError(
+                `Incomplete: ${missing.toLocaleString()} of ` +
+                `${progress.matchedSoFar.toLocaleString()} matches could not be loaded.`,
+              );
+            }
             this.setPhase('done');
           });
         }
@@ -454,6 +497,8 @@ export class FilterScan {
     let offset = 0;
     let total = Infinity;
     let batchCount = 0;
+    /** Matches added to `merged` since the last flush — nothing new, nothing to publish. */
+    let pendingSinceFlush = 0;
 
     while (offset < total) {
       if (!this.guard.isCurrent(gen)) return;
@@ -475,13 +520,18 @@ export class FilterScan {
 
       total = window.totalLines;
       this.setTotal(window.totalLines);
+      let foundInWindow = 0;
       for (const line of window.lines) {
-        if (matchesFilter(ast, line, this.packagePids)) this.scanMatches.push(line.lineNum);
+        if (matchesFilter(ast, line, this.packagePids)) {
+          this.merged.add(line.lineNum);
+          foundInWindow++;
+        }
       }
       batchCount++;
-      const isFirstFlush = batchCount === 1 && this.scanMatches.length > 0;
-      if (isFirstFlush || (batchCount % FLUSH_EVERY === 0 && this.scanMatches.length > 0)) {
+      pendingSinceFlush += foundInWindow;
+      if (pendingSinceFlush > 0 && (batchCount === 1 || batchCount % FLUSH_EVERY === 0)) {
         this.flush();
+        pendingSinceFlush = 0;
       }
       offset += window.lines.length;
       if (window.lines.length === 0) break;
@@ -498,27 +548,33 @@ export class FilterScan {
   // ── Internals ───────────────────────────────────────────────────────────
 
   /**
-   * Publish `scanMatches` ∪ `liveMatches` as a fresh Set so consumers see a
-   * new reference. Both accumulators belong to the current generation only —
-   * see their own doc comments — so this can never mix in a superseded
-   * scan's or a stale live batch's results. `matched()` reads the merged
-   * Set's `size`, not either array's `length`, so a line number appearing in
-   * both (a live batch re-confirming something the scan also found) is
-   * counted once.
+   * Republish `merged` — the one accumulator both the scan's own pages and
+   * `appendMatches` add into, so a line number found by both is stored (and
+   * counted) once. It belongs to the current generation only (see its doc
+   * comment), so this can never mix in a superseded scan's or a stale live
+   * batch's results. The Set instance is unchanged between flushes; the
+   * `lines` signal is `equals: false` so subscribers still see every update.
    */
   private flush(): void {
-    const merged = this.liveMatches.length > 0
-      ? new Set([...this.scanMatches, ...this.liveMatches])
-      : new Set(this.scanMatches);
     batch(() => {
-      this.setLines(merged);
-      this.setMatched(merged.size);
+      this.setLines(this.merged);
+      this.setMatched(this.merged.size);
     });
+  }
+
+  /**
+   * Publish "no filter active" — but only when something *is* published.
+   * `lines` is `equals: false` (see its doc comment), so a redundant
+   * null→null write would still notify, reach `controller.setLineSet` and
+   * have its `bump()` reset the viewer's cache for nothing.
+   */
+  private clearLines(): void {
+    if (untrack(this.lines) !== null) this.setLines(null);
   }
 
   private clearState(phase: FilterScanPhase): void {
     batch(() => {
-      this.setLines(null);
+      this.clearLines();
       this.setMatched(0);
       this.setTotal(0);
       this.setError(null);

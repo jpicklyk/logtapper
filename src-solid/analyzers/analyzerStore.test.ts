@@ -7,12 +7,14 @@ import type {
   PipelineProgress,
   PipelineCompleteEvent,
   ChainUpdateEvent,
+  CatalogUpdateEvent,
   ChainState,
   WorkspaceRestoredEvent,
   MatchedLine,
 } from '@bridge/types';
 import {
   createAnalyzerStore,
+  MATCHED_PREVIEW_CAP,
   PII_ANONYMIZER_ID,
   PINNED_TAIL_IDS,
   mergeProcessorResult,
@@ -109,6 +111,7 @@ interface Harness {
   fireChain: (payload: ChainUpdateEvent) => void;
   fireComplete: (payload: PipelineCompleteEvent) => void;
   fireRestored: (payload: WorkspaceRestoredEvent) => void;
+  fireCatalog: (payload: CatalogUpdateEvent) => void;
   setOrder: (ids: string[]) => void;
 }
 
@@ -162,10 +165,16 @@ function mount(commandOverrides: Partial<AnalyzerCommands> = {}, options: MountO
     restoredCb = cb;
     return Promise.resolve(unlistenRestored);
   });
+  const unlistenCatalog = vi.fn();
+  let catalogCb: ((payload: CatalogUpdateEvent) => void) | null = null;
+  const listenCatalog = vi.fn((cb: (payload: CatalogUpdateEvent) => void) => {
+    catalogCb = cb;
+    return Promise.resolve(unlistenCatalog);
+  });
   const sessions: AnalyzerSessions = { order: () => order() };
 
   const store = createAnalyzerStore({
-    sessions, controller, listen, listenChain, listenComplete, listenRestored, commands, chooseFile,
+    sessions, controller, listen, listenChain, listenComplete, listenRestored, listenCatalog, commands, chooseFile,
   });
 
   return {
@@ -181,6 +190,7 @@ function mount(commandOverrides: Partial<AnalyzerCommands> = {}, options: MountO
     fireChain: (payload) => chainCb?.(payload),
     fireComplete: (payload) => completeCb?.(payload),
     fireRestored: (payload) => restoredCb?.(payload),
+    fireCatalog: (payload) => catalogCb?.(payload),
     setOrder: (ids) => setOrderSignal(ids),
   };
 }
@@ -1066,6 +1076,27 @@ describe('analyzerStore', () => {
       expect(store.result('s1')?.summaries[0].processorId).toBe('own');
     });
 
+    it('a completion for a closed session consumes its foreign token, so a reopen is not poisoned (D1-L3)', async () => {
+      const { store, setOrder, fireProgress, fireComplete } = mount();
+      setOrder(['s1']);
+      fireProgress({ sessionId: 's1', processorId: 'a', linesProcessed: 1, totalLines: 10, percent: 10 });
+      expect(store.running('s1')).toBe(true);
+
+      setOrder([]); // the tab closed mid-run
+      await tick();
+      fireComplete(completeEvent('s1')); // dropped — no tab to land it in
+
+      // Same id reopens (session ids are deterministic per path) and an agent
+      // runs the pipeline again. The stale token must not still be sitting in
+      // `foreignRuns` with a generation that no longer matches.
+      setOrder(['s1']);
+      await tick();
+      fireProgress({ sessionId: 's1', processorId: 'a', linesProcessed: 1, totalLines: 10, percent: 10 });
+      fireComplete(completeEvent('s1', { result: runResult('s1', [summary('a', { matchedLines: 3 })]) }));
+      expect(store.summaryFor('s1', 'a')?.matchedLines).toBe(3);
+      expect(store.running('s1')).toBe(false);
+    });
+
     it('a pipeline-complete for an unknown session is dropped', () => {
       const { store, fireComplete } = mount();
       fireComplete(completeEvent('ghost'));
@@ -1109,28 +1140,44 @@ describe('analyzerStore', () => {
       expect(commands.getProcessorVars).toHaveBeenCalledTimes(2);
     });
 
-    it('showMatched sets the filter line set and scrolls to the first match', async () => {
+    it('showMatched sets the MATCHED line set and scrolls to the first match', async () => {
       const lines: MatchedLine[] = [
         { lineNum: 20, raw: 'b' },
         { lineNum: 5, raw: 'a' },
       ];
       const { store, controller } = mount({ getMatchedLines: vi.fn(async () => lines) });
       await store.showMatched('s1', 'a');
-      expect(controller.setLineSet).toHaveBeenCalledWith('s1', 'filter', new Set([5, 20]));
+      // Not `'filter'`: the query bar owns that key, and writing it here threw
+      // away the user's filter (and vice versa) — W1 gave the controller a
+      // dedicated `'matched'` key for exactly this.
+      expect(controller.setLineSet).toHaveBeenCalledWith('s1', 'matched', new Set([5, 20]));
       expect(controller.scrollToLine).toHaveBeenCalledWith('s1', 5, { source: 'user' });
     });
 
-    it('showMatched with no matches sets an empty filter and does not scroll', async () => {
+    it('showMatched with no matches sets an empty matched set and does not scroll', async () => {
       const { store, controller } = mount({ getMatchedLines: vi.fn(async () => []) });
       await store.showMatched('s1', 'a');
-      expect(controller.setLineSet).toHaveBeenCalledWith('s1', 'filter', new Set());
+      expect(controller.setLineSet).toHaveBeenCalledWith('s1', 'matched', new Set());
       expect(controller.scrollToLine).not.toHaveBeenCalled();
     });
 
-    it('clearMatched clears the filter line set', () => {
+    it('clearMatched clears the matched line set, leaving any filter alone', () => {
       const { store, controller } = mount();
       store.clearMatched('s1');
-      expect(controller.setLineSet).toHaveBeenCalledWith('s1', 'filter', null);
+      expect(controller.setLineSet).toHaveBeenCalledWith('s1', 'matched', null);
+      expect(controller.setLineSet).not.toHaveBeenCalledWith('s1', 'filter', null);
+    });
+
+    it('matchedLines caches a digest, not every matched row\'s raw text', async () => {
+      const lines: MatchedLine[] = Array.from({ length: 520 }, (_, i) => ({ lineNum: 519 - i, raw: `raw ${i}` }));
+      const { store } = mount({ getMatchedLines: vi.fn(async () => lines) });
+      const digest = await store.matchedLines('s1', 'a');
+      expect(digest.total).toBe(520);
+      expect(digest.lineNums).toHaveLength(520);
+      expect(digest.lineNums.slice(0, 3)).toEqual([0, 1, 2]); // ascending
+      // Only the rows the drawer can render keep their raw text.
+      expect(digest.preview).toHaveLength(MATCHED_PREVIEW_CAP);
+      expect(digest.preview.every((l) => typeof l.raw === 'string')).toBe(true);
     });
   });
 
@@ -1174,6 +1221,107 @@ describe('analyzerStore', () => {
       expect(store.chain('s1').order).toEqual([]);
       expect(store.chain('s2').order).toEqual(['p2']);
       expect(store.chain('brand-new').order).toEqual([]); // default template lost p1 too
+    });
+
+    it('uninstall PUSHES the pruned chain to every session it changed (D1-M1)', async () => {
+      const { store, commands } = mount({ listProcessors: vi.fn(async () => [processor('p1'), processor('p2')]) });
+      await tick();
+      store.add('s1', 'p1');
+      store.add('s2', 'p1');
+      store.add('s2', 'p2');
+      await tick(); // let the edits' own coalesced pushes land
+      (commands.setSessionPipelineMeta as ReturnType<typeof vi.fn>).mockClear();
+
+      await store.uninstall('p1');
+      await tick();
+
+      // Without this the backend's `session_pipeline_meta` keeps the dangling
+      // id, and an agent reading `GET …/chain` sees a processor that is gone.
+      expect(commands.setSessionPipelineMeta).toHaveBeenCalledWith('s1', [], []);
+      expect(commands.setSessionPipelineMeta).toHaveBeenCalledWith('s2', ['p2'], []);
+    });
+
+    it('a catalog-update uninstall prunes and pushes chains the Packs tab removed behind our back (D1-H4)', async () => {
+      const { store, commands, fireCatalog } = mount({
+        listProcessors: vi.fn(async () => [processor('p1'), processor('p2')]),
+      });
+      await tick();
+      store.add('s1', 'p1');
+      store.add('s1', 'p2');
+      await tick();
+      (commands.setSessionPipelineMeta as ReturnType<typeof vi.fn>).mockClear();
+
+      // `packsStore.uninstallProcessor` goes straight to the backend; this echo
+      // is the only thing that tells this store the id is gone.
+      fireCatalog({ caller: { kind: 'ui' }, action: 'uninstall', ids: ['p1'] });
+      await tick();
+
+      expect(store.chain('s1').order).toEqual(['p2']);
+      expect(commands.setSessionPipelineMeta).toHaveBeenCalledWith('s1', ['p2'], []);
+      // App.tsx owns the single catalog refresh — this listener must not add a second.
+      expect(commands.listProcessors).toHaveBeenCalledTimes(1);
+    });
+
+    it('a catalog-update for an uninstalled PACK prunes its member processors', async () => {
+      const { store, fireCatalog } = mount({
+        listProcessors: vi.fn(async () => [processor('m1'), processor('m2'), processor('other')]),
+        listPacks: vi.fn(async () => [pack('wifi-pack', ['m1', 'm2'])]),
+      });
+      await tick();
+      store.add('s1', 'm1');
+      store.add('s1', 'm2');
+      store.add('s1', 'other');
+
+      fireCatalog({ caller: { kind: 'agent', client: 'claude' }, action: 'uninstall', ids: ['wifi-pack'] });
+
+      expect(store.chain('s1').order).toEqual(['other']);
+    });
+
+    it('a catalog-update that is not an uninstall leaves chains alone', async () => {
+      const { store, commands, fireCatalog } = mount({ listProcessors: vi.fn(async () => [processor('p1')]) });
+      await tick();
+      store.add('s1', 'p1');
+      await tick();
+      (commands.setSessionPipelineMeta as ReturnType<typeof vi.fn>).mockClear();
+
+      fireCatalog({ caller: { kind: 'ui' }, action: 'install', ids: ['p1'] });
+      fireCatalog({ caller: { kind: 'ui' }, action: 'update', ids: ['p1'] });
+      await tick();
+
+      expect(store.chain('s1').order).toEqual(['p1']);
+      expect(commands.setSessionPipelineMeta).not.toHaveBeenCalled();
+    });
+
+    it('an uninstall persists the pruned default template (D1-M2)', async () => {
+      localStorage.setItem('logtapper_pipeline_chain', JSON.stringify(['p1', 'p2']));
+      localStorage.setItem('logtapper_pipeline_disabled', JSON.stringify(['p2']));
+      const { store, fireCatalog } = mount({
+        listProcessors: vi.fn(async () => [processor('p1'), processor('p2')]),
+      });
+      await tick();
+      expect(store.chain('brand-new').order).toEqual(['p1', 'p2']);
+
+      fireCatalog({ caller: { kind: 'ui' }, action: 'uninstall', ids: ['p1'] });
+
+      expect(store.chain('brand-new').order).toEqual(['p2']);
+      // The React app reads these same keys, and a restart used to resurrect p1.
+      expect(JSON.parse(localStorage.getItem('logtapper_pipeline_chain') ?? '[]')).toEqual(['p2']);
+      expect(JSON.parse(localStorage.getItem('logtapper_pipeline_disabled') ?? '[]')).toEqual(['p2']);
+    });
+
+    it('refreshCatalog reports a rejection through catalogError instead of throwing (D1-M9)', async () => {
+      const listProcessors = vi.fn(async () => { throw new Error('ipc down'); });
+      const { store } = mount({ listProcessors: listProcessors as unknown as AnalyzerCommands['listProcessors'] });
+      await tick();
+      // Never a rejection: the construction-time call and App.tsx's
+      // catalog-update refresh are both fire-and-forget.
+      expect(store.catalogError()).toBe('Error: ipc down');
+      expect(store.catalog()).toEqual([]);
+
+      listProcessors.mockImplementation(async () => [processor('p1')] as never);
+      await expect(store.refreshCatalog()).resolves.toBeUndefined();
+      expect(store.catalogError()).toBeNull();
+      expect(store.byId('p1')).toBeTruthy();
     });
   });
 
@@ -1253,6 +1401,14 @@ describe('analyzerStore', () => {
         summary('p2', { matchedLines: 9 }),
       ]);
     });
+
+    it('carries the existing entry\'s run diagnostics over instead of zeroing them', () => {
+      const existing = [summary('p1', { matchedLines: 1, scriptErrors: 2, firstScriptError: 'bad script', scannedFrom: 12 })];
+      const out = mergeProcessorResult(existing, 'p1', 10, 3);
+      expect(out).toEqual([
+        { processorId: 'p1', matchedLines: 10, emissionCount: 3, scriptErrors: 2, scannedFrom: 12, firstScriptError: 'bad script' },
+      ]);
+    });
   });
 
   describe('applyExcludedProcessors (pure)', () => {
@@ -1284,7 +1440,8 @@ describe('analyzerStore', () => {
 
   describe('applyProcessorUpdates / applyProcessorsExcluded (store methods)', () => {
     it('folds live counters into summaryFor with no prior run, and keeps updating them', async () => {
-      const { store } = mount();
+      const { store, setOrder } = mount();
+      setOrder(['s1']);
       expect(store.summaryFor('s1', 'p1')).toBeUndefined();
 
       store.applyProcessorUpdates('s1', [{ sessionId: 's1', processorId: 'p1', matchedLines: 1, emissionCount: 0 }]);
@@ -1295,13 +1452,52 @@ describe('analyzerStore', () => {
     });
 
     it('is a no-op for an empty updates array', async () => {
-      const { store } = mount();
+      const { store, setOrder } = mount();
+      setOrder(['s1']);
       store.applyProcessorUpdates('s1', []);
       expect(store.result('s1')).toBeNull();
     });
 
+    it('drops a live update for a session that is not open (D1-L2)', async () => {
+      const { store, setOrder } = mount();
+      setOrder(['s1']);
+      store.applyProcessorUpdates('s1', [{ sessionId: 's1', processorId: 'p1', matchedLines: 1, emissionCount: 0 }]);
+      expect(store.result('s1')).not.toBeNull();
+
+      setOrder([]); // the capture's tab closed; the prune effect sweeps the row
+      await tick();
+      expect(store.result('s1')).toBeNull();
+
+      // A trailing Channel flush must not resurrect it.
+      store.applyProcessorUpdates('s1', [{ sessionId: 's1', processorId: 'p1', matchedLines: 9, emissionCount: 0 }]);
+      store.applyProcessorsExcluded('s1', [
+        { processorId: 'p1', skip: { reason: 'source_type_mismatch', declared: ['Bugreport'], actual: 'Logcat' } },
+      ]);
+      expect(store.result('s1')).toBeNull();
+    });
+
+    it('an empty exclusion set for a session with no result does not manufacture one (D1-L1)', async () => {
+      const { store, setOrder } = mount();
+      setOrder(['s1']);
+      store.applyProcessorsExcluded('s1', []);
+      // `result() !== null` has to keep meaning "something ran".
+      expect(store.result('s1')).toBeNull();
+    });
+
+    it('an empty exclusion set still clears a stale skip once a result exists', async () => {
+      const { store, setOrder } = mount();
+      setOrder(['s1']);
+      store.applyProcessorsExcluded('s1', [
+        { processorId: 'p1', skip: { reason: 'source_type_mismatch', declared: ['Bugreport'], actual: 'Logcat' } },
+      ]);
+      store.applyProcessorsExcluded('s1', []);
+      expect(store.result('s1')).not.toBeNull();
+      expect(store.summaryFor('s1', 'p1')?.skipped).toBeUndefined();
+    });
+
     it('folds an exclusion set into summaryFor, reachable by AnalyzerCard as `skipped`', async () => {
-      const { store } = mount();
+      const { store, setOrder } = mount();
+      setOrder(['s1']);
       store.applyProcessorsExcluded('s1', [
         { processorId: 'p1', skip: { reason: 'source_type_mismatch', declared: ['Bugreport'], actual: 'Logcat' } },
       ]);
@@ -1309,9 +1505,10 @@ describe('analyzerStore', () => {
     });
 
     it('preserves a prior file-mode run result while layering live updates on top', async () => {
-      const { store } = mount({
+      const { store, setOrder } = mount({
         runPipeline: vi.fn(async (sessionId: string) => runResult(sessionId, [summary('p1', { matchedLines: 2 })])),
       });
+      setOrder(['s1']);
       await store.run('s1');
       expect(store.result('s1')?.effectiveProcessorIds).toEqual(['p1']);
 
@@ -1319,13 +1516,30 @@ describe('analyzerStore', () => {
       expect(store.result('s1')?.effectiveProcessorIds).toEqual(['p1']);
       expect(store.summaryFor('s1', 'p1')?.matchedLines).toBe(7);
     });
+
+    it('a live counter does not erase a post-mortem run\'s script-error diagnostics (D1-L4)', async () => {
+      const { store, setOrder } = mount({
+        runPipeline: vi.fn(async (sessionId: string) =>
+          runResult(sessionId, [summary('p1', { matchedLines: 2, scriptErrors: 3, firstScriptError: 'boom', scannedFrom: 40 })]),
+        ),
+      });
+      setOrder(['s1']);
+      await store.run('s1');
+
+      store.applyProcessorUpdates('s1', [{ sessionId: 's1', processorId: 'p1', matchedLines: 7, emissionCount: 1 }]);
+      const merged = store.summaryFor('s1', 'p1');
+      expect(merged?.matchedLines).toBe(7); // counts are the live ones
+      expect(merged?.scriptErrors).toBe(3); // diagnostics survive
+      expect(merged?.firstScriptError).toBe('boom');
+      expect(merged?.scannedFrom).toBe(40);
+    });
   });
 
   // ── Disposal ─────────────────────────────────────────────────────────────
 
   describe('dispose()', () => {
-    it('unlistens all four subscriptions and ignores further events', async () => {
-      const { store, setOrder, unlisten, unlistenChain, unlistenComplete, unlistenRestored, fireProgress, fireChain, fireComplete } = mount({
+    it('unlistens every subscription and ignores further events', async () => {
+      const { store, setOrder, unlisten, unlistenChain, unlistenComplete, unlistenRestored, fireProgress, fireChain, fireComplete, fireCatalog } = mount({
         runPipeline: vi.fn(() => new Promise<PipelineRunResult>(() => {})),
       });
       setOrder(['s1']);
@@ -1342,6 +1556,7 @@ describe('analyzerStore', () => {
       expect(store.chain('s1').order).toEqual([]);
       expect(() => fireComplete(completeEvent('s1'))).not.toThrow();
       expect(store.result('s1')).toBeNull();
+      expect(() => fireCatalog({ caller: { kind: 'ui' }, action: 'uninstall', ids: ['a'] })).not.toThrow();
     });
 
     it('is idempotent', async () => {
@@ -1373,12 +1588,13 @@ describe('analyzerStore', () => {
         listenChain: () => late,
         listenComplete: () => late,
         listenRestored: () => late,
+        listenCatalog: () => late,
         commands: makeCommands(),
       });
       store.dispose();
       resolveListen(lateUnlisten);
       await tick();
-      expect(lateUnlisten).toHaveBeenCalledTimes(4); // once per late-settling subscription
+      expect(lateUnlisten).toHaveBeenCalledTimes(5); // once per late-settling subscription
     });
   });
 });

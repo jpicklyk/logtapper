@@ -27,7 +27,10 @@ export interface WatchesPanelProps {
 }
 
 interface WatchRowProps {
-  watch: WatchInfo;
+  /** An accessor, not a value: the row is keyed by `watchId` (see the `<For>`
+   *  below), so a `watch-match` count update must reach the *existing* row
+   *  rather than replace it — review C-M5. */
+  watch: () => WatchInfo;
   caller: CallerLike | null;
   onCancel: () => void;
 }
@@ -45,7 +48,7 @@ function WatchRow(props: WatchRowProps): JSX.Element {
   // fetched via `list_watches` after the fact) never flashes.
   createEffect(
     on(
-      () => props.watch.totalMatches,
+      () => props.watch().totalMatches,
       (curr, prev) => {
         if (prev !== undefined && curr > prev) {
           setFlashing(true);
@@ -59,21 +62,24 @@ function WatchRow(props: WatchRowProps): JSX.Element {
   return (
     <div
       class={styles.watchRow}
-      classList={{ [styles.watchRowCancelled]: !props.watch.active }}
+      classList={{ [styles.watchRowCancelled]: !props.watch().active }}
       data-testid="watch-row"
     >
       <span
         class={styles.statusDot}
-        classList={{ [styles.statusDotActive]: props.watch.active, [styles.statusDotCancelled]: !props.watch.active }}
+        classList={{
+          [styles.statusDotActive]: props.watch().active,
+          [styles.statusDotCancelled]: !props.watch().active,
+        }}
       />
-      <CriteriaChips criteria={props.watch.criteria} />
+      <CriteriaChips criteria={props.watch().criteria} />
       <Show when={showBadge()}>
         <CallerBadge caller={props.caller!} />
       </Show>
       <span class={styles.matchCount} classList={{ [styles.matchCountFlash]: flashing() }}>
-        {props.watch.totalMatches.toLocaleString()}
+        {props.watch().totalMatches.toLocaleString()}
       </span>
-      <Show when={props.watch.active}>
+      <Show when={props.watch().active}>
         <Show
           when={confirming()}
           fallback={
@@ -117,9 +123,30 @@ export function WatchesPanel(props: WatchesPanelProps): JSX.Element {
   const [showCreate, setShowCreate] = createSignal(false);
 
   const sessionId = createMemo(() => props.sessions.focusedId());
-  const activeWatches = createMemo(() => (sessionId() ? props.store.active(sessionId()!) : []));
-  const cancelledWatches = createMemo(() => (sessionId() ? props.store.cancelled(sessionId()!) : []));
-  const hasWatches = createMemo(() => activeWatches().length + cancelledWatches().length > 0);
+  // Ids, not `WatchInfo[]` (review C-M5). `<For>` keys by value identity and
+  // `watch-match` replaces the row object on every count update, so iterating
+  // the objects disposed and re-created the row on each match: the flash
+  // effect restarted with `prev === undefined` (so the animation this code
+  // exists for never played) and an in-progress Confirm prompt reset itself
+  // at exactly the moment watches are firing. Ids are stable strings, so the
+  // row survives and reads its own `WatchInfo` back from the store.
+  const activeIds = createMemo(() => (sessionId() ? props.store.activeIds(sessionId()!) : []));
+  const cancelledIds = createMemo(() => (sessionId() ? props.store.cancelledIds(sessionId()!) : []));
+  const hasWatches = createMemo(() => activeIds().length + cancelledIds().length > 0);
+
+  /** A watch by id, for a row that outlives any single `WatchInfo` object.
+   *  Called from the `<For>` body, where the id is by construction still in
+   *  the list. Keeps the last value it saw so the one render between a watch
+   *  disappearing and its row being disposed reads the row it is showing
+   *  rather than throwing. */
+  const watchFor = (watchId: string, sid: string): (() => WatchInfo) => {
+    let last = props.store.byId(sid, watchId)!;
+    return () => {
+      const found = props.store.byId(sid, watchId);
+      if (found) last = found;
+      return last;
+    };
+  };
 
   const handleCreate = async (criteria: FilterCriteria): Promise<void> => {
     const sid = sessionId();
@@ -128,8 +155,8 @@ export function WatchesPanel(props: WatchesPanelProps): JSX.Element {
     setShowCreate(false);
   };
 
-  const handleCancel = (watch: WatchInfo): void => {
-    void props.store.cancel(watch.sessionId, watch.watchId);
+  const handleCancel = (sid: string, watchId: string): void => {
+    void props.store.cancel(sid, watchId);
   };
 
   return (
@@ -142,8 +169,8 @@ export function WatchesPanel(props: WatchesPanelProps): JSX.Element {
           <>
             <header class={styles.header}>
               <span class={styles.headerLabel}>Watches</span>
-              <Show when={activeWatches().length > 0}>
-                <span class={styles.watchCount}>{activeWatches().length}</span>
+              <Show when={activeIds().length > 0}>
+                <span class={styles.watchCount}>{activeIds().length}</span>
               </Show>
               <button
                 type="button"
@@ -167,24 +194,24 @@ export function WatchesPanel(props: WatchesPanelProps): JSX.Element {
             </Show>
 
             <div class={styles.content}>
-              <For each={activeWatches()}>
-                {(w) => (
+              <For each={activeIds()}>
+                {(watchId) => (
                   <WatchRow
-                    watch={w}
-                    caller={props.callerFor?.(w.watchId, sid()) ?? null}
-                    onCancel={() => handleCancel(w)}
+                    watch={watchFor(watchId, sid())}
+                    caller={props.callerFor?.(watchId, sid()) ?? null}
+                    onCancel={() => handleCancel(sid(), watchId)}
                   />
                 )}
               </For>
 
-              <Show when={cancelledWatches().length > 0}>
+              <Show when={cancelledIds().length > 0}>
                 <div class={styles.sectionLabel}>Cancelled</div>
-                <For each={cancelledWatches()}>
-                  {(w) => (
+                <For each={cancelledIds()}>
+                  {(watchId) => (
                     <WatchRow
-                      watch={w}
-                      caller={props.callerFor?.(w.watchId, sid()) ?? null}
-                      onCancel={() => handleCancel(w)}
+                      watch={watchFor(watchId, sid())}
+                      caller={props.callerFor?.(watchId, sid()) ?? null}
+                      onCancel={() => handleCancel(sid(), watchId)}
                     />
                   )}
                 </For>

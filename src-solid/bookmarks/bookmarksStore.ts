@@ -39,7 +39,7 @@
  *   (`styles/tokens.css`), assigned by declared order — one token per
  *   default category, no settings-driven colour picker needed.
  */
-import { createEffect, createRoot, createSignal, getOwner, runWithOwner } from 'solid-js';
+import { createEffect, createRoot, createSignal, getOwner, runWithOwner, untrack } from 'solid-js';
 import type { Accessor, Owner } from 'solid-js';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import {
@@ -85,6 +85,37 @@ export function categoryLabel(id: string): string {
 export function categoryAccentVar(id: string): string {
   const idx = CATEGORY_INDEX.get(id) ?? BOOKMARK_CATEGORIES.length - 1;
   return `var(--bookmark-${idx + 1})`;
+}
+
+/**
+ * Display base for a bookmark line number.
+ *
+ * Backend line numbers are 0-based; the viewer gutter prints `lineNum + 1`
+ * (`viewer/Row.tsx`), so every bookmark surface — the row's line chip, the
+ * create dialog's heading, the default label, and React's markdown export —
+ * shows the 1-based number. The three places that used to restate the `+ 1`
+ * and the `L…–…` format independently now all come through the two helpers
+ * below, so there is one base and one format for this module.
+ *
+ * (Analyses deliberately do NOT share this base: `editor/lineRefs.ts`'s
+ * `lineRefText` must render the *raw* `lineNumber`, because the rehype pass
+ * matches that exact text where it appears in an author's markdown prose.
+ * Unifying the two bases is a change to `editor/`, which this package does not
+ * own — see the implementation notes.)
+ */
+export const LINE_DISPLAY_BASE = 1;
+
+/** `L42` / `L42–46` — the bookmark line chip, in display base. */
+export function formatLineRange(lineNumber: number, endLine?: number | null): string {
+  const start = lineNumber + LINE_DISPLAY_BASE;
+  return endLine != null && endLine > lineNumber
+    ? `L${start}–${endLine + LINE_DISPLAY_BASE}`
+    : `L${start}`;
+}
+
+/** `Line 42` — the create dialog's heading/placeholder and the default label. */
+export function formatLineLabel(lineNumber: number): string {
+  return `Line ${lineNumber + LINE_DISPLAY_BASE}`;
 }
 
 export interface BookmarksCommands {
@@ -135,6 +166,10 @@ export interface CategoryGroup {
 export interface BookmarksStore {
   list(sessionId: string): Bookmark[];
   loading(sessionId: string): boolean;
+  /** The last `listBookmarks` failure for `sessionId`, or `null`. */
+  error(sessionId: string): string | null;
+  /** Clear that error and re-run the fetch for `sessionId`. */
+  retry(sessionId: string): void;
   /** Bookmarks for `sessionId`, grouped by category (declared-order default
    *  categories first, any other ids after), sorted by line within a group. */
   categories(sessionId: string): CategoryGroup[];
@@ -160,7 +195,13 @@ interface SessionBookmarksState {
   setBookmarks: (fn: (prev: Bookmark[]) => Bookmark[]) => void;
   loading: Accessor<boolean>;
   setLoading: (v: boolean) => void;
+  error: Accessor<string | null>;
+  setError: (v: string | null) => void;
 }
+
+/** Stable identity for "this session has no bookmarks (yet)" — a fresh `[]`
+ *  per call would make every consuming memo re-run on every read. */
+const NO_BOOKMARKS: Bookmark[] = [];
 
 /** Union by id, `fetched` winning on a conflict (it is the server's answer).
  *  Any id in `current` but absent from `fetched` is kept — a `bookmark-update`
@@ -178,11 +219,14 @@ function mergeFetched(current: readonly Bookmark[], fetched: readonly Bookmark[]
 function createSessionBookmarksState(): SessionBookmarksState {
   const [bookmarks, setBookmarksSignal] = createSignal<Bookmark[]>([]);
   const [loading, setLoadingSignal] = createSignal(false);
+  const [error, setErrorSignal] = createSignal<string | null>(null);
   return {
     bookmarks,
     setBookmarks: (fn) => setBookmarksSignal((prev) => fn(prev)),
     loading,
     setLoading: (v) => setLoadingSignal(v),
+    error,
+    setError: (v) => setErrorSignal(v),
   };
 }
 
@@ -198,34 +242,70 @@ export function createBookmarksStore(deps: BookmarksStoreDeps): BookmarksStore {
     let disposed = false;
     let unlisten: UnlistenFn | null = null;
 
-    const stateFor = (sessionId: string): SessionBookmarksState => {
+    // `states` is a plain Map, invisible to Solid: every *read* of it goes
+    // through this tick so a consuming memo re-runs when a session's state
+    // appears or is pruned (the `analysesStore.cacheVersion` pattern).
+    const [statesTick, setStatesTick] = createSignal(0);
+
+    const ensureState = (sessionId: string): SessionBookmarksState => {
       let state = states.get(sessionId);
       if (!state) {
         state = runWithOwner(owner, createSessionBookmarksState) as SessionBookmarksState;
         states.set(sessionId, state);
+        setStatesTick((n) => n + 1);
       }
       return state;
     };
 
+    /** Reactive read that never creates — so a render-time read cannot
+     *  resurrect the state the prune sweep below just dropped. */
+    const peekState = (sessionId: string): SessionBookmarksState | null => {
+      statesTick();
+      return states.get(sessionId) ?? null;
+    };
+
+    const [retryTick, setRetryTick] = createSignal(0);
+
     // Fetch once per session id, the first time it is focused — mirrors
     // `sectionsStore.ts`'s fetch effect exactly.
     createEffect(() => {
+      retryTick();
       const id = sessions.focusedId();
       if (!id || disposed || fetchedIds.has(id)) return;
       fetchedIds.add(id);
-      const state = stateFor(id);
+      const state = ensureState(id);
       state.setLoading(true);
       commands
         .listBookmarks(id)
         .then((bookmarks) => {
-          if (!disposed) state.setBookmarks((current) => mergeFetched(current, bookmarks));
+          if (disposed) return;
+          state.setBookmarks((current) => mergeFetched(current, bookmarks));
+          state.setError(null);
         })
-        .catch(() => {
+        .catch((e: unknown) => {
+          if (disposed) return;
+          // Without this the panel showed "No bookmarks yet." and nothing ever
+          // retried: the effect's only dependency (`focusedId`) had not changed.
           fetchedIds.delete(id);
+          state.setError(String(e));
         })
         .finally(() => {
           if (!disposed) state.setLoading(false);
         });
+    });
+
+    // ── Session cleanup ──────────────────────────────────────────────────
+    // The same prune sweep `analyzers/analyzerStore.ts` runs: diff the
+    // per-session records against `sessions.order()` and drop the stale ones.
+    // `app/sessions.ts` removes a session on both a user close and a foreign
+    // (`session-closed`) one, and neither notified this store.
+    createEffect(() => {
+      const known = new Set(sessions.order());
+      for (const id of [...fetchedIds]) if (!known.has(id)) fetchedIds.delete(id);
+      const stale = [...states.keys()].filter((id) => !known.has(id));
+      if (stale.length === 0) return;
+      for (const id of stale) states.delete(id);
+      setStatesTick((n) => n + 1);
     });
 
     /** Which session currently holds this bookmark id, or `null`. Scans the
@@ -239,7 +319,20 @@ export function createBookmarksStore(deps: BookmarksStoreDeps): BookmarksStore {
     };
 
     const applyEvent = (event: BookmarkUpdateEvent): void => {
-      const state = stateFor(event.sessionId);
+      // Membership gate. `applyEvent` used to call `stateFor` unconditionally,
+      // so a `bookmark-update` for a session this UI does not have — an agent's
+      // session, or ours a moment after it closed — minted a fresh
+      // `SessionBookmarksState` that no panel could ever show and
+      // `ownerSessionOf` then scanned on every update/remove, for the app's
+      // lifetime. A `created` needs the session to be open; an
+      // `updated`/`deleted` needs a state that already exists (there is
+      // nothing to update otherwise).
+      if (event.action === 'created') {
+        if (!sessions.byId(event.sessionId)) return;
+      } else if (!states.has(event.sessionId)) {
+        return;
+      }
+      const state = ensureState(event.sessionId);
       switch (event.action) {
         case 'created':
           state.setBookmarks((prev) =>
@@ -262,8 +355,15 @@ export function createBookmarksStore(deps: BookmarksStoreDeps): BookmarksStore {
       else unlisten = fn;
     });
 
-    const list = (sessionId: string): Bookmark[] => stateFor(sessionId).bookmarks();
-    const loading = (sessionId: string): boolean => stateFor(sessionId).loading();
+    const list = (sessionId: string): Bookmark[] => peekState(sessionId)?.bookmarks() ?? NO_BOOKMARKS;
+    const loading = (sessionId: string): boolean => peekState(sessionId)?.loading() ?? false;
+    const error = (sessionId: string): string | null => peekState(sessionId)?.error() ?? null;
+
+    const retry = (sessionId: string): void => {
+      fetchedIds.delete(sessionId);
+      untrack(() => states.get(sessionId)?.setError(null));
+      setRetryTick((n) => n + 1);
+    };
 
     const categories = (sessionId: string): CategoryGroup[] => {
       const sorted = [...list(sessionId)].sort((a, b) => a.lineNumber - b.lineNumber);
@@ -286,7 +386,7 @@ export function createBookmarksStore(deps: BookmarksStoreDeps): BookmarksStore {
     };
 
     const create = (sessionId: string, input: CreateBookmarkInput): Promise<Bookmark> => {
-      const label = input.label?.trim() || `Line ${input.line + 1}`;
+      const label = input.label?.trim() || formatLineLabel(input.line);
       return commands
         .createBookmark(
           sessionId,
@@ -300,7 +400,7 @@ export function createBookmarksStore(deps: BookmarksStoreDeps): BookmarksStore {
         )
         .then((bookmark) => {
           if (!disposed) {
-            stateFor(sessionId).setBookmarks((prev) =>
+            ensureState(sessionId).setBookmarks((prev) =>
               prev.some((b) => b.id === bookmark.id) ? prev : [...prev, bookmark],
             );
           }
@@ -312,25 +412,29 @@ export function createBookmarksStore(deps: BookmarksStoreDeps): BookmarksStore {
       const sessionId = ownerSessionOf(bookmarkId);
       if (!sessionId) return Promise.reject(new Error(`Unknown bookmark: ${bookmarkId}`));
       return commands.updateBookmark(sessionId, bookmarkId, patch.label, patch.note, patch.category).then((bookmark) => {
-        if (!disposed) stateFor(sessionId).setBookmarks((prev) => prev.map((b) => (b.id === bookmark.id ? bookmark : b)));
+        if (!disposed) ensureState(sessionId).setBookmarks((prev) => prev.map((b) => (b.id === bookmark.id ? bookmark : b)));
         return bookmark;
       });
     };
 
     const remove = (bookmarkId: string): Promise<void> => {
       const sessionId = ownerSessionOf(bookmarkId);
-      if (!sessionId) return Promise.resolve();
+      // Symmetric with `update`: resolving here told a caller the delete
+      // succeeded when nothing was ever sent to the backend, so a UI that
+      // closes its confirmation on resolve reported a deletion that did not
+      // happen.
+      if (!sessionId) return Promise.reject(new Error(`Unknown bookmark: ${bookmarkId}`));
       return commands.deleteBookmark(sessionId, bookmarkId).then(() => {
-        if (!disposed) stateFor(sessionId).setBookmarks((prev) => prev.filter((b) => b.id !== bookmarkId));
+        if (!disposed) ensureState(sessionId).setBookmarks((prev) => prev.filter((b) => b.id !== bookmarkId));
       });
     };
 
     const exportMarkdown = (sessionId: string): string => {
       const entry = sessions.byId(sessionId);
-      return exportBookmarksAsMarkdown(list(sessionId), {
-        sourceName: entry?.load.sourceName,
-        totalLines: entry?.totalLines,
-      });
+      // `totalLines` was copied from the React call site but
+      // `exportBookmarksAsMarkdown` never reads it — `ExportContext.sourceName`
+      // is the only field with an effect.
+      return exportBookmarksAsMarkdown(list(sessionId), { sourceName: entry?.load.sourceName });
     };
 
     const jumpTo = (bookmark: Bookmark): void => {
@@ -354,6 +458,6 @@ export function createBookmarksStore(deps: BookmarksStoreDeps): BookmarksStore {
       disposeRoot();
     };
 
-    return { list, loading, categories, create, update, remove, exportMarkdown, jumpTo, cursorLine, dispose };
+    return { list, loading, error, retry, categories, create, update, remove, exportMarkdown, jumpTo, cursorLine, dispose };
   });
 }

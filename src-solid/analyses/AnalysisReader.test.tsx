@@ -27,6 +27,7 @@ function fakeStore(overrides: {
     list: () => (selected() ? [selected()!] : []),
     loading: () => false,
     error: () => null,
+    retry: vi.fn(),
     labels: () => labels,
     selectedId: () => selected()?.id ?? null,
     selected,

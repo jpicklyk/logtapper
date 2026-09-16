@@ -139,6 +139,14 @@
   color: var(--accent);
 }
 
+/* Agent-authored markdown can embed a `data:` image (remote ones are blocked
+   by the Tauri CSP, `data:` is not), and an unconstrained one overflows the
+   pane and pushes the rest of the analysis off-screen — review B-L14. */
+.prose :global(img) {
+  max-width: 100%;
+  height: auto;
+}
+
 .prose :global(code) {
   padding: 1px 4px;
   font-family: var(--font-mono);

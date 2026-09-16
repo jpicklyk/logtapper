@@ -4,9 +4,10 @@
  * Everything outside `src-solid/analyzers/` imports from this barrel only.
  */
 
-export { createAnalyzerStore, PII_ANONYMIZER_ID, PINNED_TAIL_IDS } from './analyzerStore';
+export { createAnalyzerStore, MATCHED_PREVIEW_CAP, PII_ANONYMIZER_ID, PINNED_TAIL_IDS } from './analyzerStore';
 export type {
   AnalyzerStore,
+  MatchedLineDigest,
   AnalyzerStoreDeps,
   AnalyzerSessions,
   AnalyzerController,

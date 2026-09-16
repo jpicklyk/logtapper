@@ -10,6 +10,17 @@ import styles from './LogViewer.module.css';
 /**
  * One absolutely-positioned row of the virtual window.
  *
+ * Two coordinate systems meet here and must not be confused:
+ *  - `virtualBase + index` is the **rendered index** — the row's position in
+ *    whatever the data source is currently showing. It is the click identity
+ *    (`data-line`, `onLineClick`) and the selection key, exactly as React's
+ *    `lineNumOverride` is.
+ *  - `line().lineNum` is the **absolute backend line number**. It is what the
+ *    gutter prints, so a filtered view reads 61 234 rather than 1 — matching
+ *    what a bookmark, an agent's `lines_around` and an exported `.lts` say.
+ *  Skeleton rows have no `ViewLine` yet and fall back to the positional number,
+ *  as React's `TextLineSkeleton` does.
+ *
  * Reads its line through a `createMemo` keyed on `cacheVersion`: bumping the
  * version re-runs every row's memo, but a memo only notifies downstream when
  * its value changes by reference, so an append repaints only the rows whose
@@ -55,6 +66,9 @@ export function Row(props: RowProps) {
     return props.dataSource.getLine(lineNum());
   });
 
+  /** Absolute backend line number once the line resolves; positional until then. */
+  const shownLineNum = () => line()?.lineNum ?? lineNum();
+
   const highlights = createMemo<HighlightSpan[]>(() => {
     const l = line();
     if (!l) return [];
@@ -69,6 +83,8 @@ export function Row(props: RowProps) {
     <div
       class={styles.row}
       style={style()}
+      role="row"
+      aria-rowindex={lineNum() + 1}
       data-line={lineNum()}
       data-level={line()?.level}
       data-selected={props.selected ? '' : undefined}
@@ -76,12 +92,14 @@ export function Row(props: RowProps) {
       data-skeleton={line() ? undefined : ''}
       onClick={(e) => props.onLineClick(lineNum(), e)}
     >
-      <span class={styles.lineNum}>{String(lineNum() + 1).padStart(7, ' ')}</span>
-      <Show when={line()} fallback={<span class={styles.skeletonBar} />}>
+      <span class={styles.lineNum} role="gridcell">
+        {String(shownLineNum() + 1).padStart(7, ' ')}
+      </span>
+      <Show when={line()} fallback={<span class={styles.skeletonBar} role="gridcell" />}>
         {(l) => (
           <>
-            <span class={styles.level}>{LEVEL_LETTER[l().level] ?? ' '}</span>
-            <span class={styles.msg}>
+            <span class={styles.level} role="gridcell">{LEVEL_LETTER[l().level] ?? ' '}</span>
+            <span class={styles.msg} role="gridcell">
               <HighlightedText text={l().raw} highlights={highlights()} />
             </span>
           </>

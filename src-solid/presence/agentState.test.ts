@@ -227,3 +227,35 @@ describe('createAgentState', () => {
     expect(stateAtDispose).toBe('reading');
   });
 });
+
+describe('createAgentState activity effect (C-L3)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('re-reads the journal only when the journal changes, not on hold/decay transitions', () => {
+    let reads = 0;
+    const [entries, setEntries] = createSignal<ActivityEntry[]>([]);
+    const tracked = () => {
+      reads += 1;
+      return entries();
+    };
+    const controller = createAgentState({
+      bridgeStatus: () => CONNECTED,
+      agentRawAccess: () => false,
+      activity: tracked,
+    });
+
+    setEntries([agentEntry('query.lines')]);
+    const afterFeed = reads;
+    expect(controller.state()).toBe('reading');
+
+    // The hold expiring and the decay firing both write `activityState`, which
+    // `feed()` reads. Without the untrack the effect subscribes to its own write
+    // and re-walks the whole journal on each of these.
+    vi.advanceTimersByTime(HOLD_MS + DECAY_MS + 100);
+    expect(controller.state()).toBe('idle');
+    expect(reads).toBe(afterFeed);
+
+    controller.dispose();
+  });
+});

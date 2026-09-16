@@ -2,6 +2,11 @@
 import { createSignal, For, onMount } from 'solid-js';
 import type { JSX } from 'solid-js';
 import type { CombineMode, FilterCriteria, LogLevel } from '@bridge/types';
+// The "nothing set" base every partial-criteria literal spreads onto. Owned by
+// `query/` and exported from its barrel — this form used to re-literalise the
+// same eight nullable fields, which is exactly the drift `@bridge/CLAUDE.md`'s
+// `T | null` policy warns about.
+import { EMPTY_CRITERIA } from '../query';
 import styles from './watches.module.css';
 
 export interface CreateWatchFormProps {
@@ -44,16 +49,9 @@ export function CreateWatchForm(props: CreateWatchFormProps): JSX.Element {
   };
 
   const buildCriteria = (): FilterCriteria | null => {
-    const criteria: FilterCriteria = {
-      textSearch: null,
-      regex: null,
-      logLevels: null,
-      tags: null,
-      timeStart: null,
-      timeEnd: null,
-      pids: null,
-      combine: 'and',
-    };
+    // Spread, never alias: `EMPTY_CRITERIA` is a shared module-level object
+    // and the assignments below mutate `criteria` in place.
+    const criteria: FilterCriteria = { ...EMPTY_CRITERIA };
     let anySet = false;
     if (textSearch().trim()) { criteria.textSearch = textSearch().trim(); anySet = true; }
     if (regex().trim()) { criteria.regex = regex().trim(); anySet = true; }

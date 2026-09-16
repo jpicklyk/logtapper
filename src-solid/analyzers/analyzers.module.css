@@ -73,6 +73,16 @@
   flex: 0 0 auto;
 }
 
+/* A failed run. `.banner`'s warning colours are for "some analyzers did not
+   apply"; a rejected run is an error the user has to act on. */
+.errorBanner {
+  padding: 6px 8px;
+  background: var(--danger-muted);
+  color: var(--danger);
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+
 .empty {
   display: flex;
   flex-direction: column;

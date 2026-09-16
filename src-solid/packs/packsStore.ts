@@ -151,6 +151,11 @@ export interface UpdateAllOutcome {
 export interface PacksStore {
   // ── Sources (read-only passthrough — see module doc) ────────────────────
   sources: Accessor<Source[]>;
+  /** Ask the owner (`settingsStore`) to re-read the configured sources.
+   *  This store never writes them — but the Packs tab is the one surface that
+   *  can open before anything has loaded them, and it has no other handle on
+   *  `settingsStore` (D1-H1). A no-op when the host wired no `refreshSources`. */
+  refreshSources(): void;
 
   // ── Browse ───────────────────────────────────────────────────────────────
   selectedSource: Accessor<string | null>;
@@ -190,6 +195,11 @@ export interface PacksStore {
   updatesLoading: Accessor<boolean>;
   /** Sources that failed to fetch during the last `checkUpdates()`. */
   updateErrors: Accessor<SourceError[]>;
+  /** A `checkUpdates()` that failed outright (rather than per-source), or
+   *  `null`. Distinct from {@link updateErrors}, which only ever comes from a
+   *  *successful* check's payload — without this a wholesale failure was
+   *  indistinguishable from "everything is up to date" (D1-M12). */
+  updatesError: Accessor<string | null>;
   checkUpdates(): Promise<void>;
   updateOne(processorId: string): Promise<void>;
   updateAllFromSource(sourceName: string): Promise<void>;
@@ -233,6 +243,7 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
   const [pendingPackUpdates, setPendingPackUpdates] = createSignal<PackUpdateAvailable[]>([]);
   const [updatesLoading, setUpdatesLoading] = createSignal(false);
   const [updateErrors, setUpdateErrors] = createSignal<SourceError[]>([]);
+  const [updatesError, setUpdatesError] = createSignal<string | null>(null);
 
   const [updatePromptOpen, setUpdatePromptOpen] = createSignal(false);
   const [updatingAll, setUpdatingAll] = createSignal(false);
@@ -313,7 +324,13 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
     });
     return run()
       .then(async (value) => {
-        await refreshInstalled();
+        // A refresh failure is NOT the mutation's failure (D1-M11): left
+        // unguarded, a `listPacks()`/`listProcessors()` that rejected *after* a
+        // successful install landed in `itemErrors[id]`, so the card showed an
+        // install error under a pack that had installed fine. The stale
+        // installed set is the only real consequence, and the next successful
+        // refresh (or the `catalog-update` echo) corrects it.
+        await refreshInstalled().catch(() => undefined);
         return value;
       })
       .catch((e: unknown) => {
@@ -347,7 +364,10 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
     withMutation(processorId, () => commands.uninstallProcessor(processorId));
 
   const checkUpdates = async (): Promise<void> => {
-    setUpdatesLoading(true);
+    batch(() => {
+      setUpdatesLoading(true);
+      setUpdatesError(null);
+    });
     try {
       const result = await commands.checkUpdates();
       if (disposed) return;
@@ -359,8 +379,17 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
       });
       await commands.saveSourcesToDisk();
       deps.refreshSources?.();
-    } catch {
-      if (!disposed) setUpdatesLoading(false);
+    } catch (e) {
+      // The check failed as a whole (no index to parse, IPC refused, the
+      // save-back threw) — `updateErrors` stays empty because that list only
+      // describes a check that *did* return, so the failure needs its own
+      // channel or it renders as "No pending updates." (D1-M12).
+      if (!disposed) {
+        batch(() => {
+          setUpdatesError(String(e));
+          setUpdatesLoading(false);
+        });
+      }
     }
   };
 
@@ -493,6 +522,7 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
 
   return {
     sources: deps.sources,
+    refreshSources: () => deps.refreshSources?.(),
     selectedSource,
     entries,
     packEntries,
@@ -512,6 +542,7 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
     pendingPackUpdates,
     updatesLoading,
     updateErrors,
+    updatesError,
     checkUpdates,
     updateOne,
     updateAllFromSource,

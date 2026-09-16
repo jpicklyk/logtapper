@@ -185,6 +185,64 @@ describe('createStreamSession', () => {
     dispose();
   });
 
+  // ── Re-entrancy (M5) ─────────────────────────────────────────────────────
+  it('ignores a second start() issued while the first is still in flight', async () => {
+    // `currentSessionId` is only assigned after `startAdbStream` resolves, so
+    // without a latch the second call's "stop the previous stream" guard sees
+    // null and starts a second backend stream nothing will ever stop.
+    type Load = ReturnType<typeof makeLoadResult>;
+    const resolvers: Array<(v: Load) => void> = [];
+    startAdbStreamMock.mockImplementation(
+      () => new Promise<Load>((resolve) => { resolvers.push(resolve); }),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { session, dispose } = mount();
+
+    const first = session.start('emulator-5554');
+    const second = session.start('emulator-5554'); // double-click / bench race
+
+    expect(startAdbStreamMock).toHaveBeenCalledTimes(1);
+    await second;
+
+    resolvers[0]!(makeLoadResult());
+    await first;
+
+    expect(session.status()).toMatchObject({ phase: 'streaming', sessionId: 's1' });
+    // Exactly one backend stream exists, so exactly one stop reaches it.
+    await session.stop();
+    expect(stopAdbStreamMock).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalled();
+
+    warn.mockRestore();
+    dispose();
+  });
+
+  it('accepts a start() issued after the previous one settled', async () => {
+    captureOnEvent();
+    const { session, dispose } = mount();
+
+    await session.start('emulator-5554');
+    await session.start('emulator-5554');
+
+    // The second start stops the first stream and opens a new one.
+    expect(startAdbStreamMock).toHaveBeenCalledTimes(2);
+    expect(stopAdbStreamMock).toHaveBeenCalledTimes(1);
+    dispose();
+  });
+
+  it('releases the latch when the first start() fails', async () => {
+    startAdbStreamMock.mockRejectedValueOnce(new Error('no devices'));
+    const { session, dispose } = mount();
+
+    await session.start();
+    expect(session.status()).toMatchObject({ phase: 'error' });
+
+    captureOnEvent();
+    await session.start('emulator-5554');
+    expect(session.status()).toMatchObject({ phase: 'streaming' });
+    dispose();
+  });
+
   it('surfaces a start() failure as an error status without throwing', async () => {
     startAdbStreamMock.mockRejectedValue(new Error('no devices'));
     const { session, dispose } = mount();

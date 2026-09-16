@@ -155,11 +155,18 @@ export function EditorTab(props: EditorTabProps) {
         // mode the user picked in the select (phase 2b smoke finding). Tracked
         // by hand because a deferred `on` reports no previous input on its
         // first run.
-        if ((path ?? null) !== lastPath) {
+        const pathChanged = (path ?? null) !== lastPath;
+        if (pathChanged) {
           lastPath = path ?? null;
           setMode(props.mode ?? modeForPath(path));
         }
         editor?.setValue(content ?? '');
+        // A different document is clean by definition. `setValue` only
+        // re-baselines when the text actually changed (review B-M8), so the
+        // corner where the incoming file happens to be byte-identical to the
+        // buffer it replaces needs the baseline stated explicitly — otherwise
+        // the new document inherits the old one's dirty flag.
+        if (pathChanged) editor?.markSaved();
         setValue(content ?? '');
         syncDirty();
       },

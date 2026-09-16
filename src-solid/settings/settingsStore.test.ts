@@ -115,3 +115,100 @@ describe('settingsStore', () => {
     store.dispose();
   });
 });
+
+describe('settingsStore error channel (D1-H3)', () => {
+  it('records a rejected mutation, clears it on the next attempt, and on clearError()', async () => {
+    let fail = true;
+    const setAgentRawAccess = vi.fn(() => (fail ? Promise.reject(new Error('backend said no')) : Promise.resolve()));
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { setAgentRawAccess } });
+
+    expect(store.error()).toBeNull();
+    await expect(store.setAgentRawAccess(true)).rejects.toThrow('backend said no');
+    expect(store.error()).toContain('backend said no');
+
+    store.clearError();
+    expect(store.error()).toBeNull();
+
+    // A failure recorded by one write must not outlive the retry that succeeds.
+    await expect(store.setAgentRawAccess(true)).rejects.toThrow();
+    expect(store.error()).not.toBeNull();
+    fail = false;
+    await store.setAgentRawAccess(false);
+    expect(store.error()).toBeNull();
+
+    store.dispose();
+  });
+
+  it('a rejected allowlist write keeps its message while the rollback refresh runs', async () => {
+    const getMcpOpenAllowlist = vi.fn(() => Promise.resolve({ allowedDirs: ['C:/logs'], allowAll: false }));
+    const setMcpOpenAllowlist = vi.fn(() => Promise.reject(new Error('policy gate: NOT_ALLOWED')));
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { getMcpOpenAllowlist, setMcpOpenAllowlist } });
+    store.refreshAllowlist();
+    await vi.waitFor(() => expect(store.allowlist()).not.toBeNull());
+
+    await expect(store.addAllowDir('D:/captures')).rejects.toThrow();
+    // The rollback re-read must not wipe the reason the write failed.
+    await vi.waitFor(() => expect(store.allowlist()?.allowedDirs).toEqual(['C:/logs']));
+    expect(store.error()).toContain('NOT_ALLOWED');
+
+    store.dispose();
+  });
+});
+
+describe('settingsStore security-toggle freshness (D1-M6)', () => {
+  it('re-reads McpStatus after setAgentRawAccess, whether it resolves or rejects', async () => {
+    const refreshMcpStatus = vi.fn();
+    let fail = false;
+    const setAgentRawAccess = vi.fn(() => (fail ? Promise.reject(new Error('nope')) : Promise.resolve()));
+    const store = createSettingsStore({ mcpStatus: noStatus(), refreshMcpStatus, commands: { setAgentRawAccess } });
+
+    await store.setAgentRawAccess(true);
+    expect(refreshMcpStatus).toHaveBeenCalledTimes(1);
+
+    fail = true;
+    await expect(store.setAgentRawAccess(false)).rejects.toThrow('nope');
+    // The rejected case is the one that matters: without a re-read the checkbox
+    // stays visually flipped for up to a poll interval while agents still get raw text.
+    expect(refreshMcpStatus).toHaveBeenCalledTimes(2);
+
+    store.dispose();
+  });
+
+  it('re-reads McpStatus after the bridge toggle', async () => {
+    const refreshMcpStatus = vi.fn();
+    const startMcpBridge = vi.fn(() => Promise.resolve());
+    const store = createSettingsStore({ mcpStatus: noStatus(), refreshMcpStatus, commands: { startMcpBridge } });
+    await store.setMcpBridgeEnabled(true);
+    expect(refreshMcpStatus).toHaveBeenCalledTimes(1);
+    store.dispose();
+  });
+
+  it('builds without a refreshMcpStatus dep', async () => {
+    const setAgentRawAccess = vi.fn(() => Promise.resolve());
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { setAgentRawAccess } });
+    await expect(store.setAgentRawAccess(true)).resolves.toBeUndefined();
+    store.dispose();
+  });
+});
+
+describe('settingsStore bridge preference (D1-M5)', () => {
+  it('exposes the persisted preference, seeded from storage and updated by a successful toggle', async () => {
+    const storage = memoryStorage({ logtapper_settings: JSON.stringify({ mcpBridgeEnabled: true }) });
+    const startMcpBridge = vi.fn(() => Promise.resolve());
+    const stopMcpBridge = vi.fn(() => Promise.resolve());
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { startMcpBridge, stopMcpBridge }, storage });
+
+    expect(store.mcpBridgeEnabled()).toBe(true);
+    await store.setMcpBridgeEnabled(false);
+    expect(store.mcpBridgeEnabled()).toBe(false);
+    store.dispose();
+  });
+
+  it('leaves the preference untouched when the toggle rejects', async () => {
+    const startMcpBridge = vi.fn(() => Promise.reject(new Error('port in use')));
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { startMcpBridge }, storage: memoryStorage() });
+    await expect(store.setMcpBridgeEnabled(true)).rejects.toThrow();
+    expect(store.mcpBridgeEnabled()).toBe(false);
+    store.dispose();
+  });
+});

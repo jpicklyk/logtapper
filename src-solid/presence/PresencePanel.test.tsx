@@ -41,11 +41,13 @@ function fakeStore(overrides: Partial<McpStatus> = {}) {
     hold: [] as number[],
     dismiss: [] as number[],
     clearFocus: 0,
+    refreshStatus: 0,
     setRequireConfirm: [] as boolean[],
   };
 
   const store: PresenceStore = {
     status,
+    refreshStatus: () => { calls.refreshStatus += 1; },
     agentRawAccess,
     entries,
     focus,

@@ -56,10 +56,21 @@ function makeCommands(): WatchesCommands {
   };
 }
 
-/** A minimal `SessionStore` double — this store only ever reads `focusedId()`. */
+/** A minimal `SessionStore` double — this store reads `focusedId()` and
+ *  `order()` (the latter for the C-L5 prune sweep). Focusing an id implicitly
+ *  "opens" it, so every pre-existing test keeps its session in `order()`
+ *  without restating it; `close()` is what drives the prune. */
 function fakeSessions() {
   const [focusedId, setFocusedId] = createSignal<string | null>(null);
-  return { store: { focusedId } as unknown as SessionStore, setFocused: setFocusedId };
+  const [order, setOrder] = createSignal<readonly string[]>([]);
+  return {
+    store: { focusedId, order } as unknown as SessionStore,
+    setFocused: (id: string | null) => {
+      if (id !== null && !order().includes(id)) setOrder((prev) => [...prev, id]);
+      setFocusedId(id);
+    },
+    close: (id: string) => setOrder((prev) => prev.filter((x) => x !== id)),
+  };
 }
 
 /** Drain enough microtasks for the store's promise chains to settle. */

@@ -296,7 +296,7 @@ export default tseslint.config(
           // inert. Extend the alternation, by exact file path, to widen it.
           {
             regex:
-              '^@hooks/(?!useLogViewer/multiSessionImport$|workspace/appStatePayload$|workspace/reconcileWorkspaceList$|workspace/restorePlan$|workspace/artifactPairing$|workspace/startupFile$|pipelineChainStorage$).*',
+              '^@hooks/(?!useLogViewer/multiSessionImport$|workspace/appStatePayload$|workspace/reconcileWorkspaceList$|workspace/restorePlan$|workspace/artifactPairing$|workspace/startupFile$|workspace/restoreTrust$|pipelineChainStorage$).*',
             message:
               'Only the framework-free files on the @hooks allow-list are shared with src-solid/ — the rest of src-next/hooks/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
           },
@@ -343,6 +343,14 @@ export default tseslint.config(
             regex: '^@bookmarkPanel/(?!exportMarkdown$).*',
             message:
               'Only exportMarkdown (framework-free) is shared with src-solid/ — the rest of BookmarkPanel/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
+          },
+          // Same pattern, for the one framework-free file under
+          // `src-next/components/LogViewer/` — the absolute-line ↔
+          // rendered-index binary search the Solid viewer reuses verbatim.
+          {
+            regex: '^@logviewer/(?!scrollMapping$).*',
+            message:
+              'Only scrollMapping (framework-free) is shared with src-solid/ — the rest of components/LogViewer/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
           },
           {
             group: ['@tauri-apps/api/core'],

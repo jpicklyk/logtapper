@@ -96,9 +96,27 @@ export function createVirtualBase(options: VirtualBaseOptions): VirtualBase {
   }
 
   // ── Reset (or restore) the virtual window when the data source changes ──
+  // `CacheDataSource.sourceId` is `${sessionId}:${'filtered' | 'full'}`, so a
+  // change means one of two very different things:
+  //
+  //  - the *session* changed: restore that session's saved window position.
+  //  - only the line-set half flipped (a filter applied or cleared, same
+  //    session): the saved position is a **file-line** offset and is nonsense in
+  //    the new rendered index space. Restoring it on a 4 M-line file (saved base
+  //    ≈ 2.2 M) against a 120-match filter leaves `renderCount` clamped to 0 —
+  //    a permanently blank viewer with no way back but closing the tab. Reset.
+  const sourceSession = (id: string): string => {
+    const i = id.lastIndexOf(':');
+    return i === -1 ? id : id.slice(0, i);
+  };
+
+  let previousSourceId = untrack(sourceId);
   createEffect(
-    on(sourceId, () => {
-      setVirtualBase(untrack(restorePoint));
+    on(sourceId, (id) => {
+      const previous = previousSourceId;
+      previousSourceId = id;
+      const lineSetFlipped = id !== previous && sourceSession(id) === sourceSession(previous);
+      setVirtualBase(lineSetFlipped ? 0 : untrack(restorePoint));
       pendingScrollTarget.value = null;
     }),
   );

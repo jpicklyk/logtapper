@@ -2,8 +2,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render } from '@solidjs/testing-library';
+import { createSignal } from 'solid-js';
 import type { ActivityEntry } from '@bridge/types';
-import { ActivityFeed, actionLabel, groupBySession, navTargetFor, relativeTime } from './ActivityFeed';
+import { ActivityFeed, CLOCK_TICK_MS, actionLabel, groupBySession, navTargetFor, relativeTime } from './ActivityFeed';
 
 // vitest `globals` is off, so the library's auto-cleanup never registers.
 afterEach(cleanup);
@@ -155,5 +156,81 @@ describe('<ActivityFeed>', () => {
       <ActivityFeed entries={[]} sessionName={sessionName} now={() => NOW} />
     ));
     expect(container.textContent).toContain('No agent activity yet.');
+  });
+});
+
+describe('<ActivityFeed> DOM identity (C-M6)', () => {
+  it('keeps the existing group and row nodes when a new entry arrives', () => {
+    const [entries, setEntries] = createSignal<readonly ActivityEntry[]>([
+      entry({ id: 1, sessionId: 's1' }),
+      entry({ id: 2, sessionId: 's2' }),
+    ]);
+    const { container } = render(() => (
+      <ActivityFeed entries={entries()} sessionName={sessionName} now={() => NOW} />
+    ));
+
+    const before = [...container.querySelectorAll('[data-session]')];
+    const s1RowsBefore = [...container.querySelectorAll('[data-session="s1"] li')];
+    expect(before.length).toBe(2);
+    expect(s1RowsBefore.length).toBe(1);
+
+    // One more entry in an existing session: the section for that session and
+    // the rows already in it must be the same nodes, not re-created ones —
+    // otherwise focus inside a row is lost on every journaled action.
+    setEntries((prev) => [...prev, entry({ id: 3, sessionId: 's1' })]);
+
+    const after = [...container.querySelectorAll('[data-session]')];
+    expect(after.length).toBe(2);
+    expect(new Set(after.map((el) => el.getAttribute('data-session')))).toEqual(new Set(['s1', 's2']));
+    for (const node of before) expect(after).toContain(node);
+    const s1RowsAfter = [...container.querySelectorAll('[data-session="s1"] li')];
+    expect(s1RowsAfter.length).toBe(2);
+    for (const row of s1RowsBefore) expect(s1RowsAfter).toContain(row);
+    expect(container.querySelector('[data-session="s1"]')!.textContent).toContain('2 entries');
+  });
+
+  it('creates a section for a session seen for the first time', () => {
+    const [entries, setEntries] = createSignal<readonly ActivityEntry[]>([entry({ id: 1, sessionId: 's1' })]);
+    const { container } = render(() => (
+      <ActivityFeed entries={entries()} sessionName={sessionName} now={() => NOW} />
+    ));
+    const s1 = container.querySelector('[data-session="s1"]');
+
+    setEntries((prev) => [...prev, entry({ id: 2, sessionId: 's2' })]);
+
+    expect(container.querySelectorAll('[data-session]').length).toBe(2);
+    expect(container.querySelector('[data-session="s1"]')).toBe(s1);
+    expect(container.querySelector('[data-session="s2"]')).toBeTruthy();
+  });
+});
+
+describe('<ActivityFeed> clock (C-L9)', () => {
+  it('re-renders the relative timestamps on its own when no clock is injected', () => {
+    vi.useFakeTimers();
+    try {
+      const base = Date.now();
+      const { container } = render(() => (
+        <ActivityFeed entries={[entry({ id: 1, ts: base })]} sessionName={sessionName} />
+      ));
+      expect(container.querySelector('time')!.textContent).toBe('0s ago');
+
+      vi.advanceTimersByTime(CLOCK_TICK_MS + 1_000);
+      expect(container.querySelector('time')!.textContent).not.toBe('0s ago');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves the clock pinned when one is injected', () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = render(() => (
+        <ActivityFeed entries={[entry({ id: 1, ts: NOW - 5_000 })]} sessionName={sessionName} now={() => NOW} />
+      ));
+      vi.advanceTimersByTime(CLOCK_TICK_MS * 4);
+      expect(container.querySelector('time')!.textContent).toBe('5s ago');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

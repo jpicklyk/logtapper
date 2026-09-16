@@ -216,6 +216,59 @@ describe('deviceStateStore', () => {
       expect(h.store.snapshotLoading('s1')).toBe(false);
     });
 
+    // ── C-M3: `controller.cursor()` is one global signal ────────────────
+    it("a cursor move in another session neither cancels this session's pending fetch nor strands loading", async () => {
+      const getStateAtLine = vi.fn(async (_sid: string, _trackerId: string, line: number) =>
+        snapshot({ lineNum: line }),
+      );
+      const h = mount({ getStateAtLine });
+      h.setTrackers('s1', [processor('t1')]);
+      h.setTrackers('s2', [processor('t1')]);
+      h.setLastRunAt('s1', 1);
+      h.setLastRunAt('s2', 1);
+      h.watch('s1');
+      h.watch('s2');
+
+      // A click in s1 schedules a debounced fetch...
+      h.setCursor('s1', 42);
+      expect(h.store.snapshotLoading('s1')).toBe(true);
+
+      // ...and a click in s2 lands inside the debounce window. s1's effect
+      // re-runs (the cursor signal is global) but must leave s1's timer and
+      // loading flag alone.
+      await vi.advanceTimersByTimeAsync(SNAPSHOT_DEBOUNCE_MS / 2);
+      h.setCursor('s2', 7);
+      await vi.advanceTimersByTimeAsync(SNAPSHOT_DEBOUNCE_MS);
+      await tick();
+
+      // Both fetches happened — s1's was not cancelled by s2's cursor move.
+      expect(getStateAtLine.mock.calls.map((c) => [c[0], c[2]])).toEqual([
+        ['s1', 42],
+        ['s2', 7],
+      ]);
+      expect(h.store.snapshotLoading('s1')).toBe(false);
+      expect(h.store.snapshotLoading('s2')).toBe(false);
+    });
+
+    it('clears loading when the cursor is dropped with a fetch still scheduled', async () => {
+      const h = mount();
+      h.setTrackers('s1', [processor('t1')]);
+      h.setLastRunAt('s1', 1);
+      h.watch('s1');
+
+      h.setCursor('s1', 42);
+      expect(h.store.snapshotLoading('s1')).toBe(true);
+
+      // No cursor at all: the scheduled fetch is abandoned and nothing else
+      // will ever resolve the flag, so this run has to (C-M3).
+      h.clearCursor();
+      expect(h.store.snapshotLoading('s1')).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(SNAPSHOT_DEBOUNCE_MS);
+      await tick();
+      expect(h.commands.getStateAtLine).not.toHaveBeenCalled();
+    });
+
     it('hasCursor reflects only this session having the live cursor', () => {
       const h = mount();
       expect(h.store.hasCursor('s1')).toBe(false);

@@ -44,12 +44,6 @@
   color: var(--text-muted);
 }
 
-.statusMeta {
-  margin-left: auto;
-  color: var(--text-dimmed);
-  font-variant-numeric: tabular-nums;
-}
-
 /* ── rail ───────────────────────────────────────────────────────────────── */
 
 .rail {
@@ -74,7 +68,7 @@
   font: inherit;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--p-radius-md);
+  border-radius: var(--radius-md);
   cursor: pointer;
 }
 
@@ -103,10 +97,23 @@
 
 /* ── regions ────────────────────────────────────────────────────────────── */
 
+/* The grid item itself never scrolls: the `.splitter` below is absolutely
+   positioned against it, and an absolutely positioned child of a *scrolling*
+   box scrolls away with the content (review B-M4). `.regionScroll` is the box
+   that overflows; the handle stays pinned to the column edge. */
 .region {
   position: relative;
   grid-row: 2;
   display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.regionScroll {
+  display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: var(--shell-pad);
   min-width: 0;
@@ -115,14 +122,20 @@
 }
 
 .region[data-region='viewer'] {
-  gap: 0;
-  overflow: hidden;
   background: var(--surface);
 }
 
+.region[data-region='viewer'] .regionScroll {
+  gap: 0;
+  overflow: hidden;
+}
+
 .region:not([data-region='viewer']) {
-  padding: var(--shell-pad);
   background: var(--surface-raised);
+}
+
+.region:not([data-region='viewer']) .regionScroll {
+  padding: var(--shell-pad);
 }
 
 .region[data-region='navigator'] {
@@ -152,7 +165,7 @@
   padding: var(--shell-pad);
   background: var(--surface);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--p-radius-md);
+  border-radius: var(--radius-md);
 }
 
 /* A surface whose slot rendered no elements — a session-scoped panel with no
@@ -210,7 +223,7 @@
   border-right: 0;
   border-bottom: 0;
   border-left: 0;
-  border-radius: var(--p-radius-none);
+  border-radius: var(--radius-none);
 }
 
 /* ── splitter ───────────────────────────────────────────────────────────── */
@@ -218,7 +231,7 @@
 .splitter {
   position: absolute;
   inset-block: 0;
-  z-index: var(--p-z-dropdown);
+  z-index: var(--z-dropdown);
   width: var(--shell-splitter-w);
   background: transparent;
   cursor: col-resize;
@@ -266,7 +279,7 @@
   position: absolute;
   inset-block: 0;
   left: var(--shell-rail-w);
-  z-index: var(--p-z-overlay);
+  z-index: var(--z-overlay);
   grid-column: 1 / -1;
   width: min(var(--shell-drawer-w), 100%);
   box-shadow: var(--shadow);
@@ -279,10 +292,10 @@
   inset-block: 0;
   left: var(--shell-rail-w);
   right: 0;
-  z-index: calc(var(--p-z-overlay) - 1);
+  z-index: calc(var(--z-overlay) - 1);
   grid-row: 2;
   grid-column: 1 / -1;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--scrim);
 }
 
 .drawerHeader {

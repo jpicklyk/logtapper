@@ -13,9 +13,9 @@
  * It also owns the per-session *view* state the data source and the cache
  * binding read back:
  *  - `viewMode` — what `get_lines` is asked for.
- *  - three line sets (`section` / `filter` / `search`) whose ascending
- *    intersection is the rendered index space (`lineNumbers`, wired into
- *    `createCacheDataSource({ getLineNumbers })`).
+ *  - four line sets (`section` / `filter` / `search` / `matched`) whose
+ *    ascending intersection is the rendered index space (`lineNumbers`, wired
+ *    into `createCacheDataSource({ getLineNumbers })`).
  *  - controller highlights, merged over `ViewLine.highlights` by `Row`.
  *  - `revision`, bumped by every one of those setters, which `createCacheBinding`
  *    treats exactly like a `sourceId` swap.
@@ -24,24 +24,44 @@
  * component body (the same pattern as `presence/presenceStore.ts` and
  * `theme/applyTheme.ts`). `dispose()` tears the root down.
  */
-import { createMemo, createRoot, createSignal, getOwner, runWithOwner } from 'solid-js';
+import { createMemo, createRoot, createSignal, getOwner, runWithOwner, untrack } from 'solid-js';
 import type { Accessor, Owner } from 'solid-js';
 import type { HighlightSpan } from '@bridge/generated/HighlightSpan';
 import type { ViewMode } from '@bridge/generated/ViewMode';
+import { sessionScrollPositions } from '@viewport/sessionScrollPositions';
 
-/** The three independent line-number filters whose intersection is rendered. */
-export type LineSetKey = 'section' | 'filter' | 'search';
+/**
+ * The independent line-number filters whose intersection is rendered.
+ *
+ * `matched` is the analyzer/processor "show matched lines" set; it is kept
+ * separate from `filter` (the query bar's) so turning one off does not silently
+ * discard the other. The intersection walk is key-agnostic — adding a key here
+ * needs no change to `intersectSorted`.
+ */
+export type LineSetKey = 'section' | 'filter' | 'search' | 'matched';
 
 /** Who asked for a jump. Recorded on the cursor so surfaces can attribute it. */
 export type NavSource = 'user' | 'agent' | 'search' | 'analysis';
 
 /** What a mounted pane exposes to the controller. `LogViewer` supplies one. */
 export interface PaneHandle {
-  /** Scroll an absolute (rendered-index-space) line into view. */
+  /**
+   * Scroll an **absolute backend line number** into view.
+   *
+   * Absolute is the only coordinate system that crosses this boundary: every
+   * caller of `scrollToLine` (analyzers, search, bookmarks, sections, analyses,
+   * device state, agent navigation) names a file line, and a line set changes
+   * what row that line is drawn on without changing the line itself. The pane
+   * — and only the pane — maps absolute → rendered via
+   * `ViewerController.lineNumbers(sessionId)`.
+   */
   jumpToLine(line: number): void;
   /** Focus the pane's scroll container so keyboard navigation lands there. */
   focus(): void;
-  /** Select an inclusive `[start, end]` line range, or clear with `null`. */
+  /**
+   * Select an inclusive `[start, end]` range of **absolute backend line
+   * numbers**, or clear with `null`. Mapped to rendered rows by the pane.
+   */
   setSelection(range: [number, number] | null): void;
 }
 
@@ -80,11 +100,16 @@ export interface ViewerController {
   setViewMode(sessionId: string, mode: ViewMode): void;
   viewMode(sessionId: string): ViewMode;
 
-  /** Replace one of the three line sets. `null` removes it from the intersection. */
+  /**
+   * Replace one of the line sets. `null` removes it from the intersection.
+   *
+   * The merge read of the other keys is `untrack`ed internally, so a caller
+   * inside a reactive scope does NOT need its own `untrack` wrapper.
+   */
   setLineSet(sessionId: string, key: LineSetKey, lines: Set<number> | null): void;
   /**
    * The rendered index space: the ascending intersection of whichever line sets
-   * are set, or `undefined` when all three are `null` (i.e. render every line).
+   * are set, or `undefined` when they are all `null` (i.e. render every line).
    * An empty intersection is `[]`, which renders nothing — not `undefined`.
    */
   lineNumbers(sessionId: string): number[] | undefined;
@@ -117,6 +142,18 @@ export interface ViewerController {
    */
   focusPane(paneId: string): void;
 
+  /**
+   * Drop every trace of a closed session: its line sets, highlight map, view
+   * mode and memos, plus its saved scroll position.
+   *
+   * Without this, an `open_file` → `close_session` cycle (an agent walking a
+   * directory of large logs) retains one `SessionState` per session for the
+   * app's lifetime, each holding a `number[]` with one entry per matched line
+   * and a highlight `Map`. Safe to call for a session the controller has never
+   * seen. The session store owns the call — see the handoff note.
+   */
+  forgetSession(sessionId: string): void;
+
   dispose(): void;
 }
 
@@ -126,13 +163,14 @@ export const DEFAULT_PANE_ID = 'main';
 /** What `viewMode()` answers for a session nothing has configured. */
 export const DEFAULT_VIEW_MODE: ViewMode = Object.freeze({ mode: 'Full' }) as ViewMode;
 
-interface LineSets {
-  section: number[] | null;
-  filter: number[] | null;
-  search: number[] | null;
-}
+type LineSets = Record<LineSetKey, number[] | null>;
 
-const NO_LINE_SETS: LineSets = Object.freeze({ section: null, filter: null, search: null });
+const NO_LINE_SETS: LineSets = Object.freeze({
+  section: null,
+  filter: null,
+  search: null,
+  matched: null,
+});
 
 /** Ascending copy of a set. Sorting once here keeps the intersection a pure merge-walk. */
 function ascending(lines: Set<number>): number[] {
@@ -203,8 +241,10 @@ function createSessionState(): SessionState {
   // Memoised per session: the walk re-runs only when a line set is replaced,
   // not on every `getLineNumbers()` call the data source makes.
   const lineNumbers = createMemo<number[] | undefined>(() => {
-    const { section, filter, search } = sets();
-    const present = [section, filter, search].filter((l): l is number[] => l !== null);
+    const current = sets();
+    const present = (Object.keys(current) as LineSetKey[])
+      .map((key) => current[key])
+      .filter((l): l is number[] => l !== null);
     return present.length === 0 ? undefined : intersectSorted(present);
   });
 
@@ -311,13 +351,25 @@ export function createViewerController(deps: ViewerControllerDeps): ViewerContro
       viewMode: (sessionId) => stateFor(sessionId).viewMode(),
 
       setLineSet: (sessionId, key, lines) => {
+        // Clearing a key on a session this controller does not hold is a no-op:
+        // the per-session prune sweeps (sections, bookmarks, watches) run off
+        // `sessions.order()` *after* `forgetSession` has already run for the
+        // same close, and `stateFor` would otherwise re-create the state the
+        // close just released (feature review, W5/W6 seam).
+        if (lines === null && !sessions.has(sessionId)) return;
         const state = stateFor(sessionId);
-        state.writeSets({ ...state.sets(), [key]: lines ? ascending(lines) : null });
+        // `writeSets` merges the other keys, which means reading `sets()` — a
+        // signal read inside a setter. Untracked here, once, so no caller has to
+        // remember its own `untrack` wrapper (three of four did; one did not).
+        state.writeSets({ ...untrack(state.sets), [key]: lines ? ascending(lines) : null });
         state.bump();
       },
       lineNumbers: (sessionId) => stateFor(sessionId).lineNumbers(),
 
       setHighlights: (sessionId, spans) => {
+        // Same rule as `setLineSet`: a null write on an unknown session is a
+        // no-op rather than a state re-creation.
+        if (spans === null && !sessions.has(sessionId)) return;
         const state = stateFor(sessionId);
         state.writeHighlights(spans);
         state.bump();
@@ -337,7 +389,11 @@ export function createViewerController(deps: ViewerControllerDeps): ViewerContro
 
       attachPane: (paneId, handle) => {
         panes.set(paneId, handle);
-        activePaneId = paneId;
+        // Deliberately NOT `activePaneId = paneId`: mounting a pane is a
+        // structural event, not a focus one. The secondary pane appearing (S1's
+        // split) must not retarget `focus()` away from the pane the user is
+        // typing in. `focusPane` — called from pointer-down / focus-in — and
+        // `scrollToLine` are the two things that move focus.
         return () => {
           // Only detach our own handle: a remount may already have replaced it.
           if (panes.get(paneId) !== handle) return;
@@ -355,13 +411,22 @@ export function createViewerController(deps: ViewerControllerDeps): ViewerContro
         activePaneId = paneId;
       },
 
+      forgetSession: (sessionId) => {
+        sessions.delete(sessionId);
+        for (const [paneId, bound] of [...boundSessions]) {
+          if (bound === sessionId) boundSessions.delete(paneId);
+        }
+        sessionScrollPositions.delete(sessionId);
+      },
+
       bindSession: (sessionId, paneId) => {
         // A session lives in exactly one pane — drop any earlier binding first.
         for (const [id, bound] of [...boundSessions]) {
           if (bound === sessionId && id !== paneId) boundSessions.delete(id);
         }
         boundSessions.set(paneId, sessionId);
-        activePaneId = paneId;
+        // Same reasoning as `attachPane`: binding a session to a background
+        // pane is structural and must not steal `focus()`.
       },
 
       paneForSession,

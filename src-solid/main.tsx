@@ -1,7 +1,7 @@
 /** @jsxImportSource solid-js */
 import './styles/globals.css';
 import { render } from 'solid-js/web';
-import { createThemeController } from './theme/applyTheme';
+import { createThemeController } from './theme';
 import { App } from './App';
 
 // Created before render so data-theme/data-density are correct on <html>

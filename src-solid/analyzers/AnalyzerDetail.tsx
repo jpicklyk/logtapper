@@ -1,12 +1,12 @@
 /** @jsxImportSource solid-js */
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
 import type { JSX } from 'solid-js';
-import type { MatchedLine } from '@bridge/types';
 import { formatNumber, groupVars, snakeToTitle } from '@procdash/utils';
-import type { AnalyzerStore } from './analyzerStore';
+import { MATCHED_PREVIEW_CAP } from './analyzerStore';
+import type { AnalyzerStore, MatchedLineDigest } from './analyzerStore';
+import { createOverlayDialog } from './overlayDialog';
 import styles from './analyzers.module.css';
 
-const MATCHED_LINES_CAP = 500;
 const RANKED_CAP = 15;
 
 export interface AnalyzerDetailProps {
@@ -21,8 +21,9 @@ export interface AnalyzerDetailProps {
  *  with a "show in viewer" action. */
 export function AnalyzerDetail(props: AnalyzerDetailProps): JSX.Element {
   const [vars, setVars] = createSignal<Record<string, unknown> | null>(null);
-  const [matchedLines, setMatchedLines] = createSignal<MatchedLine[]>([]);
+  const [matched, setMatched] = createSignal<MatchedLineDigest | null>(null);
   const [loadingMatches, setLoadingMatches] = createSignal(false);
+  const dialog = createOverlayDialog(() => props.onClose());
 
   const processor = createMemo(() => props.store.byId(props.processorId));
   const summary = createMemo(() => props.store.summaryFor(props.sessionId, props.processorId));
@@ -42,23 +43,31 @@ export function AnalyzerDetail(props: AnalyzerDetailProps): JSX.Element {
 
   createEffect(() => {
     if (!isReporter()) {
-      setMatchedLines([]);
+      setMatched(null);
       return;
     }
     const id = props.processorId;
+    // The store caches matched lines per *run generation*, which is a plain
+    // counter and deliberately non-reactive — so a re-run (ours or an agent's)
+    // silently replaced the cache while this effect kept showing the previous
+    // run's lines next to the new run's summary counts (D1-M7). `lastRunAt` is
+    // store-backed and bumped by every landed run, so tracking it here is the
+    // reactive edge the generation counter cannot be.
+    props.store.lastRunAt(props.sessionId);
     let cancelled = false;
     setLoadingMatches(true);
     void props.store
       .matchedLines(props.sessionId, id)
-      .then((lines) => { if (!cancelled) setMatchedLines(lines); })
-      .catch(() => { if (!cancelled) setMatchedLines([]); })
+      .then((digest) => { if (!cancelled) setMatched(digest); })
+      .catch(() => { if (!cancelled) setMatched(null); })
       .finally(() => { if (!cancelled) setLoadingMatches(false); });
     onCleanup(() => { cancelled = true; });
   });
 
   const groups = createMemo(() => (vars() ? groupVars(vars()!) : null));
 
-  const shown = createMemo(() => matchedLines().slice(0, MATCHED_LINES_CAP));
+  const total = createMemo(() => matched()?.total ?? 0);
+  const shown = createMemo(() => matched()?.preview ?? []);
 
   const handleShowInViewer = (): void => {
     void props.store.showMatched(props.sessionId, props.processorId);
@@ -66,9 +75,9 @@ export function AnalyzerDetail(props: AnalyzerDetailProps): JSX.Element {
   };
 
   return (
-    <div class={styles.overlay} data-testid="analyzer-detail">
+    <div class={styles.overlay} data-testid="analyzer-detail" {...dialog.props}>
       <div class={styles.overlayHeader}>
-        <span class={styles.overlayTitle}>{processor()?.name ?? props.processorId}</span>
+        <span id={dialog.labelId} class={styles.overlayTitle}>{processor()?.name ?? props.processorId}</span>
         <button type="button" class={styles.btn} onClick={() => props.onClose()}>
           Close
         </button>
@@ -164,8 +173,8 @@ export function AnalyzerDetail(props: AnalyzerDetailProps): JSX.Element {
 
         <Show when={isReporter()}>
           <div class={styles.section}>
-            <div class={styles.sectionLabel}>Matched lines ({matchedLines().length.toLocaleString()})</div>
-            <Show when={matchedLines().length > 0}>
+            <div class={styles.sectionLabel}>Matched lines ({total().toLocaleString()})</div>
+            <Show when={total() > 0}>
               <button type="button" class={styles.btn} onClick={handleShowInViewer}>
                 Show in viewer
               </button>
@@ -173,7 +182,7 @@ export function AnalyzerDetail(props: AnalyzerDetailProps): JSX.Element {
             <Show when={loadingMatches()}>
               <div class={styles.hint}>Loading…</div>
             </Show>
-            <Show when={!loadingMatches() && matchedLines().length === 0}>
+            <Show when={!loadingMatches() && total() === 0}>
               <div class={styles.hint}>No matched lines.</div>
             </Show>
             <For each={shown()}>
@@ -184,9 +193,9 @@ export function AnalyzerDetail(props: AnalyzerDetailProps): JSX.Element {
                 </div>
               )}
             </For>
-            <Show when={matchedLines().length > MATCHED_LINES_CAP}>
+            <Show when={total() > MATCHED_PREVIEW_CAP}>
               <div class={styles.hint}>
-                Showing first {MATCHED_LINES_CAP} of {matchedLines().length.toLocaleString()} — use "Show in
+                Showing first {MATCHED_PREVIEW_CAP} of {total().toLocaleString()} — use "Show in
                 viewer" to see the rest.
               </div>
             </Show>

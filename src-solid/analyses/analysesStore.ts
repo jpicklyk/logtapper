@@ -34,20 +34,17 @@
  *
  * ## Draft seed vs. selecting an artifact
  *
- * `pendingSelection.ts`'s docstring frames it as "pane id -> artifact id,
- * consumed once on mount" — but in this composition `AnalysesPanel`,
- * `AnalysisReader` and `AnalysisEditor` are all children of one store built
- * once in `App.tsx`; selecting an artifact is a plain reactive read
- * (`selected()`), with no cross-mount race for that path.
+ * `AnalysesPanel`, `AnalysisReader` and `AnalysisEditor` are all children of
+ * one store built once in `App.tsx`; selecting an artifact is a plain reactive
+ * read (`selected()`), with no cross-mount race for that path.
  *
- * The genuine race the design text's parenthetical describes — "a line range
- * selected in the viewer ... becomes the draft's first reference" — reuses
- * the file for real: the "New analysis" button lives in `AnalysesPanel` and
- * reads the *current* controller cursor at click time, but `AnalysisEditor`
- * (in the shell's `details` region) mounts fresh afterwards. `captureDraftSeed`
- * stashes a JSON-encoded `SourceReference` into the same generic
- * pane-id -> string map `pendingSelection.ts` exports; `takeDraftSeed` reads
- * and clears it exactly once, from `AnalysisEditor`'s own construction.
+ * The genuine race is the one the design text's parenthetical describes — "a
+ * line range selected in the viewer ... becomes the draft's first reference":
+ * the "New analysis" button lives in `AnalysesPanel` and reads the *current*
+ * controller cursor at click time, but `AnalysisEditor` (in the shell's
+ * `details` region) mounts fresh afterwards. `captureDraftSeed` stashes the
+ * `SourceReference` in this package's own `draftSeed.ts`; `takeDraftSeed`
+ * reads and clears it exactly once, from `AnalysisEditor`'s construction.
  */
 import { createMemo, createRoot, createSignal, untrack } from 'solid-js';
 import type { Accessor } from 'solid-js';
@@ -61,7 +58,7 @@ import {
 } from '@bridge/commands';
 import { onAnalysisUpdate } from '@bridge/events';
 import type { AnalysisArtifact, AnalysisSection, AnalysisUpdateEvent, SourceReference } from '@bridge/types';
-import { setPendingAnalysisSelection, takePendingAnalysisSelection } from '@analysisReader/pendingSelection';
+import { setDraftSeed, takeDraftSeed as takeStashedDraftSeed } from './draftSeed';
 import type { LineRefTarget } from '../editor';
 import type { ViewerController } from '../viewer';
 // `'../app'` also matches `App.tsx` on a case-insensitive filesystem and TS
@@ -106,13 +103,14 @@ export interface UpdateDraft {
   sections?: AnalysisSection[];
 }
 
-/** Pane id the draft-seed handoff is keyed under — see the module doc. */
-const DRAFT_SEED_KEY = 'analyses-draft-seed';
-
 export interface AnalysesStore {
   list: Accessor<AnalysisArtifact[]>;
   loading: Accessor<boolean>;
+  /** The last `listAnalyses` / `getAnalysis` / `deleteAnalysis` failure, or
+   *  `null`. Cleared by a successful refresh and by {@link AnalysesStore.retry}. */
   error: Accessor<string | null>;
+  /** Clear the error and re-run `listAnalyses`. */
+  retry(): void;
   /** sessionId → display label, for `analysisAttribution.ts` and the reader's references. */
   labels: Accessor<ReadonlyMap<string, string>>;
 
@@ -179,7 +177,11 @@ export function createAnalysesStore(deps: AnalysesStoreDeps): AnalysesStore {
       commands
         .listAnalyses()
         .then((artifacts) => {
-          if (!disposed) setList(artifacts);
+          if (disposed) return;
+          setList(artifacts);
+          // Without this the first failure stuck on screen forever, even once
+          // the very next refresh succeeded.
+          setError(null);
         })
         .catch((e: unknown) => {
           if (!disposed) setError(String(e));
@@ -271,6 +273,11 @@ export function createAnalysesStore(deps: AnalysesStoreDeps): AnalysesStore {
         return artifact;
       });
 
+    const retry = (): void => {
+      setError(null);
+      refreshList();
+    };
+
     const remove = (artifactId: string): Promise<void> =>
       commands.deleteAnalysis(artifactId).then(() => {
         if (!disposed) {
@@ -298,18 +305,10 @@ export function createAnalysesStore(deps: AnalysesStoreDeps): AnalysesStore {
     const captureDraftSeed = (): void => {
       const ref = cursorReference();
       if (!ref) return;
-      setPendingAnalysisSelection(DRAFT_SEED_KEY, JSON.stringify(ref));
+      setDraftSeed(ref);
     };
 
-    const takeDraftSeed = (): SourceReference | null => {
-      const raw = takePendingAnalysisSelection(DRAFT_SEED_KEY);
-      if (raw === null) return null;
-      try {
-        return JSON.parse(raw) as SourceReference;
-      } catch {
-        return null;
-      }
-    };
+    const takeDraftSeed = (): SourceReference | null => takeStashedDraftSeed();
 
     const jumpTo = (target: LineRefTarget): void => {
       const sessionId = target.sessionId ?? sessions.focusedId();
@@ -333,6 +332,7 @@ export function createAnalysesStore(deps: AnalysesStoreDeps): AnalysesStore {
       list,
       loading,
       error,
+      retry,
       labels,
       selectedId,
       selected,

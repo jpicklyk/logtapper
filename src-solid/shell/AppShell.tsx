@@ -1,7 +1,8 @@
 /** @jsxImportSource solid-js */
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
-import type { JSX } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup } from 'solid-js';
+import type { Accessor, JSX } from 'solid-js';
 import { createTier } from './tier';
+import type { Tier } from './tier';
 import { createMode } from './mode';
 import type { SessionKind } from './mode';
 import {
@@ -49,6 +50,17 @@ export interface AppShellProps {
    * becomes true again would fight a user who closed it.
    */
   initialDrawer?: SurfaceId | null;
+  /**
+   * The app's single tier subscription.
+   *
+   * `createTier()` registers three `matchMedia` listeners and mirrors the
+   * result onto `<html data-tier>`; the shell, `ViewerSplit` and `App.tsx`
+   * each used to create their own, so three subscriptions ran and two of them
+   * wrote the same attribute (review B-L6). `App.tsx` now creates one and
+   * passes it to both consumers. Optional so a test (or any standalone mount)
+   * can still render the shell on its own.
+   */
+  tier?: Accessor<Tier>;
   topBar?: JSX.Element;
   statusBar?: JSX.Element;
   slots?: SurfaceSlots;
@@ -79,6 +91,11 @@ function SurfacePanel(props: { surface: SurfaceDef; slot?: () => JSX.Element }) 
   );
 }
 
+/** What a focus trap considers reachable by Tab. */
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]),' +
+  ' textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 /**
  * The layout shell: a top bar, the `rail | navigator | viewer | details |
  * presence` grid body, and a status bar. Which regions exist and what each one
@@ -86,7 +103,11 @@ function SurfacePanel(props: { surface: SurfaceDef; slot?: () => JSX.Element }) 
  * component itself hard-codes no placement.
  */
 export function AppShell(props: AppShellProps) {
-  const tier = createTier();
+  // `props.tier` is read once: the caller owns exactly one subscription for the
+  // app's lifetime (see `AppShellProps.tier`), so re-reading it reactively
+  // would only add a dependency that can never change.
+  // eslint-disable-next-line solid/reactivity -- constant for the shell's lifetime, by design
+  const tier = props.tier ?? createTier();
   const mode = createMode({ sessionKind: () => props.sessionKind });
   const widths = createRegionWidths(() => props.workspaceId);
 
@@ -109,10 +130,38 @@ export function AppShell(props: AppShellProps) {
     ...drawerSurfaces(mode(), tier()),
   ]);
 
+  /**
+   * The drawer's surface, revalidated against the *current* tier and mode
+   * (review B-H3).
+   *
+   * `openDrawer` is a plain id, but where `surfaces.ts` places that id changes
+   * with the viewport and with the focused session's kind. Without this check
+   * a surface that has since been promoted to its own column renders twice —
+   * once in the region loop below, once in the drawer — with two sets of
+   * effects and two copies of every DOM id; and a live-only surface
+   * (`watches`, `stream-controls`) keeps rendering after the capture stops,
+   * with no rail glyph left to close it.
+   *
+   * `railItems()` is exactly "everything openable as a drawer here", so the
+   * check reuses it rather than recomputing the two surface lists.
+   */
   const drawerSurface = createMemo(() => {
     const id = openDrawer();
-    return id ? (surfaceById(id) ?? null) : null;
+    if (id === null) return null;
+    if (!railItems().some((surface) => surface.id === id)) return null;
+    return surfaceById(id) ?? null;
   });
+
+  // Keep the signal honest too, so re-narrowing the window (or restarting a
+  // capture) does not spring a drawer the user never reopened back into view.
+  // The memo above is what makes the *render* safe within the same frame; this
+  // is what makes the state match what is on screen.
+  createEffect(
+    on([mode, tier], () => {
+      const id = openDrawer();
+      if (id !== null && !railItems().some((surface) => surface.id === id)) setOpenDrawer(null);
+    }),
+  );
 
   /** How an open drawer sits next to the rail. On compact there is no room —
    *  it overlays the single column as a sheet (backdrop, click-outside and
@@ -132,7 +181,16 @@ export function AppShell(props: AppShellProps) {
     ].join(' '),
   );
 
-  const toggleDrawer = (id: SurfaceId) => setOpenDrawer((current) => (current === id ? null : id));
+  /** The overlay sheet's root, for focus move and containment (review B-M6). */
+  let drawerEl: HTMLElement | undefined;
+  /** The rail button that opened the drawer — focus goes back here on close. */
+  let invoker: HTMLElement | null = null;
+
+  const toggleDrawer = (id: SurfaceId, source?: HTMLElement): void => {
+    const next = openDrawer() === id ? null : id;
+    if (next !== null) invoker = source ?? null;
+    setOpenDrawer(next);
+  };
   const closeDrawer = () => setOpenDrawer(null);
 
   // Escape closes an overlay drawer, the way a sheet should; a pushed column
@@ -145,6 +203,45 @@ export function AppShell(props: AppShellProps) {
     window.addEventListener('keydown', onKey);
     onCleanup(() => window.removeEventListener('keydown', onKey));
   });
+
+  // An overlay drawer is a modal sheet: move focus into it on open and put it
+  // back on the rail button that opened it on close. Without this, Tab from a
+  // compact-width sheet walks straight into the log viewer behind it and
+  // Escape leaves focus on `document.body` (review B-M6). A *pushed* drawer is
+  // an ordinary column — it is not modal and must not steal focus.
+  createEffect(() => {
+    if (drawerSurface() === null || drawerPlacement() !== 'overlay') return;
+    const sheet = drawerEl;
+    if (!sheet) return;
+    const previous = invoker ?? (document.activeElement as HTMLElement | null);
+    (sheet.querySelector<HTMLElement>(FOCUSABLE_SELECTOR) ?? sheet).focus();
+    onCleanup(() => {
+      if (previous?.isConnected) previous.focus();
+    });
+  });
+
+  /** Contain Tab inside the sheet while it is modal. */
+  const onDrawerKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Tab' || drawerPlacement() !== 'overlay') return;
+    const sheet = drawerEl;
+    if (!sheet) return;
+    const items = [...sheet.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)];
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (!first || !last) {
+      event.preventDefault();
+      sheet.focus();
+      return;
+    }
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || active === sheet)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   return (
     <div
@@ -172,7 +269,8 @@ export function AppShell(props: AppShellProps) {
               title={surface.title}
               aria-label={surface.title}
               aria-pressed={openDrawer() === surface.id}
-              onClick={() => toggleDrawer(surface.id)}
+              aria-haspopup="dialog"
+              onClick={(event) => toggleDrawer(surface.id, event.currentTarget)}
             >
               <span class={styles.railGlyph} aria-hidden="true">
                 {surface.glyph}
@@ -188,9 +286,28 @@ export function AppShell(props: AppShellProps) {
         {(surface) => (
           <>
             <Show when={drawerPlacement() === 'overlay'}>
-              <div class={styles.drawerBackdrop} data-testid="drawer-backdrop" onClick={closeDrawer} />
+              {/* Decorative: Escape and the header's Close button are the
+                  keyboard paths out of the sheet, so the backdrop carries no
+                  role of its own and is hidden from assistive tech. */}
+              <div
+                class={styles.drawerBackdrop}
+                data-testid="drawer-backdrop"
+                aria-hidden="true"
+                onClick={closeDrawer}
+              />
             </Show>
-            <aside class={styles.drawer} data-placement={drawerPlacement()} aria-label={surface().title}>
+            <aside
+              ref={drawerEl}
+              class={styles.drawer}
+              data-placement={drawerPlacement()}
+              aria-label={surface().title}
+              // Modal only as a sheet; a pushed drawer is an ordinary column
+              // and announcing it as a modal dialog would be a lie.
+              role={drawerPlacement() === 'overlay' ? 'dialog' : undefined}
+              aria-modal={drawerPlacement() === 'overlay' ? 'true' : undefined}
+              tabindex={drawerPlacement() === 'overlay' ? -1 : undefined}
+              onKeyDown={onDrawerKeyDown}
+            >
               <header class={styles.drawerHeader}>
                 <span>{surface().title}</span>
                 <button type="button" class={styles.drawerClose} aria-label="Close" onClick={closeDrawer}>
@@ -208,13 +325,21 @@ export function AppShell(props: AppShellProps) {
       <For each={regions()}>
         {(region) => (
           <div class={styles.region} data-region={region}>
-            <Show when={region === 'viewer'}>
-              <div class={styles.viewerSlot}>{props.slots?.viewer?.()}</div>
-            </Show>
-            <For each={regionSurfaces(region, mode(), tier()).filter((s) => s.id !== 'viewer')}>
-              {(surface) => <SurfacePanel surface={surface} slot={props.slots?.[surface.id]} />}
-            </For>
-            {props.regionSlots?.[region]?.()}
+            {/* The scroll container is an inner element so the splitter can be
+                its *sibling* rather than its child (review B-M4): an
+                absolutely positioned child of a scroll container scrolls away
+                with the content, so on a `details` column tall enough to
+                overflow the 5px resize handle ended up above the viewport and
+                the column could no longer be resized. */}
+            <div class={styles.regionScroll}>
+              <Show when={region === 'viewer'}>
+                <div class={styles.viewerSlot}>{props.slots?.viewer?.()}</div>
+              </Show>
+              <For each={regionSurfaces(region, mode(), tier()).filter((s) => s.id !== 'viewer')}>
+                {(surface) => <SurfacePanel surface={surface} slot={props.slots?.[surface.id]} />}
+              </For>
+              {props.regionSlots?.[region]?.()}
+            </div>
             <Show when={region !== 'viewer'}>
               <Splitter
                 region={region as ResizableRegion}
@@ -226,12 +351,11 @@ export function AppShell(props: AppShellProps) {
         )}
       </For>
 
-      <footer class={styles.statusBar}>
-        {props.statusBar}
-        <span class={styles.statusMeta}>
-          {mode()} · {tier()}
-        </span>
-      </footer>
+      {/* The mode/tier pair used to ship here as text. It is a developer
+          affordance (review B-L18) and it is already on the root element as
+          `data-mode`/`data-tier`, which is where a test or a devtools
+          inspection reads it from. */}
+      <footer class={styles.statusBar}>{props.statusBar}</footer>
     </div>
   );
 }

@@ -131,8 +131,15 @@ describe('linesForSelection', () => {
   });
 
   it('returns the union of the selected sections’ ranges', () => {
-    expect(linesForSelection(sections, new Set(['A', 'B']))).toEqual(new Set([0, 1, 2, 10, 11]));
-    expect(linesForSelection(sections, new Set(['B']))).toEqual(new Set([10, 11]));
+    expect(linesForSelection(sections, new Set([0, 10]))).toEqual(new Set([0, 1, 2, 10, 11]));
+    expect(linesForSelection(sections, new Set([10]))).toEqual(new Set([10, 11]));
+  });
+
+  it('keys on startLine, so two sections sharing a name do not select together', () => {
+    // A dumpstate repeats `DUMP OF SERVICE …` blocks; name-keyed selection
+    // unioned both ranges when the user ticked one.
+    const duplicates = [section('DUMP OF SERVICE x', 0, 2), section('DUMP OF SERVICE x', 50, 52)];
+    expect(linesForSelection(duplicates, new Set([50]))).toEqual(new Set([50, 51, 52]));
   });
 });
 
@@ -288,15 +295,15 @@ describe('createSectionsStore — selection composes the controller line set', (
   });
 
   it('setLineSet reflects the union of toggled sections, and clears back to null', () => {
-    store.toggle('A');
+    store.toggle(0);
     expect(controller.lineNumbers('s1')).toEqual([0, 1, 2]);
     expect(store.selectionCount()).toBe(1);
 
-    store.toggle('B');
+    store.toggle(10);
     expect(controller.lineNumbers('s1')).toEqual([0, 1, 2, 10, 11, 12]);
     expect(store.selectionCount()).toBe(2);
 
-    store.toggle('A');
+    store.toggle(0);
     expect(controller.lineNumbers('s1')).toEqual([10, 11, 12]);
 
     store.clearSelection();
@@ -305,13 +312,146 @@ describe('createSectionsStore — selection composes the controller line set', (
   });
 
   it('toggleGroup selects all when any are unselected, and clears all when all are selected', () => {
-    store.toggleGroup(['A', 'B']);
-    expect(store.isSelected('A')).toBe(true);
-    expect(store.isSelected('B')).toBe(true);
+    store.toggleGroup([0, 10]);
+    expect(store.isSelected(0)).toBe(true);
+    expect(store.isSelected(10)).toBe(true);
 
-    store.toggleGroup(['A', 'B']);
-    expect(store.isSelected('A')).toBe(false);
-    expect(store.isSelected('B')).toBe(false);
+    store.toggleGroup([0, 10]);
+    expect(store.isSelected(0)).toBe(false);
+    expect(store.isSelected(10)).toBe(false);
+  });
+
+  it('selects only the ticked one of two sections sharing a name', async () => {
+    commands.getSections.mockResolvedValue([
+      section('DUMP OF SERVICE x', 20, 22),
+      section('DUMP OF SERVICE x', 40, 41),
+    ]);
+    sessionStore.add(load('dup'));
+    sessionStore.setFocused('dup');
+    await flush();
+
+    store.toggle(40);
+    expect(store.isSelected(40)).toBe(true);
+    expect(store.isSelected(20)).toBe(false);
+    expect(controller.lineNumbers('dup')).toEqual([40, 41]);
+  });
+});
+
+describe('createSectionsStore — the controller is only touched for a real selection', () => {
+  it('never writes a line set (or bumps the cache revision) for a session with no selection', async () => {
+    const setLineSet = vi.spyOn(controller, 'setLineSet');
+    commands.getSections.mockResolvedValue([section('A', 0, 2)]);
+    sessionStore.add(load('s1'));
+    sessionStore.setFocused('s1');
+    await flush();
+
+    // Creating the session's state used to write `('section', null)`, whose
+    // unconditional `bump()` threw away the viewport cache the viewer had just
+    // warmed — on every session focus.
+    expect(setLineSet).not.toHaveBeenCalled();
+    expect(controller.revision('s1')).toBe(0);
+
+    store.toggle(0);
+    expect(setLineSet).toHaveBeenCalledWith('s1', 'section', new Set([0, 1, 2]));
+  });
+
+  it('never touches the controller for a non-bugreport session', async () => {
+    const setLineSet = vi.spyOn(controller, 'setLineSet');
+    sessionStore.add(load('plain', { sourceType: 'Logcat' }));
+    sessionStore.setFocused('plain');
+    await flush();
+
+    // Reading the accessors the panel reads must not create state either.
+    expect(store.sections()).toEqual([]);
+    expect(store.selectionCount()).toBe(0);
+    expect(setLineSet).not.toHaveBeenCalled();
+    expect(controller.revision('plain')).toBe(0);
+  });
+});
+
+describe('createSectionsStore — fetch failures are surfaced and retryable', () => {
+  it('exposes the rejection and re-fetches on retry()', async () => {
+    commands.getSections.mockRejectedValueOnce(new Error('bridge down'));
+    sessionStore.add(load('s1'));
+    sessionStore.setFocused('s1');
+    await flush();
+
+    expect(store.error()).toContain('bridge down');
+    expect(store.sections()).toEqual([]);
+
+    commands.getSections.mockResolvedValueOnce([section('A', 0, 2)]);
+    store.retry();
+    await flush();
+
+    expect(store.error()).toBeNull();
+    expect(store.sections()).toEqual([section('A', 0, 2)]);
+  });
+
+  it('keeps one session’s error out of another session’s view', async () => {
+    commands.getSections.mockRejectedValueOnce(new Error('bridge down'));
+    sessionStore.add(load('s1'));
+    sessionStore.setFocused('s1');
+    await flush();
+    expect(store.error()).toContain('bridge down');
+
+    commands.getSections.mockResolvedValueOnce([section('A', 0, 2)]);
+    sessionStore.add(load('s2'));
+    sessionStore.setFocused('s2');
+    await flush();
+    expect(store.error()).toBeNull();
+  });
+});
+
+describe('createSectionsStore — generation guard on overlapping fetches', () => {
+  it('drops a stale partial result that resolves after the complete one', async () => {
+    // Fetch #1 runs against a partial index and is the slow one.
+    let resolvePartial: ((value: SectionInfo[]) => void) | undefined;
+    commands.getSections.mockImplementationOnce(
+      () => new Promise<SectionInfo[]>((resolve) => { resolvePartial = resolve; }),
+    );
+
+    const entry = sessionStore.add(load('s1', { isIndexing: false }));
+    sessionStore.setFocused('s1');
+    await flush();
+    expect(commands.getSections).toHaveBeenCalledTimes(1);
+
+    // Indexing starts and completes, which invalidates the cache and fires #2.
+    const complete = [section('A', 0, 9), section('B', 10, 99)];
+    commands.getSections.mockResolvedValueOnce(complete);
+    sessionStore.updateTotal('s1', entry.totalLines, true);
+    await flush();
+    sessionStore.updateTotal('s1', 100, false);
+    await flush();
+    expect(commands.getSections).toHaveBeenCalledTimes(2);
+    expect(store.sections()).toEqual(complete);
+
+    // #1 lands late with the 7-of-586 partial list — it must be dropped.
+    resolvePartial?.([section('A', 0, 9)]);
+    await flush();
+    expect(store.sections()).toEqual(complete);
+  });
+});
+
+describe('createSectionsStore — per-session state is pruned when a session closes', () => {
+  it('drops the state, releases the controller line set, and re-fetches on reopen', async () => {
+    commands.getSections.mockResolvedValue([section('A', 0, 2)]);
+    sessionStore.add(load('s1'));
+    sessionStore.setFocused('s1');
+    await flush();
+
+    store.toggle(0);
+    expect(controller.lineNumbers('s1')).toEqual([0, 1, 2]);
+
+    sessionStore.remove('s1');
+    await flush();
+    expect(controller.lineNumbers('s1')).toBeUndefined();
+
+    // A reopened id starts from scratch rather than inheriting the selection.
+    sessionStore.add(load('s1'));
+    sessionStore.setFocused('s1');
+    await flush();
+    expect(store.selectionCount()).toBe(0);
+    expect(commands.getSections).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -341,7 +481,7 @@ describe('createSectionsStore — jumpTo', () => {
     controller.attachPane('main', pane);
     controller.bindSession('s1', 'main');
 
-    store.toggle('A');
+    store.toggle(0);
     store.jumpTo({ name: 'A', startLine: 0, endLine: 2 });
     expect(pane.jumpToLine).toHaveBeenCalledWith(0);
   });
@@ -352,7 +492,7 @@ describe('createSectionsStore — jumpTo', () => {
     controller.attachPane('main', pane);
     controller.bindSession('s1', 'main');
 
-    store.toggle('A');
+    store.toggle(0);
     store.jumpTo({ name: 'B', startLine: 10, endLine: 12 });
 
     expect(pane.jumpToLine).not.toHaveBeenCalled();
@@ -369,7 +509,7 @@ describe('createSectionsStore — jumpTo', () => {
     const pane = makePane();
     controller.attachPane('main', pane);
     controller.bindSession('s1', 'main');
-    store.toggle('A');
+    store.toggle(0);
 
     store.jumpTo({ name: 'B', startLine: 10, endLine: 12 });
     vi.advanceTimersByTime(NOTICE_MS - 1);
@@ -394,7 +534,7 @@ describe('createSectionsStore — dispose', () => {
     sessionStore.setFocused('s1');
     await flush();
 
-    store.toggle('A');
+    store.toggle(0);
     store.jumpTo({ name: 'B', startLine: 99, endLine: 100 });
     expect(store.notice()).toBe(OUTSIDE_FILTER_NOTICE);
 

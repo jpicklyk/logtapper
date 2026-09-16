@@ -30,6 +30,7 @@ export {
   MAX_JOURNAL_ENTRIES,
   NAV_CONFIRM_STORAGE_KEY,
   STATUS_POLL_MS,
+  STATUS_REFRESH_DEBOUNCE_MS,
 } from './presenceStore';
 export type {
   NavTarget,

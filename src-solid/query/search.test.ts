@@ -22,21 +22,32 @@ function summary(matchLineNums: number[]): SearchSummary {
   return { totalMatches: matchLineNums.length, matchLineNums, byLevel: {}, byTag: { Alpha: matchLineNums.length } };
 }
 
-/** A fake `onSearchProgress` the test drives by hand. */
-function createFakeListen() {
+/**
+ * A fake `onSearchProgress` the test drives by hand.
+ *
+ * `deferRegistration` holds the `listen()` promise open so a test can make
+ * `searchLogs` settle *first* — the ordering L1 is about.
+ */
+function createFakeListen(deferRegistration = false) {
   const subscribers: Array<(p: SearchProgress) => void> = [];
   /** Every callback ever registered, in order — never spliced, so a test can
    *  invoke a superseded run's handler directly to simulate the exact race the
    *  `gen` guard protects against (a progress message already dispatched to a
    *  handler at the moment `unlisten()` runs). */
   const registered: Array<(p: SearchProgress) => void> = [];
+  /** Resolvers for registrations held open by `deferRegistration`. */
+  const heldRegistrations: Array<() => void> = [];
   const listen = (cb: (p: SearchProgress) => void): Promise<UnlistenFn> => {
     subscribers.push(cb);
     registered.push(cb);
-    return Promise.resolve((() => {
+    const unlisten = (() => {
       const i = subscribers.indexOf(cb);
       if (i >= 0) subscribers.splice(i, 1);
-    }) as UnlistenFn);
+    }) as UnlistenFn;
+    if (!deferRegistration) return Promise.resolve(unlisten);
+    return new Promise<UnlistenFn>((resolve) => {
+      heldRegistrations.push(() => resolve(unlisten));
+    });
   };
   const fill = (p: Partial<SearchProgress> & { sessionId: string }): SearchProgress => ({
     matchedSoFar: 0, linesScanned: 0, totalLines: 0, newMatches: [], done: false, ...p,
@@ -50,6 +61,8 @@ function createFakeListen() {
     emitDirect: (index: number, p: Partial<SearchProgress> & { sessionId: string }) => {
       registered[index](fill(p));
     },
+    /** Let every held `listen()` promise resolve. */
+    releaseRegistrations: () => { while (heldRegistrations.length) heldRegistrations.shift()?.(); },
     get active() { return subscribers.length; },
   };
 }
@@ -188,6 +201,90 @@ describe('createSearchRunner', () => {
 
     runner.setMatchesOnly(false);
     expect(controller.setLineSet).toHaveBeenLastCalledWith('s1', 'search', null);
+  });
+
+  // H3: an empty Set is not "no narrowing" to the controller — it stores `[]`,
+  // which intersects to "render nothing". Publishing one blanked the viewer on
+  // the two clicks below, with no way back but toggling Matches only twice.
+  it('never narrows to an empty set: Matches only before any query publishes null', () => {
+    const listen = createFakeListen();
+    const { commands } = createFakeCommands();
+    const controller = fakeController();
+    const runner = createSearchRunner({ controller, listen: listen.listen, commands });
+
+    runner.run('s1', null);
+    runner.setMatchesOnly(true);
+
+    expect(runner.hits()).toEqual([]);
+    expect(controller.setLineSet).toHaveBeenLastCalledWith('s1', 'search', null);
+    expect(controller.setLineSet).not.toHaveBeenCalledWith('s1', 'search', new Set());
+  });
+
+  it('never narrows to an empty set: clearing the query while Matches only is on publishes null', async () => {
+    const listen = createFakeListen();
+    const { commands, pending } = createFakeCommands();
+    const controller = fakeController();
+    const runner = createSearchRunner({ controller, listen: listen.listen, commands });
+
+    runner.run('s1', query());
+    await Promise.resolve();
+    pending[0].resolve(summary([1, 2, 3]));
+    await Promise.resolve();
+    await Promise.resolve();
+    runner.setMatchesOnly(true);
+    expect(controller.setLineSet).toHaveBeenLastCalledWith('s1', 'search', new Set([1, 2, 3]));
+
+    // Esc / clearing the text: `run(session, null)` with Matches only still on.
+    runner.run('s1', null);
+
+    expect(controller.setLineSet).toHaveBeenLastCalledWith('s1', 'search', null);
+  });
+
+  it('never narrows to an empty set: a run that finds nothing leaves the viewer whole', async () => {
+    const listen = createFakeListen();
+    const { commands, pending } = createFakeCommands();
+    const controller = fakeController();
+    const runner = createSearchRunner({ controller, listen: listen.listen, commands });
+
+    runner.setMatchesOnly(true);
+    runner.run('s1', query('nothing-matches-this'));
+    await Promise.resolve();
+    pending[0].resolve(summary([]));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(runner.phase()).toBe('done');
+    expect(controller.setLineSet).toHaveBeenLastCalledWith('s1', 'search', null);
+  });
+
+  // L1: `searchLogs` can resolve before `listen()` does. The `.finally`
+  // teardown then ran first, and the late `.then` stored the unlisten for a
+  // finished run — leaving the listener registered until the next
+  // run/cancel/dispose, merging late progress into a settled run's hits.
+  it('unregisters a progress listener that resolves after its run already settled', async () => {
+    const listen = createFakeListen(true);
+    const { commands, pending } = createFakeCommands();
+    const controller = fakeController();
+    const runner = createSearchRunner({ controller, listen: listen.listen, commands });
+
+    runner.run('s1', query());
+    await Promise.resolve();
+    expect(listen.active).toBe(1); // subscribed, but registration not yet resolved
+
+    pending[0].resolve(summary([1]));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(runner.phase()).toBe('done');
+
+    listen.releaseRegistrations();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(listen.active).toBe(0);
+    // So a late `search-progress` for the same session no longer reaches the
+    // settled run's handler at all.
+    listen.emit({ sessionId: 's1', matchedSoFar: 2, newMatches: [999] });
+    expect(runner.hits()).toEqual([1]);
   });
 
   it('run(sessionId, null) clears state without calling searchLogs', () => {

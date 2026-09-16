@@ -106,6 +106,39 @@ function makeSource(totalLines: number, cachedTo = totalLines): FakeSource {
   return src;
 }
 
+/**
+ * A data source over a *line set*: `getLine(i)` indexes positionally into
+ * `absLines`, exactly as `CacheDataSource` does when `getLineNumbers` is set, and
+ * each `ViewLine` carries its real backend `lineNum`. `totalLines` stays the
+ * unfiltered session total so tail mode has something wrong to reach for.
+ */
+function makeFilteredSource(absLines: number[], sessionTotal = absLines.length): FakeSource {
+  const listeners = new Set<(l: ViewLine[], t: number) => void>();
+  let total = sessionTotal;
+  const getLineSpy = vi.fn((i: number) => {
+    const abs = absLines[i];
+    return abs === undefined ? undefined : makeLine(abs);
+  });
+  const src: FakeSource = {
+    get totalLines() {
+      return total;
+    },
+    sourceId: 'fake:filtered',
+    getLine: getLineSpy,
+    getLines: () => Promise.resolve([]),
+    onAppend(cb) {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
+    },
+    fill(_from, _to, newTotal) {
+      if (newTotal != null) total = newTotal;
+      for (const cb of listeners) cb([], total);
+    },
+    getLineSpy,
+  };
+  return src;
+}
+
 const grid = (c: HTMLElement) => c.querySelector('[role="grid"]') as HTMLElement;
 const rows = (c: HTMLElement) => [...c.querySelectorAll('[data-line]')];
 const lineNums = (c: HTMLElement) => rows(c).map((r) => Number(r.getAttribute('data-line')));
@@ -566,5 +599,147 @@ describe('LogViewer + ViewerController', () => {
     expect(at(2).querySelector('mark')?.textContent).toBe('line');
     expect(at(3).querySelector('mark')).toBeNull();
     controller.dispose();
+  });
+});
+
+// ── Absolute line numbers vs rendered indices (H1–H4) ──────────────────────
+
+describe('LogViewer with a line set active', () => {
+  const SID = 'filtered-session';
+
+  /** 400 matches, sparse and far into a large file: rendered i ⇒ 61234 + i*7. */
+  const ABS = Array.from({ length: 400 }, (_, i) => 61_234 + i * 7);
+  const SESSION_TOTAL = 300_000;
+
+  const mountFiltered = (opts: { tailMode?: boolean } = {}) => {
+    const controller = createViewerController({ focusSession: vi.fn() });
+    controller.setLineSet(SID, 'filter', new Set(ABS));
+    const src = makeFilteredSource(ABS, SESSION_TOTAL);
+    const onCursorChange = vi.fn();
+    const rendered = render(() => (
+      <LogViewer
+        dataSource={src}
+        totalLineCount={ABS.length}
+        sessionId={SID}
+        controller={controller}
+        onCursorChange={onCursorChange}
+        tailMode={opts.tailMode}
+      />
+    ));
+    return { controller, src, onCursorChange, ...rendered };
+  };
+
+  const at = (c: HTMLElement, rendered: number) =>
+    rows(c).find((r) => r.getAttribute('data-line') === String(rendered))!;
+  const gutter = (row: Element) => row.firstElementChild!.textContent!.trim();
+
+  it('prints the absolute backend line number in the gutter, not the row index', () => {
+    const { container, controller } = mountFiltered();
+
+    expect(gutter(at(container, 0))).toBe(String(ABS[0] + 1));
+    expect(gutter(at(container, 1))).toBe(String(ABS[1] + 1));
+    expect(gutter(at(container, 5))).toBe(String(ABS[5] + 1));
+    controller.dispose();
+  });
+
+  it('falls back to the positional number for a row that has not resolved', () => {
+    const controller = createViewerController({ focusSession: vi.fn() });
+    controller.setLineSet(SID, 'filter', new Set(ABS));
+    // Nothing is cached: every row is a skeleton.
+    const src = makeFilteredSource([], SESSION_TOTAL);
+    const { container } = render(() => (
+      <LogViewer
+        dataSource={src}
+        totalLineCount={ABS.length}
+        sessionId={SID}
+        controller={controller}
+      />
+    ));
+
+    const row = at(container, 3);
+    expect(row.hasAttribute('data-skeleton')).toBe(true);
+    expect(gutter(row)).toBe('4');
+    controller.dispose();
+  });
+
+  it('publishes the clicked row as an absolute line number', () => {
+    const { container, controller, onCursorChange } = mountFiltered();
+
+    fireEvent.click(at(container, 2));
+
+    expect(controller.cursor()).toEqual({ sessionId: SID, line: ABS[2] });
+    expect(onCursorChange).toHaveBeenCalledWith(ABS[2]);
+    controller.dispose();
+  });
+
+  it('maps an absolute scrollToLine onto the row that holds it', () => {
+    const { container, controller } = mountFiltered();
+    const el = grid(container);
+
+    controller.scrollToLine(SID, ABS[300]);
+
+    // Rendered row 300 scrolled just inside the bottom edge — not
+    // `ABS[300] * ROW_H`, which the browser would clamp away entirely.
+    expect(el.scrollTop).toBe(300 * ROW_H + ROW_H - VIEWPORT_H);
+    fireEvent.scroll(el);
+    expect(lineNums(container)).toContain(300);
+    expect(gutter(at(container, 300))).toBe(String(ABS[300] + 1));
+    controller.dispose();
+  });
+
+  it('snaps an absolute line that is not itself matched to the nearest row', () => {
+    const { container, controller } = mountFiltered();
+    const el = grid(container);
+
+    // ABS[100] + 3 is between two matches — the nearest row at or after it is 101.
+    controller.scrollToLine(SID, ABS[100] + 3);
+
+    expect(el.scrollTop).toBe(101 * ROW_H + ROW_H - VIEWPORT_H);
+    controller.dispose();
+  });
+
+  it('maps an absolute selection range onto rendered rows', () => {
+    const { container, controller } = mountFiltered();
+
+    controller.scrollToLine(SID, ABS[4], { select: [ABS[4], ABS[6]] });
+    fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
+
+    const [selection] = vi.mocked(buildCopyText).mock.calls[0];
+    expect([...selection.selected].sort((a, b) => a - b)).toEqual([4, 5, 6]);
+    void container;
+    controller.dispose();
+  });
+
+  it('sizes tail mode to the line set, not the unfiltered stream total', () => {
+    const { container, controller } = mountFiltered({ tailMode: true });
+    const el = grid(container);
+
+    expect(el.getAttribute('aria-rowcount')).toBe(String(ABS.length));
+    expect((el.firstElementChild as HTMLElement).style.getPropertyValue('--spacer-h'))
+      .toBe(`${ABS.length * ROW_H}px`);
+    controller.dispose();
+  });
+
+  it('keeps tail mode on the stream total when no line set is active', () => {
+    const src = makeSource(100);
+    const { container } = render(() => (
+      <LogViewer dataSource={src} totalLineCount={100} tailMode />
+    ));
+    const el = grid(container);
+    expect(el.getAttribute('aria-rowcount')).toBe('100');
+  });
+});
+
+// ── Accessibility: the grid pattern is complete (L1) ───────────────────────
+
+describe('LogViewer grid semantics', () => {
+  it('gives every row a row role, a 1-based aria-rowindex and gridcells', () => {
+    const src = makeSource(50);
+    const { container } = render(() => <LogViewer dataSource={src} totalLineCount={50} />);
+
+    const third = rows(container)[2];
+    expect(third.getAttribute('role')).toBe('row');
+    expect(third.getAttribute('aria-rowindex')).toBe('3');
+    expect(third.querySelectorAll('[role="gridcell"]').length).toBeGreaterThan(0);
   });
 });

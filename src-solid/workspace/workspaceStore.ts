@@ -48,8 +48,15 @@ import { buildAppStatePayload } from '@hooks/workspace/appStatePayload';
 import { reconcileWorkspaceList } from '@hooks/workspace/reconcileWorkspaceList';
 import { consumeStartupFile } from '@hooks/workspace/startupFile';
 import { planExplicitOpen, planStartupRestore } from '@hooks/workspace/restorePlan';
+import { normalizePath } from '@hooks/workspace/restoreTrust';
 import type { RestorePlan, StoredTab } from '@hooks/workspace/restorePlan';
 import type { LoadWorkspaceSessionData } from '@bridge/types';
+// Region widths are keyed per workspace in localStorage by `shell/Splitter`;
+// deleting a workspace has to take its entry with it, and the key shape is the
+// shell's to own — hence the barrel import rather than a second copy of the
+// prefix here. `shell` only reaches back into `workspace/layoutBlob` (a leaf),
+// so this adds no module cycle.
+import { widthsStorageKey } from '../shell';
 import { emptySolidLayout, readSolidLayout, writeSolidLayout } from './layoutBlob';
 import type { SolidLayout } from './layoutBlob';
 import { runRestorePlan } from './restore';
@@ -107,7 +114,14 @@ export interface WorkspaceStoreDeps {
   /** Optional: W4a supplies the live chain. Defaults to an empty chain. */
   getPipelineChain?: () => PipelineChainSnapshot;
   /** Injected in tests. Defaults to `window.localStorage`. */
-  storage?: Pick<Storage, 'getItem' | 'setItem'>;
+  storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+  /**
+   * Last-resort confirm before a workspace transition discards state that the
+   * flush could not persist (see `flushForTransition`). Defaults to the
+   * platform `confirm`; injected in tests. Same injected-confirm shape
+   * `editorStore` already uses for a dirty document.
+   */
+  confirmDiscard?: (message: string) => boolean;
   autoSaveDebounceMs?: number;
 }
 
@@ -154,7 +168,7 @@ export interface WorkspaceStore {
   dispose(): void;
 }
 
-function readMirror(storage: Pick<Storage, 'getItem' | 'setItem'>): WorkspaceMirror {
+function readMirror(storage: Pick<Storage, 'getItem'>): WorkspaceMirror {
   const empty: WorkspaceMirror = { activeWorkspaceId: null, tabPaths: [], activeTabPath: null };
   try {
     const raw = storage.getItem(SOLID_MIRROR_KEY);
@@ -172,7 +186,7 @@ function readMirror(storage: Pick<Storage, 'getItem' | 'setItem'>): WorkspaceMir
   }
 }
 
-function writeMirror(storage: Pick<Storage, 'getItem' | 'setItem'>, mirror: WorkspaceMirror): void {
+function writeMirror(storage: Pick<Storage, 'setItem'>, mirror: WorkspaceMirror): void {
   try {
     storage.setItem(SOLID_MIRROR_KEY, JSON.stringify(mirror));
   } catch {
@@ -207,6 +221,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
     const debounceMs = deps.autoSaveDebounceMs ?? AUTO_SAVE_DEBOUNCE_MS;
     const getEditorTabs = deps.getEditorTabs ?? ((): LtwEditorTab[] => []);
     const getChain = deps.getPipelineChain ?? ((): PipelineChainSnapshot => ({ chain: [], disabledIds: [] }));
+    const confirmDiscard = deps.confirmDiscard ?? ((message: string): boolean => globalThis.confirm(message));
 
     const [list, setList] = createSignal<readonly WorkspaceIdentity[]>([]);
     const [activeId, setActiveId] = createSignal<string | null>(null);
@@ -256,6 +271,17 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
         tabPaths: paths,
         activeTabPath: (focused && deps.sessions.byId(focused)?.load.filePath) || null,
       });
+    };
+
+    /** Drop the shell's per-workspace region widths for a workspace that no
+     *  longer exists. `logtapper-shell-widths:<id>` has no other owner and no
+     *  expiry, so without this localStorage accretes a dead entry per delete. */
+    const forgetShellWidths = (id: string): void => {
+      try {
+        storage.removeItem(widthsStorageKey(id));
+      } catch {
+        /* private mode / quota — the widths cache is best-effort by design. */
+      }
     };
 
     const cancelPending = (): void => {
@@ -323,6 +349,31 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       }, debounceMs);
     };
 
+    /**
+     * The durability gate every transition (switch / open / new) runs first.
+     *
+     * Flushing the armed debounce *before* the teardown is the guarantee React
+     * relies on instead of a "save changes?" prompt — `useWorkspace.ts`'s
+     * `runTransition` runs `await doAutoSave()` before `doClearPanes()` and
+     * calls that ordering load-bearing. Cancelling the timer first (what this
+     * store used to do) threw the outgoing workspace's frontend-owned state —
+     * the Solid layout blob and the editor tabs nothing else writes — away.
+     *
+     * Only when the workspace is *still* dirty afterwards (the save threw, or
+     * there was no workspace to save into) is anything actually at risk, and
+     * that is the one case worth a prompt. Returns false when the user
+     * cancelled, which aborts the transition.
+     */
+    const flushForTransition = async (): Promise<boolean> => {
+      await autoSave();
+      cancelPending();
+      const ws = active();
+      if (!ws?.dirty) return true;
+      return confirmDiscard(
+        `"${ws.name}" has unsaved changes that could not be saved. Discard them?`,
+      );
+    };
+
     // ── restore ─────────────────────────────────────────────────────────────
 
     const openPathIds = async (path: string): Promise<string[]> => {
@@ -375,17 +426,50 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
     };
 
     const openWorkspace = async (path: string): Promise<void> => {
+      if (!(await flushForTransition())) return;
       const result = await loadWorkspaceV4(path);
       // Explicit open: the `.ltw` is the whole truth — close what is open, then
       // replay the manifest. The mirror does not participate (see restore.ts).
       await closeAllSessions();
-      const existing = active();
-      const id = existing?.id ?? createEmptyWorkspace().id;
-      if (existing) patch(id, { name: result.workspaceName, filePath: path, dirty: false });
-      else setList((prev) => [...prev, { id, name: result.workspaceName, filePath: path, dirty: false }]);
+      // The opened `.ltw` gets its OWN list entry (React's `addWorkspaceEntry`),
+      // never the active entry re-pointed at it: that re-point dropped the
+      // previously active workspace from the list while leaving its
+      // `autoSavePath`/`lastAutoSaveAt` attached to the newly opened file.
+      // Keying the entry on the manifest's own workspace id (rather than a
+      // fresh uuid as React does) makes reopening the same `.ltw` idempotent
+      // instead of growing a duplicate entry each time; a legacy file with no
+      // id still gets a fresh one.
+      const id = result.workspaceId ?? createEmptyWorkspace().id;
+      const known = list().some((w) => w.id === id);
+      if (known) patch(id, { name: result.workspaceName, filePath: path, dirty: false });
+      else {
+        setList((prev) => [
+          ...prev,
+          {
+            id,
+            name: result.workspaceName,
+            filePath: path,
+            dirty: false,
+            autoSavePath: null,
+            lastAutoSaveAt: null,
+          },
+        ]);
+      }
       setActiveId(id);
       await applyRestore(planExplicitOpen(result.sessions), result.sessionData, result.layout, result.editorTabs);
       persistAppState();
+    };
+
+    /**
+     * Read a workspace's `.ltw` purely for its layout blob, replaying nothing.
+     * `undefined` when there is no candidate or the read failed — the value
+     * `applyRestore` treats as "leave the remembered blob alone".
+     */
+    const loadBlobOnly = async (ws: WorkspaceIdentity): Promise<unknown> => {
+      const candidate = ws.filePath ?? ws.autoSavePath ?? null;
+      if (!candidate) return undefined;
+      const result = await loadWorkspaceV4(candidate).catch(() => null);
+      return result ? result.layout : undefined;
     };
 
     const startupRestore = async (): Promise<void> => {
@@ -399,10 +483,24 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       const mirror = readMirror(storage);
       const { storedTabs, tabPaths } = mirrorToStoredTabs(mirror);
       if (startupPath) {
-        await applyRestore(
-          planStartupRestore({ sessions: [], storedTabs, tabPaths, hasLocalLayout: true }),
-          [], null, [],
-        );
+        // `consumeStartupFile()` `.take()`s the backend value once per process,
+        // so this is the only chance to act on it: the file the user
+        // double-clicked has to be *opened*, not merely used as the reason to
+        // skip the `.ltw` restore. React does this in `useStartupFile`; Solid
+        // has no second consumer, so the path is prepended to the mirror's
+        // loads here (first, so it lands as the leading tab).
+        const plan = planStartupRestore({ sessions: [], storedTabs, tabPaths, hasLocalLayout: true });
+        const loads = plan.loads.some((l) => normalizePath(l.path) === normalizePath(startupPath))
+          ? plan.loads
+          : [{ path: startupPath, dataIndex: null }, ...plan.loads];
+        // The `.ltw` manifest is deliberately not replayed — but its layout
+        // blob still has to be read, or the first save after a double-click
+        // start writes `{ solid: … }` alone and strips React's keys from the
+        // file. A failed read passes `undefined`, which leaves the remembered
+        // blob alone rather than nulling it.
+        const blobSource = await loadBlobOnly(ws);
+        if (disposed) return;
+        await applyRestore({ ...plan, loads }, [], blobSource, []);
         return;
       }
       const candidate = ws.filePath ?? ws.autoSavePath ?? null;
@@ -430,7 +528,9 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       if (id === activeId()) return;
       const target = list().find((w) => w.id === id);
       if (!target) return;
-      cancelPending();
+      // Flush the outgoing workspace BEFORE the suppression window and the
+      // teardown — see `flushForTransition`.
+      if (!(await flushForTransition())) return;
       // Arms the backend's auto-save switch-suppression before anything is torn
       // down, so a flush in flight cannot write the outgoing workspace's shell
       // into the incoming one.
@@ -440,6 +540,10 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       persistAppState();
       const candidate = target.filePath ?? target.autoSavePath ?? null;
       if (!candidate) {
+        // Nothing to load, so `applyRestore` never runs: drop the outgoing
+        // workspace's blob by hand or the next save would write its React
+        // layout keys into this one's `.ltw`.
+        lastLayoutBlob = null;
         persistMirror();
         return;
       }
@@ -452,7 +556,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
     };
 
     const newWorkspace = async (): Promise<void> => {
-      cancelPending();
+      if (!(await flushForTransition())) return;
       // Same teardown-before-switch bracket as `switchWorkspace`: arm the
       // backend's suppression window before anything closes, so a flush in
       // flight can't write the outgoing workspace's shell into the new one.
@@ -461,6 +565,11 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       const fresh = createEmptyWorkspace();
       setList((prev) => [...prev, fresh]);
       setActiveId(fresh.id);
+      // A fresh workspace loads no `.ltw`, so nothing else clears the blob the
+      // previous workspace was opened with — and the first autosave here would
+      // otherwise stamp that workspace's React pane tree and tab selections
+      // into this one's file.
+      lastLayoutBlob = null;
       persistAppState();
       persistMirror();
     };
@@ -480,10 +589,17 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
         force: options.force ?? false,
       });
       setList((prev) => prev.filter((w) => w.id !== id));
+      // The shell's per-workspace region widths outlive the workspace itself
+      // otherwise — `logtapper-shell-widths:<id>` has no other owner and no
+      // expiry, so localStorage accretes a dead entry per deleted workspace.
+      forgetShellWidths(id);
       // A forced delete of the active workspace leaves the backend with no
       // active id; mirror that rather than promoting an unrelated entry whose
       // `.ltw` was never loaded (an autosave would then write into it).
-      if (activeId() === id) setActiveId(null);
+      if (activeId() === id) {
+        setActiveId(null);
+        lastLayoutBlob = null;
+      }
     };
 
     // ── hydration ───────────────────────────────────────────────────────────
@@ -503,7 +619,16 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
         return;
       }
       setList(result.state.workspaces);
-      setActiveId(result.state.activeId);
+      // `reconcileWorkspaceList` makes disk authoritative for `activeId`, which
+      // is right at startup — but `hydrate()` also runs from the
+      // `workspace-list-changed` listener, where adopting disk's id would move
+      // this window "into" another workspace with no teardown, no layout apply
+      // and no blob reset, and the next autosave would write these sessions
+      // into that workspace's `.ltw`. Keep the in-memory id whenever it
+      // survived the reconcile; only a vanished one follows disk.
+      const current = activeId();
+      const keepCurrent = current !== null && result.state.workspaces.some((w) => w.id === current);
+      setActiveId(keepCurrent ? current : result.state.activeId);
       if (result.migrated) persistAppState();
     };
 
@@ -529,7 +654,13 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       onWorkspaceListChanged((payload) => {
         if (payload.action === 'deleted') {
           setList((prev) => prev.filter((w) => w.id !== payload.workspaceId));
-          if (activeId() === payload.workspaceId) setActiveId(list()[0]?.id ?? null);
+          forgetShellWidths(payload.workspaceId);
+          if (activeId() === payload.workspaceId) {
+            setActiveId(list()[0]?.id ?? null);
+            // Promoting a neighbour loads no `.ltw`, so the blob of the deleted
+            // workspace must not survive into the promoted one's next save.
+            lastLayoutBlob = null;
+          }
           return;
         }
         // A rename can also originate from an agent (the bridge route is open to

@@ -195,15 +195,22 @@ export function createLiveStreamStore(deps: LiveStreamStoreDeps): LiveStreamStor
     const onStatus = (next: StreamSessionStatus): void => {
       if (disposed) return;
       if (next.phase === 'streaming') {
-        // A repeat 'streaming' status for a session that is already open
-        // (there is no reconnect path today, but nothing here assumes that)
-        // just re-focuses it rather than re-registering.
+        // A repeat 'streaming' status for a session that is already open —
+        // which every batch produces — only updates its line count below. It
+        // must not re-register, re-focus, or clear the error bar.
         if (!sessions.byId(next.sessionId)) {
           sessions.add(streamLoadResult(next));
-          // Transition into streaming, not every batch — see `clearError`'s doc.
+          // Transition into streaming, not every batch — see `clearError`'s
+          // doc. Focus belongs here for the same reason: `handleBatch`
+          // republishes the streaming status on every payload (a fresh object,
+          // so `onStatus` always fires), and focusing from out here snapped
+          // the user back to the live tab within ~50 ms of clicking any other
+          // one — remounting its `QueryBar` and every focus-derived panel with
+          // it, for as long as the capture ran (H2). The registration above
+          // is the only "transition into streaming" there is.
+          sessions.setFocused(next.sessionId);
           deps.clearError?.();
         }
-        sessions.setFocused(next.sessionId);
         // `handleBatch` republishes the status on every batch with the running
         // total, so this is where a live session's line count comes from —
         // nothing else updates it (`updateTotal`'s other callers are the file

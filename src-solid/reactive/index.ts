@@ -16,3 +16,4 @@ export { createGenerationGuard } from './generationGuard';
 export type { GenerationGuard } from './generationGuard';
 
 export { coalesceMicrotask } from './coalesceMicrotask';
+export type { CoalescedSchedule } from './coalesceMicrotask';

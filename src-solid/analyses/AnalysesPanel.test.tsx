@@ -27,10 +27,15 @@ function ref(sessionId: string | null, lineNumber = 1): SourceReference {
 /** A hand-built `AnalysesStore` double — the panel is tested as a renderer
  *  over the store's public surface, not against the real store (that is
  *  `analysesStore.test.ts`'s job). */
-function fakeStore(overrides: { list?: AnalysisArtifact[]; labels?: ReadonlyMap<string, string> } = {}): AnalysesStore {
-  const [list] = createSignal(overrides.list ?? []);
+function fakeStore(overrides: {
+  list?: AnalysisArtifact[];
+  labels?: ReadonlyMap<string, string>;
+  error?: string | null;
+  remove?: () => Promise<void>;
+} = {}): AnalysesStore & { setList: (v: AnalysisArtifact[]) => void } {
+  const [list, setList] = createSignal(overrides.list ?? []);
   const [loading] = createSignal(false);
-  const [error] = createSignal<string | null>(null);
+  const [error] = createSignal<string | null>(overrides.error ?? null);
   const [labels] = createSignal<ReadonlyMap<string, string>>(overrides.labels ?? new Map());
   const [selectedId, setSelectedId] = createSignal<string | null>(null);
 
@@ -38,6 +43,7 @@ function fakeStore(overrides: { list?: AnalysisArtifact[]; labels?: ReadonlyMap<
     list,
     loading,
     error,
+    retry: vi.fn(),
     labels,
     selectedId,
     selected: () => list().find((a) => a.id === selectedId()),
@@ -45,12 +51,13 @@ function fakeStore(overrides: { list?: AnalysisArtifact[]; labels?: ReadonlyMap<
     open: vi.fn(() => Promise.resolve(artifact('x'))),
     publish: vi.fn(() => Promise.resolve(artifact('new'))),
     update: vi.fn(() => Promise.resolve(artifact('x'))),
-    remove: vi.fn(() => Promise.resolve()),
+    remove: vi.fn(overrides.remove ?? (() => Promise.resolve())),
     cursorReference: vi.fn(() => null),
     captureDraftSeed: vi.fn(),
     takeDraftSeed: vi.fn(() => null),
     jumpTo: vi.fn(),
     dispose: vi.fn(),
+    setList: (v: AnalysisArtifact[]) => setList(v),
   };
 }
 
@@ -118,13 +125,73 @@ describe('AnalysesPanel', () => {
     expect(screen.getByTestId('analysis-editor')).toBeTruthy();
   });
 
-  it('deleting a card calls remove() without opening the reader', () => {
+  it('deleting a card needs a confirm step, then calls remove() without opening the reader', () => {
     const a = artifact('a1');
     const store = fakeStore({ list: [a] });
     render(() => <AnalysesPanel store={store} />);
+
     fireEvent.click(screen.getByTitle('Delete analysis'));
+    expect(store.remove).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText('Confirm'));
     expect(store.remove).toHaveBeenCalledWith('a1');
     expect(store.select).not.toHaveBeenCalled();
     expect(screen.queryByTestId('analysis-reader')).toBeNull();
+  });
+
+  it('Space on the card opens the reader, but Space on the delete button does not', () => {
+    const store = fakeStore({ list: [artifact('a1')] });
+    render(() => <AnalysesPanel store={store} />);
+
+    const deleteButton = screen.getByTitle('Delete analysis');
+    // The card's keydown handler used to preventDefault() Space even when the
+    // nested button had focus, so the button could never be activated.
+    fireEvent.keyDown(deleteButton, { key: ' ' });
+    expect(store.select).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(screen.getByTestId('analysis-card'), { key: ' ' });
+    expect(store.select).toHaveBeenCalledWith('a1');
+  });
+});
+
+describe('AnalysesPanel — failures are visible', () => {
+  it('renders the store error with a Retry instead of the empty state', () => {
+    const store = fakeStore({ error: 'Error: bridge down' });
+    render(() => <AnalysesPanel store={store} />);
+
+    expect(screen.getByTestId('analyses-error').textContent).toContain('bridge down');
+    expect(screen.queryByText(/no analyses yet/i)).toBeNull();
+
+    fireEvent.click(screen.getByText('Retry'));
+    expect(store.retry).toHaveBeenCalled();
+  });
+
+  it('surfaces a rejected delete instead of leaving an unhandled rejection', async () => {
+    const store = fakeStore({
+      list: [artifact('a1')],
+      remove: () => Promise.reject(new Error('delete failed')),
+    });
+    render(() => <AnalysesPanel store={store} />);
+
+    fireEvent.click(screen.getByTitle('Delete analysis'));
+    fireEvent.click(screen.getByText('Confirm'));
+    expect((await screen.findByTestId('analyses-action-error')).textContent).toContain('delete failed');
+  });
+});
+
+describe('AnalysesPanel — reader mode state machine', () => {
+  it('falls back to the list when the selected artifact is deleted out from under the reader', async () => {
+    const a = artifact('a1');
+    const store = fakeStore({ list: [a] });
+    render(() => <AnalysesPanel store={store} />);
+
+    fireEvent.click(screen.getByText('Title a1'));
+    expect(await screen.findByTestId('analysis-reader')).toBeTruthy();
+
+    // An `analysis-update` `deleted` drops it from the list; `selected()` goes
+    // undefined and the reader used to stay up saying "Select an analysis".
+    store.setList([]);
+    expect(screen.queryByTestId('analysis-reader')).toBeNull();
+    expect(screen.getByText(/no analyses yet/i)).toBeTruthy();
   });
 });

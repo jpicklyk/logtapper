@@ -19,6 +19,16 @@
  */
 import { createSignal } from 'solid-js';
 import type { Accessor } from 'solid-js';
+// Deliberately the internal module, not the `../workspace` barrel that also
+// exports these (review B-L2 asked for the reason to be written down):
+// `workspace/workspaceStore.ts` imports `widthsStorageKey` from `'../shell'`,
+// so `shell` → `workspace/index` → `workspaceStore` → `shell/index` is a real
+// import cycle, and `workspace/index` additionally pulls in `WorkspaceHome`,
+// which reaches into `stream/` and `app/`. `layoutBlob.ts` is a leaf (Solid +
+// `@bridge` types only), so importing it directly is the acyclic edge. The
+// barrel rule's purpose — one module never depending on another's internals —
+// is preserved in spirit: these five symbols ARE part of `workspace`'s public
+// API, they are just reached at their definition site to break the cycle.
 import { MAX_SPLIT_RATIO, MIN_SPLIT_RATIO, DEFAULT_SPLIT_RATIO } from '../workspace/layoutBlob';
 import type { SplitLayout } from '../workspace/layoutBlob';
 import type { Tier } from './tier';

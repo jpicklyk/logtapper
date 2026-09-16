@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, onMount } from 'solid-js';
 import type { JSX } from 'solid-js';
 import type { MarketplaceEntry, MarketplacePackEntry } from '@bridge/types';
 import { matchesQuery } from '@bridge/types';
@@ -40,7 +40,25 @@ export function PacksPanel(props: PacksPanelProps): JSX.Element {
 
   const enabledSources = createMemo(() => store().sources().filter((s) => s.enabled));
 
+  // The source list belongs to `settingsStore`, and the only thing that used to
+  // load it was `SourcesTab`'s own `onMount` — and `SourcesTab` is rendered
+  // *inside* this panel, under the Advanced `<details>`. So on a fresh launch
+  // with no `updates-available` event, opening Settings → Packs found an empty
+  // list, picked no source, and disabled the Fetch button; with exactly one
+  // configured source the `<select>` is not rendered either, leaving the tab a
+  // dead end until it was unmounted and remounted (D1-H1). Ask for the list
+  // here when nobody has loaded it yet.
   onMount(() => {
+    if (store().sources().length === 0) store().refreshSources();
+  });
+
+  // Reactive, not `onMount`: the list arrives asynchronously and an `onMount`
+  // read of `enabledSources()[0]` ran before it. Re-runs when the sources
+  // populate (or change), and the `!selectedSource()` guard means returning to
+  // the tab does not re-issue the network fetch — the store outlives this
+  // panel, which `SettingsPanel` unmounts on every tab switch (D1-L10).
+  createEffect(() => {
+    if (store().selectedSource()) return;
     const first = enabledSources()[0];
     if (first) void store().fetchEntries(first.name);
   });
@@ -204,19 +222,11 @@ export function PacksPanel(props: PacksPanelProps): JSX.Element {
                                 </>
                               }
                             >
-                              <Show
-                                when={update()}
-                                fallback={
-                                  <button
-                                    type="button"
-                                    class={styles.btn}
-                                    disabled={store().isPending(pack.id)}
-                                    onClick={() => setConfirmingRemovePackId(pack.id)}
-                                  >
-                                    {store().isPending(pack.id) ? 'Working…' : 'Remove'}
-                                  </button>
-                                }
-                              >
+                              {/* Update and Remove sit side by side: showing
+                                  Update *instead of* Remove meant a pack with a
+                                  pending update could only be uninstalled by
+                                  updating it first (D1-L12). */}
+                              <Show when={update()}>
                                 <button
                                   type="button"
                                   class={`${styles.btn} ${styles.btnPrimary}`}
@@ -229,6 +239,14 @@ export function PacksPanel(props: PacksPanelProps): JSX.Element {
                                   {store().isPending(pack.id) ? 'Updating…' : 'Update'}
                                 </button>
                               </Show>
+                              <button
+                                type="button"
+                                class={styles.btn}
+                                disabled={store().isPending(pack.id)}
+                                onClick={() => setConfirmingRemovePackId(pack.id)}
+                              >
+                                {store().isPending(pack.id) ? 'Working…' : 'Remove'}
+                              </button>
                             </Show>
                           }
                         >
@@ -350,12 +368,25 @@ export function PacksPanel(props: PacksPanelProps): JSX.Element {
             <button type="button" class={styles.btn} disabled={store().updatesLoading()} onClick={() => void store().checkUpdates()}>
               {store().updatesLoading() ? 'Checking…' : 'Check for updates'}
             </button>
+            <Show when={store().updatesError()}>
+              {(message) => (
+                <div class={styles.error} role="alert" data-testid="updates-check-error">
+                  Update check failed — {message()}
+                </div>
+              )}
+            </Show>
             <Show when={store().updateErrors().length > 0}>
               <div class={styles.error} role="alert">
                 <For each={store().updateErrors()}>{(e) => <div>{e.sourceName}: {e.error}</div>}</For>
               </div>
             </Show>
-            <Show when={store().pendingUpdates().length === 0 && store().pendingPackUpdates().length === 0}>
+            <Show
+              when={
+                !store().updatesError() &&
+                store().pendingUpdates().length === 0 &&
+                store().pendingPackUpdates().length === 0
+              }
+            >
               <span class={styles.empty}>No pending updates.</span>
             </Show>
             <For each={store().pendingUpdates()}>

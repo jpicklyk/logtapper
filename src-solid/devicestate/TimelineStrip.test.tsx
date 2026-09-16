@@ -1,9 +1,11 @@
 /** @jsxImportSource solid-js */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createSignal } from 'solid-js';
 import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
 import type { ProcessorSummary, StateTransition } from '@bridge/types';
 import { TimelineStrip } from './TimelineStrip';
 import type { DeviceStateController, DeviceStateStore, TrackerTimelineTrack } from './deviceStateStore';
+import styles from './devicestate.module.css';
 
 afterEach(cleanup);
 
@@ -116,5 +118,105 @@ describe('TimelineStrip', () => {
 
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('group', { name: /timeline/i })).toBeNull();
+  });
+
+  // ── C-L4: the keydown listener is an effect, not a render-body side effect
+  describe('the window keydown listener (C-L4)', () => {
+    it('is not registered while the strip is collapsed, and is removed on unmount', () => {
+      const add = vi.spyOn(window, 'addEventListener');
+      const remove = vi.spyOn(window, 'removeEventListener');
+      const keydownAdds = (): number => add.mock.calls.filter((c) => c[0] === 'keydown').length;
+      const keydownRemoves = (): number => remove.mock.calls.filter((c) => c[0] === 'keydown').length;
+
+      const { unmount } = render(() => (
+        <TimelineStrip store={fakeStore()} controller={fakeController()} sessionId="s1" totalLines={100} />
+      ));
+      expect(keydownAdds()).toBe(0);
+
+      fireEvent.click(screen.getByRole('button', { name: /timeline/i }));
+      expect(keydownAdds()).toBe(1);
+
+      // Collapsing removes it again — Escape anywhere in the app should not
+      // be reaching a strip that is not showing.
+      fireEvent.click(screen.getByRole('button', { name: /timeline/i }));
+      expect(keydownRemoves()).toBe(1);
+
+      fireEvent.click(screen.getByRole('button', { name: /timeline/i }));
+      unmount();
+      expect(keydownRemoves()).toBe(2);
+      add.mockRestore();
+      remove.mockRestore();
+    });
+  });
+
+  // ── C-L6: ticks follow a changing total ─────────────────────────────────
+  it('moves the ticks when totalLines changes (indexing finishing, a stream appending)', () => {
+    const [totalLines, setTotalLines] = createSignal(101);
+    render(() => (
+      <TimelineStrip
+        store={fakeStore()}
+        controller={fakeController()}
+        sessionId="s1"
+        totalLines={totalLines()}
+      />
+    ));
+    fireEvent.click(screen.getByRole('button', { name: /timeline/i }));
+    const svg = screen.getByRole('slider', { name: /usb state timeline/i });
+    const tickX = (): (string | null)[] =>
+      [...svg.querySelectorAll(`.${styles.timelineTick}`)].map((n) => n.getAttribute('x1'));
+    expect(tickX()).toEqual(['10', '90']); // maxLine 100
+
+    setTotalLines(201); // maxLine 200 — the same lines are now half as far along
+    expect(tickX()).toEqual(['5', '45']);
+  });
+
+  it('clamps a transition recorded beyond the known total to the viewBox', () => {
+    const store = fakeStore({ timeline: vi.fn(() => ({ ...track(), transitions: [transition(500)] })) });
+    render(() => <TimelineStrip store={store} controller={fakeController()} sessionId="s1" totalLines={101} />);
+    fireEvent.click(screen.getByRole('button', { name: /timeline/i }));
+    const svg = screen.getByRole('slider', { name: /usb state timeline/i });
+    expect(svg.querySelector(`.${styles.timelineTick}`)!.getAttribute('x1')).toBe('100');
+  });
+
+  // ── C-L7: the slider role is operable ───────────────────────────────────
+  it('is focusable and moves the cursor from the keyboard', () => {
+    const controller = fakeController({ cursor: () => ({ sessionId: 's1', line: 50 }) });
+    render(() => (
+      <TimelineStrip store={fakeStore()} controller={controller} sessionId="s1" totalLines={101} />
+    ));
+    fireEvent.click(screen.getByRole('button', { name: /timeline/i }));
+    const svg = screen.getByRole('slider', { name: /usb state timeline/i });
+    expect(svg.getAttribute('tabindex')).toBe('0');
+
+    fireEvent.keyDown(svg, { key: 'ArrowRight' }); // +1% of a 100-line range
+    expect(controller.scrollToLine).toHaveBeenLastCalledWith('s1', 51, { source: 'user' });
+    fireEvent.keyDown(svg, { key: 'PageDown' }); // -10%
+    expect(controller.scrollToLine).toHaveBeenLastCalledWith('s1', 40, { source: 'user' });
+    fireEvent.keyDown(svg, { key: 'Home' });
+    expect(controller.scrollToLine).toHaveBeenLastCalledWith('s1', 0, { source: 'user' });
+    fireEvent.keyDown(svg, { key: 'End' });
+    expect(controller.scrollToLine).toHaveBeenLastCalledWith('s1', 100, { source: 'user' });
+  });
+
+  // ── C-L8: the rect is re-measured per move ──────────────────────────────
+  it('re-measures the track during a drag, so a mid-gesture scroll does not skew the mapping', () => {
+    const controller = fakeController();
+    render(() => (
+      <TimelineStrip store={fakeStore()} controller={controller} sessionId="s1" totalLines={101} />
+    ));
+    fireEvent.click(screen.getByRole('button', { name: /timeline/i }));
+    const svg = screen.getByRole('slider', { name: /usb state timeline/i });
+    svg.getBoundingClientRect = () => ({ left: 0, right: 200, width: 200 }) as DOMRect;
+
+    svg.dispatchEvent(pointer('pointerdown', 100));
+    expect(controller.scrollToLine).toHaveBeenLastCalledWith('s1', 50, { source: 'user' });
+
+    // The strip scrolls 100px left mid-drag; the same clientX is now the
+    // track's right-hand end, not its middle.
+    svg.getBoundingClientRect = () => ({ left: -100, right: 100, width: 200 }) as DOMRect;
+    window.dispatchEvent(pointer('pointermove', 100));
+    expect(controller.scrollToLine).toHaveBeenLastCalledWith('s1', 100, { source: 'user' });
+
+    window.dispatchEvent(pointer('pointerup', 100));
   });
 });

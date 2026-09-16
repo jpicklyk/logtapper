@@ -72,6 +72,26 @@ describe('createTextEditor', () => {
     expect(editor.isDirty()).toBe(true);
   });
 
+  // ── B-M8 ─────────────────────────────────────────────────────────────────
+  it('stays dirty when a controlled caller echoes the current content back', () => {
+    const editor = mount({ doc: 'a' });
+    // The round trip a controlled `EditorTab` makes on every keystroke:
+    // onChange → store → `content` prop → setValue with the same text.
+    const echo = editor.onChange((next) => editor.setValue(next));
+
+    editor.view.dispatch({ changes: { from: 1, insert: 'b' } });
+
+    expect(editor.getValue()).toBe('ab');
+    // Before the fix `setValue` re-baselined `saved` on the echo, so the
+    // handle reported a dirty buffer as clean for every controlled caller.
+    expect(editor.isDirty()).toBe(true);
+    echo();
+
+    // markSaved() is still the way to re-baseline deliberately.
+    editor.markSaved();
+    expect(editor.isDirty()).toBe(false);
+  });
+
   it('notifies the constructor listener and every subscriber on a doc change', () => {
     const initial = vi.fn();
     const editor = mount({ doc: '', onChange: initial });

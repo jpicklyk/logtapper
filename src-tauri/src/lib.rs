@@ -7,6 +7,7 @@ pub mod mcp_bridge;
 pub mod processors;
 pub mod scripting;
 pub mod services;
+pub mod webview_guard;
 pub mod workspace;
 
 use commands::AppState;
@@ -280,6 +281,13 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
+        // Opening http/https/mailto links from markdown prose in the OS default
+        // handler. Scoped to `opener:allow-open-url` in capabilities/default.json.
+        .plugin(tauri_plugin_opener::init())
+        // …and the other half of that: the webview itself may never follow such
+        // a link. See webview_guard.rs for why a chrome-less window makes this
+        // unrecoverable rather than merely surprising.
+        .plugin(webview_guard::plugin())
         .setup(|app| {
             // Configure window decorations per platform.
             // Windows/Linux: remove native title bar — the frontend renders custom controls.

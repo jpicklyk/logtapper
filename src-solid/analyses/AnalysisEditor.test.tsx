@@ -33,12 +33,14 @@ function fakeStore(overrides: {
   selected?: AnalysisArtifact;
   cursorReference?: SourceReference | null;
   takeDraftSeed?: SourceReference | null;
-} = {}): AnalysesStore {
-  const [selected] = createSignal(overrides.selected);
+} = {}): AnalysesStore & { setSelected: (v: AnalysisArtifact | undefined) => void } {
+  const [selected, setSelected] = createSignal(overrides.selected);
   return {
+    setSelected: (v: AnalysisArtifact | undefined) => setSelected(() => v),
     list: () => [],
     loading: () => false,
     error: () => null,
+    retry: vi.fn(),
     labels: () => new Map(),
     selectedId: () => selected()?.id ?? null,
     selected,
@@ -63,9 +65,31 @@ describe('AnalysisEditor', () => {
       expect(button.disabled).toBe(true);
     });
 
-    it('enables Publish once a title is present and at least one section exists', () => {
+    it('refuses Publish while the only section is entirely empty', () => {
       render(() => <AnalysisEditor store={fakeStore()} artifactId={null} onDone={vi.fn()} onCancel={vi.fn()} />);
       fireEvent.input(screen.getByPlaceholderText(/what did you find/i), { target: { value: 'A finding' } });
+
+      // The default draft already has one `emptySection()`; publishing it
+      // stored a section with an empty heading AND body, which renders as a
+      // blank card filed under "Unattributed" forever.
+      const button = screen.getByRole('button', { name: /publish/i }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+    });
+
+    it('enables Publish once a title and a section heading are present', () => {
+      render(() => <AnalysisEditor store={fakeStore()} artifactId={null} onDone={vi.fn()} onCancel={vi.fn()} />);
+      fireEvent.input(screen.getByPlaceholderText(/what did you find/i), { target: { value: 'A finding' } });
+      fireEvent.input(screen.getByPlaceholderText(/section heading/i), { target: { value: 'Root cause' } });
+      const button = screen.getByRole('button', { name: /publish/i }) as HTMLButtonElement;
+      expect(button.disabled).toBe(false);
+    });
+
+    it('enables Publish on a section body alone (heading is optional)', () => {
+      const { container } = render(() => (
+        <AnalysisEditor store={fakeStore()} artifactId={null} onDone={vi.fn()} onCancel={vi.fn()} />
+      ));
+      fireEvent.input(screen.getByPlaceholderText(/what did you find/i), { target: { value: 'A finding' } });
+      typeInSection(container, 0, 'It crashed.');
       const button = screen.getByRole('button', { name: /publish/i }) as HTMLButtonElement;
       expect(button.disabled).toBe(false);
     });
@@ -73,6 +97,7 @@ describe('AnalysisEditor', () => {
     it('disables Publish again once the only section is removed', () => {
       render(() => <AnalysisEditor store={fakeStore()} artifactId={null} onDone={vi.fn()} onCancel={vi.fn()} />);
       fireEvent.input(screen.getByPlaceholderText(/what did you find/i), { target: { value: 'A finding' } });
+      fireEvent.input(screen.getByPlaceholderText(/section heading/i), { target: { value: 'Root cause' } });
       fireEvent.click(screen.getByTitle('Remove section'));
       const button = screen.getByRole('button', { name: /publish/i }) as HTMLButtonElement;
       expect(button.disabled).toBe(true);
@@ -168,5 +193,64 @@ describe('AnalysisEditor', () => {
       fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
       expect(onCancel).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe('AnalysisEditor — concurrent update to the open artifact', () => {
+  const existing = (): AnalysisSection[] => [
+    { heading: 'Mine', body: 'my body', references: [], severity: null },
+  ];
+
+  it('notices an analysis-update for the artifact being edited and blocks a blind Update', () => {
+    const original = artifact('a1', { title: 'Original', sections: existing() });
+    const store = fakeStore({ selected: original });
+    render(() => <AnalysisEditor store={store} artifactId="a1" onDone={vi.fn()} onCancel={vi.fn()} />);
+
+    expect(screen.queryByTestId('analysis-conflict')).toBeNull();
+    const button = screen.getByRole('button', { name: /update/i }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+
+    // An agent revises it while the editor is open: the store refetches and
+    // `selected()` becomes a new object. Previously invisible here, and Update
+    // then sent the stale sections and dropped the agent's revision.
+    store.setSelected(
+      artifact('a1', {
+        title: 'Agent revision',
+        sections: [{ heading: 'Theirs', body: 'their body', references: [], severity: null }],
+      }),
+    );
+
+    expect(screen.getByTestId('analysis-conflict')).toBeTruthy();
+    expect((screen.getByRole('button', { name: /update/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect(store.update).not.toHaveBeenCalled();
+  });
+
+  it('"Reload it" replaces the draft with the new version', () => {
+    const store = fakeStore({ selected: artifact('a1', { title: 'Original', sections: existing() }) });
+    render(() => <AnalysisEditor store={store} artifactId="a1" onDone={vi.fn()} onCancel={vi.fn()} />);
+
+    store.setSelected(
+      artifact('a1', {
+        title: 'Agent revision',
+        sections: [{ heading: 'Theirs', body: 'their body', references: [], severity: null }],
+      }),
+    );
+    fireEvent.click(screen.getByText('Reload it'));
+
+    expect(screen.queryByTestId('analysis-conflict')).toBeNull();
+    expect(screen.getByDisplayValue('Agent revision')).toBeTruthy();
+    expect(screen.getByDisplayValue('Theirs')).toBeTruthy();
+  });
+
+  it('"Overwrite anyway" dismisses the banner and re-enables Update', () => {
+    const store = fakeStore({ selected: artifact('a1', { title: 'Original', sections: existing() }) });
+    render(() => <AnalysisEditor store={store} artifactId="a1" onDone={vi.fn()} onCancel={vi.fn()} />);
+
+    store.setSelected(artifact('a1', { title: 'Agent revision', sections: existing() }));
+    fireEvent.click(screen.getByText('Overwrite anyway'));
+
+    expect(screen.queryByTestId('analysis-conflict')).toBeNull();
+    expect((screen.getByRole('button', { name: /update/i }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByDisplayValue('Original')).toBeTruthy();
   });
 });

@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { Show, createEffect, createMemo, createSignal, on, onCleanup } from 'solid-js';
+import { Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from 'solid-js';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { onCatalogUpdate } from '@bridge/events';
 import {
@@ -20,7 +20,7 @@ import {
   isSplitTier,
 } from './shell';
 import type { TabDescriptor } from './shell';
-import { QueryBar, createQueryStore } from './query';
+import { QueryBar, createLiveFilterBindings, createQueryStore } from './query';
 import type { FilterScan } from './query';
 import { PresencePanel, createPresenceStore } from './presence';
 import { EditorTabs, createEditorStore } from './editor';
@@ -37,7 +37,7 @@ import { ExportDialog, createExportStore } from './export';
 import { SettingsPanel, createSettingsStore } from './settings';
 import { createPacksStore, UpdatesPrompt } from './packs';
 import { StreamControlsPanel, createLiveStreamStore } from './stream';
-import type { ThemeController } from './theme/applyTheme';
+import type { ThemeController } from './theme';
 import styles from './App.module.css';
 
 /**
@@ -81,24 +81,24 @@ export function App(props: AppProps) {
   // `deviceState` further down reads it.
   const analyzers = createAnalyzerStore({ sessions: store, controller });
   onCleanup(() => analyzers.dispose());
-  // Live incremental filter matching (L4) — "which FilterScan is the live
-  // one right now", the one piece of state this file owns for the wiring
-  // below. A `FilterScan` is otherwise private to whichever `QueryBar`
-  // constructs it (one per mounted pane); `bindLiveFilter` is the callback
-  // handed to every `QueryBar` mount (primary and secondary pane, below) so
-  // whichever one currently owns `sessionId` can register itself here. At
-  // most one binding is ever meaningful at a time — there is at most one
-  // live session (see `streamStore.ts`'s coexistence note) — so last-bound
-  // wins; a pane's own `onCleanup` clears its binding via the returned
-  // unbind, guarded so an already-superseded pane's unmount can't clobber a
-  // newer one's. Declared before `liveStream` so the accessor closures
-  // passed into it below can already reference `liveFilterBinding`.
-  const [liveFilterBinding, setLiveFilterBinding] =
-    createSignal<{ sessionId: string; scan: FilterScan } | null>(null);
-  const bindLiveFilter = (sessionId: string, scan: FilterScan): (() => void) => {
-    setLiveFilterBinding({ sessionId, scan });
-    return () => setLiveFilterBinding((current) => (current?.scan === scan ? null : current));
-  };
+  // Live incremental filter matching (L4) — the registry of "which FilterScan
+  // belongs to which session", the one piece of state this file owns for the
+  // wiring below. A `FilterScan` is otherwise private to whichever `QueryBar`
+  // constructs it (one per mounted pane); `bind` is the callback handed to
+  // every `QueryBar` mount (primary and secondary pane, below) so each can
+  // register itself under its OWN session id. Resolution happens per batch,
+  // against the capturing session — see `query/liveFilterBindings.ts` for why
+  // the single last-write-wins binding this replaced broke live filtering the
+  // moment a split opened (H4). Declared before `liveStream` so the accessor
+  // closures below can already reference it; `liveSessionId` reads
+  // `liveStream.status()` lazily, from inside the batch handler, long after
+  // the store below is constructed.
+  const liveFilters = createLiveFilterBindings(() => {
+    const status = liveStream.status();
+    return status.phase === 'streaming' ? status.sessionId : null;
+  });
+  const bindLiveFilter = (sessionId: string, scan: FilterScan): (() => void) =>
+    liveFilters.bind(sessionId, scan);
   // Live stream (L1) — the one place a `start_adb_stream` result becomes a
   // registered session (tab, focus) and a stopped one becomes an ordinary
   // postmortem session again. Built before `actions` so `close()` can stop a
@@ -111,23 +111,15 @@ export function App(props: AppProps) {
   // gap L1 left open: `createStreamSession`'s own doc comment named this as
   // unwired because `FilterScan` had no AST/pids accessor and `query/` was
   // out of L1's scope — both now exist (`FilterScan.currentFilter()` /
-  // `.appendMatches()`), and `liveFilterBinding` above is what reaches
-  // whichever `FilterScan` is currently live.
+  // `.appendMatches()`), and `liveFilters` above is what resolves the batch's
+  // own session to the `FilterScan` that owns it.
   const liveStream = createLiveStreamStore({
     cacheManager,
     registry,
     sessions: store,
     analyzers,
     clearError: () => actions.clearError(),
-    filter: {
-      filterAst: () => liveFilterBinding()?.scan.currentFilter().ast ?? null,
-      filterSessionId: () => liveFilterBinding()?.sessionId ?? null,
-      packagePids: () => liveFilterBinding()?.scan.currentFilter().packagePids ?? new Map(),
-      appendFilterMatches: (sessionId, lineNums) => {
-        const binding = liveFilterBinding();
-        if (binding && binding.sessionId === sessionId) binding.scan.appendMatches(lineNums);
-      },
-    },
+    filter: liveFilters.hooks,
   });
   const actions = createAppActions({ store, controller, stopLiveSession: liveStream.stopIfCurrent });
   // Query bar (W2b) — reads/writes per-session query state and plugs its
@@ -150,10 +142,11 @@ export function App(props: AppProps) {
   // (shell/) is the split's chrome; wiring below is only which session/pane
   // goes where.
   const splitView = createSplitView();
-  // A second, lightweight `createTier()` subscription (same pattern as
-  // `AppShell`'s own) — only to gate the "Split view" control below; wiring
-  // tier out of `AppShell` for one boolean would be a bigger change than the
-  // decision it drives (see this task's implementation-notes).
+  // The app's ONE tier subscription (review B-L6). `createTier()` registers
+  // three `matchMedia` listeners and mirrors the result onto
+  // `<html data-tier>`; `AppShell` and `ViewerSplit` used to create their own
+  // as well, so three ran and two wrote the same attribute. Both now take it
+  // as a prop. It is read here directly to gate the "Split view" control.
   const tier = createTier();
 
   // A session closing — from this UI or a foreign (agent) close, neither of
@@ -231,7 +224,6 @@ export function App(props: AppProps) {
     },
   });
   onCleanup(() => workspace.dispose());
-  void workspace.hydrate().then(() => workspace.startupRestore());
 
   // Editor tabs (W9) — scratch/file documents opened alongside sessions, with
   // dirty tracking and Save/Save As. Restore is pull-based: this store reads
@@ -309,8 +301,14 @@ export function App(props: AppProps) {
 
   // Settings (W8) — General/PII/Themes/Sources tabs for the `settings` rail
   // surface. Reuses A2's `presence.status` (`McpStatus`, already polled
-  // every 5s) instead of polling the bridge a second time.
-  const settings = createSettingsStore({ mcpStatus: presence.status });
+  // every 5s) instead of polling the bridge a second time. `refreshMcpStatus`
+  // is the undebounced re-read the security-relevant setters call after a
+  // write, so a rejected raw-access toggle is corrected from the backend at
+  // once rather than after the next poll.
+  const settings = createSettingsStore({
+    mcpStatus: presence.status,
+    refreshMcpStatus: presence.refreshStatus,
+  });
   onCleanup(() => settings.dispose());
 
   // Packs (P1) — the remote marketplace half (browse/install/uninstall/
@@ -408,7 +406,21 @@ export function App(props: AppProps) {
     return entry ? renderedLineCountFor(entry) : 0;
   };
 
-  if (isBenchMode()) installBenchApp({ actions, stream: liveStream });
+  // Both of these are side effects, so they belong in `onMount`, not in the
+  // render body (project rule; review A-M8). `hydrate()` only catches its
+  // first `getAppState` — every later await, and all of `startupRestore`
+  // (`consumeStartupFile`, `applyRestore`), could reject into nothing, so a
+  // workspace that fails to restore used to surface as an unhandled rejection
+  // the user never saw. It goes on the same error line every other failure
+  // uses; `workspace.warnings()` still carries the per-file detail.
+  onMount(() => {
+    void workspace
+      .hydrate()
+      .then(() => workspace.startupRestore())
+      .catch((e: unknown) => actions.reportError(`Workspace restore failed: ${String(e)}`));
+
+    if (isBenchMode()) installBenchApp({ actions, stream: liveStream });
+  });
 
   const newDocument = (): void => {
     editorStore.newDoc();
@@ -519,6 +531,7 @@ export function App(props: AppProps) {
       <AppShell
         workspaceId={workspace.activeId() ?? WORKSPACE_ID}
         sessionKind={store.focused()?.kind ?? null}
+        tier={tier}
         // Land on workspace home when the app opens with nothing loaded, so A1's
         // attach-a-device and open-a-capture actions are the first thing seen
         // rather than sitting behind a rail glyph. Read once by the shell, so a
@@ -567,6 +580,7 @@ export function App(props: AppProps) {
           viewer: () => (
             <ViewerSplit
               split={splitView}
+              tier={tier}
               // The same session can never be picked for both panes — cursor,
               // query and view-mode state are keyed by session id on the
               // controller, not by pane, so showing one session in two panes

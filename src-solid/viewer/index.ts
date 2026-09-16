@@ -65,6 +65,15 @@ export { sessionScrollPositions } from '@viewport/sessionScrollPositions';
 
 export { buildCopyText, writeClipboard } from '@viewport/copyText';
 
+/**
+ * Absolute backend line → index in a sorted line set, by binary search. The
+ * viewer is the only place that needs it (`LogViewer` maps at the pane
+ * boundary), but it is exported so nothing outside is ever tempted to write a
+ * second copy — `src-next/components/LogViewer/scrollMapping.ts` is the one
+ * implementation, with its own unit tests.
+ */
+export { absoluteLineToFilteredIndex } from '@logviewer/scrollMapping';
+
 export { CacheManager, ViewCacheHandle } from '@cache/CacheManager';
 export type { ViewCache, WritableViewCache, CacheController, ViewPriority } from '@cache/CacheManager';
 

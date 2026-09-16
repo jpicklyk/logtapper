@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  APPLIED_THEME_STORAGE_KEY,
   applyDensity,
   applyTheme,
   createThemeController,
@@ -192,5 +193,80 @@ describe('createThemeController', () => {
     const before = root.getAttribute('data-theme');
     media.setMatches(false);
     expect(root.getAttribute('data-theme')).toBe(before);
+  });
+});
+
+describe('createThemeController user themes (B-M5)', () => {
+  let root: HTMLElement;
+  const originalMatchMedia = window.matchMedia;
+
+  beforeEach(() => {
+    root = document.createElement('html');
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia;
+  });
+
+  it('applyUserTheme paints the theme tokens, switches to its base and remembers the slug', () => {
+    installMatchMediaStub(true);
+    const controller = createThemeController(root);
+
+    controller.applyUserTheme('ember', { base: 'light', tokens: { '--accent': '#ff8800' } });
+
+    expect(root.style.getPropertyValue('--accent')).toBe('#ff8800');
+    expect(root.getAttribute('data-theme')).toBe('light');
+    expect(controller.mode()).toBe('light');
+    expect(controller.appliedThemeSlug()).toBe('ember');
+    expect(localStorage.getItem(APPLIED_THEME_STORAGE_KEY)).toBe('ember');
+
+    controller.clearUserTheme();
+    expect(root.style.getPropertyValue('--accent')).toBe('');
+    expect(controller.appliedThemeSlug()).toBeNull();
+    expect(localStorage.getItem(APPLIED_THEME_STORAGE_KEY)).toBeNull();
+    // Clearing the user theme leaves the built-in mode the theme selected.
+    expect(controller.mode()).toBe('light');
+
+    controller.dispose();
+  });
+
+  it('re-applies the persisted slug on startup', async () => {
+    installMatchMediaStub(true);
+    localStorage.setItem(APPLIED_THEME_STORAGE_KEY, 'ember');
+    const loadTheme = vi.fn(() => Promise.resolve({ base: 'light-hc' as const, tokens: { '--accent': '#0a4f9e' } }));
+
+    const controller = createThemeController(root, { loadTheme });
+
+    await vi.waitFor(() => expect(root.style.getPropertyValue('--accent')).toBe('#0a4f9e'));
+    expect(loadTheme).toHaveBeenCalledWith('ember');
+    expect(root.getAttribute('data-theme')).toBe('light-hc');
+    expect(controller.appliedThemeSlug()).toBe('ember');
+
+    controller.dispose();
+  });
+
+  it('never calls the loader when no slug is persisted', () => {
+    installMatchMediaStub(true);
+    const loadTheme = vi.fn(() => Promise.resolve({ base: 'dark' as const, tokens: {} }));
+
+    const controller = createThemeController(root, { loadTheme });
+
+    expect(loadTheme).not.toHaveBeenCalled();
+    controller.dispose();
+  });
+
+  it('forgets a persisted slug whose theme can no longer be read', async () => {
+    installMatchMediaStub(true);
+    localStorage.setItem(APPLIED_THEME_STORAGE_KEY, 'deleted');
+    const loadTheme = vi.fn(() => Promise.reject(new Error('no such theme')));
+
+    const controller = createThemeController(root, { loadTheme });
+
+    await vi.waitFor(() => expect(localStorage.getItem(APPLIED_THEME_STORAGE_KEY)).toBeNull());
+    expect(controller.appliedThemeSlug()).toBeNull();
+    expect(root.getAttribute('data-theme')).toBe('dark');
+
+    controller.dispose();
   });
 });

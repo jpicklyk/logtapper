@@ -1,9 +1,9 @@
 /** @jsxImportSource solid-js */
-import { For, Show, createMemo, createSignal, onCleanup, onMount, untrack } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount, untrack } from 'solid-js';
 import type { JSX } from 'solid-js';
-import { createStore, produce } from 'solid-js/store';
-import type { AnalysisSection, AnalysisSeverity, SourceReference } from '@bridge/types';
-import { createTextEditor, Markdown } from '../editor';
+import { createStore, produce, reconcile } from 'solid-js/store';
+import type { AnalysisArtifact, AnalysisSection, AnalysisSeverity, SourceReference } from '@bridge/types';
+import { createTextEditor, lineRefText, Markdown } from '../editor';
 import type { TextEditorHandle } from '../editor';
 import type { AnalysesStore } from './analysesStore';
 import styles from './analyses.module.css';
@@ -39,10 +39,6 @@ function cloneSection(section: AnalysisSection): DraftSection {
   };
 }
 
-function referenceText(ref: SourceReference): string {
-  return ref.endLine != null ? `L${ref.lineNumber}–${ref.endLine}` : `L${ref.lineNumber}`;
-}
-
 /** One section's markdown body: a CodeMirror instance in markdown mode plus a
  *  live `Markdown` preview, the E1 pattern `EditorTab.tsx` uses for one document. */
 function SectionBodyEditor(props: { value: string; onChange: (next: string) => void }): JSX.Element {
@@ -76,12 +72,19 @@ function SectionBodyEditor(props: { value: string; onChange: (next: string) => v
 
 /**
  * Title, sections (heading + severity + markdown body + references),
- * Publish/Update/Cancel. Validation: a title and at least one section are
- * required. Cancel asks for confirmation once the draft has been touched.
+ * Publish/Update/Cancel. Validation: a title, and at least one section that
+ * actually has a heading or a body — a draft whose only section is blank is
+ * refused. Cancel asks for confirmation once the draft has been touched.
  */
 export function AnalysisEditor(props: AnalysisEditorProps): JSX.Element {
-  const existing = untrack(() => (props.artifactId ? props.store.selected() : undefined));
-  const seed = untrack(() => (props.artifactId ? null : props.store.takeDraftSeed()));
+  // Snapshot `artifactId` once. `existing`/`seed` were already read untracked
+  // from it while the header text and `handleSubmit`'s update-vs-publish
+  // branch read it reactively, so a caller that changed `artifactId` without
+  // changing `mode` would have submitted the old draft as an update to the
+  // new artifact.
+  const artifactId = untrack(() => props.artifactId);
+  const existing = untrack(() => (artifactId ? props.store.selected() : undefined));
+  const seed = untrack(() => (artifactId ? null : props.store.takeDraftSeed()));
 
   const [title, setTitle] = createSignal(existing?.title ?? '');
   const [sections, setSections] = createStore<DraftSection[]>(
@@ -90,12 +93,51 @@ export function AnalysisEditor(props: AnalysisEditorProps): JSX.Element {
   const [error, setError] = createSignal<string | null>(null);
   const [dirty, setDirty] = createSignal(false);
   const [submitting, setSubmitting] = createSignal(false);
+  /** The artifact as it now stands on the backend, when it changed under us. */
+  const [conflict, setConflict] = createSignal<AnalysisArtifact | null>(null);
+  /** Bumped when the draft is replaced wholesale, to force the section rows
+   *  (and with them the CodeMirror instances, which read their document once
+   *  on mount) to be rebuilt rather than merged in place. */
+  const [draftGeneration, setDraftGeneration] = createSignal(0);
+
+  // An `analysis-update` for the artifact this editor has open — an agent
+  // revising it, say — used to be invisible here, and Update then sent the
+  // stale `sections` array and silently dropped that revision.
+  createEffect(
+    on(
+      () => props.store.selected(),
+      (current) => {
+        if (!artifactId || !current || current.id !== artifactId) return;
+        if (current === existing) return;
+        setConflict(current);
+      },
+      { defer: true },
+    ),
+  );
+
+  const loadConflict = (): void => {
+    const current = conflict();
+    if (!current) return;
+    setTitle(current.title);
+    setSections(reconcile(current.sections.map(cloneSection)));
+    setDraftGeneration((n) => n + 1);
+    setConflict(null);
+    setDirty(false);
+  };
 
   const touch = (): void => {
     setDirty(true);
   };
 
-  const canSubmit = createMemo(() => title().trim().length > 0 && sections.length > 0 && !submitting());
+  /** A draft whose only section is blank publishes an empty card that
+   *  attribution files under "Unattributed" forever — refuse it. */
+  const hasContent = createMemo(() =>
+    sections.some((s) => s.heading.trim().length > 0 || s.body.trim().length > 0),
+  );
+
+  const canSubmit = createMemo(
+    () => title().trim().length > 0 && hasContent() && !submitting() && conflict() === null,
+  );
 
   const addSection = (): void => {
     setSections(produce((list) => list.push(emptySection())));
@@ -126,7 +168,11 @@ export function AnalysisEditor(props: AnalysisEditorProps): JSX.Element {
 
   const handleSubmit = async (): Promise<void> => {
     if (!canSubmit()) {
-      setError('A title and at least one section are required.');
+      setError(
+        conflict() !== null
+          ? 'This analysis changed elsewhere — reload it or choose to overwrite.'
+          : 'A title and at least one section with a heading or body are required.',
+      );
       return;
     }
     setError(null);
@@ -138,8 +184,8 @@ export function AnalysisEditor(props: AnalysisEditorProps): JSX.Element {
       severity: s.severity,
     }));
     try {
-      const artifact = props.artifactId
-        ? await props.store.update({ artifactId: props.artifactId, title: title(), sections: payload })
+      const artifact = artifactId
+        ? await props.store.update({ artifactId, title: title(), sections: payload })
         : await props.store.publish({ title: title(), sections: payload });
       props.onDone(artifact.id);
     } catch (e) {
@@ -152,8 +198,20 @@ export function AnalysisEditor(props: AnalysisEditorProps): JSX.Element {
   return (
     <div class={styles.editor} data-testid="analysis-editor">
       <header class={styles.editorHeader}>
-        <h3 class={styles.editorHeading}>{props.artifactId ? 'Edit analysis' : 'New analysis'}</h3>
+        <h3 class={styles.editorHeading}>{artifactId ? 'Edit analysis' : 'New analysis'}</h3>
       </header>
+
+      <Show when={conflict()}>
+        <div class={styles.conflictBanner} role="alert" data-testid="analysis-conflict">
+          <span>This analysis changed elsewhere while you were editing it.</span>
+          <button type="button" class={styles.smallButton} onClick={loadConflict}>
+            Reload it
+          </button>
+          <button type="button" class={styles.smallButton} onClick={() => setConflict(null)}>
+            Overwrite anyway
+          </button>
+        </div>
+      </Show>
 
       <label class={styles.field}>
         Title
@@ -170,7 +228,11 @@ export function AnalysisEditor(props: AnalysisEditorProps): JSX.Element {
       </label>
 
       <div class={styles.sectionList}>
-        <For each={sections}>
+        {/* `keyed` on a value that only changes when the whole draft is
+            replaced: a plain `reconcile` merges in place and the mounted
+            CodeMirror instances would keep the old text. */}
+        <Show keyed when={`draft-${draftGeneration()}`}>
+          <For each={sections}>
           {(section, index) => (
             <fieldset class={styles.sectionCard}>
               <div class={styles.sectionCardHeader}>
@@ -218,7 +280,7 @@ export function AnalysisEditor(props: AnalysisEditorProps): JSX.Element {
                 <For each={section.references}>
                   {(ref, refIndex) => (
                     <span class={styles.referenceChip}>
-                      <span class={styles.referenceLine}>{referenceText(ref)}</span>
+                      <span class={styles.referenceLine}>{lineRefText(ref)}</span>
                       <input
                         class={styles.referenceLabelInput}
                         type="text"
@@ -245,7 +307,8 @@ export function AnalysisEditor(props: AnalysisEditorProps): JSX.Element {
               </div>
             </fieldset>
           )}
-        </For>
+          </For>
+        </Show>
       </div>
 
       <button type="button" class={styles.smallButton} onClick={addSection}>
@@ -261,7 +324,7 @@ export function AnalysisEditor(props: AnalysisEditorProps): JSX.Element {
           Cancel
         </button>
         <button type="button" class={styles.primaryButton} disabled={!canSubmit()} onClick={() => void handleSubmit()}>
-          {props.artifactId ? 'Update' : 'Publish'}
+          {artifactId ? 'Update' : 'Publish'}
         </button>
       </div>
     </div>

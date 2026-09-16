@@ -22,8 +22,8 @@
   color: var(--text-muted);
   cursor: pointer;
   padding: 0;
-  transition: background-color var(--p-duration-fast, 120ms) ease,
-    color var(--p-duration-fast, 120ms) ease;
+  transition: background-color var(--duration-fast, 120ms) ease,
+    color var(--duration-fast, 120ms) ease;
 }
 
 .button:hover {

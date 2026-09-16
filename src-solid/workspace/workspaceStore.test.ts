@@ -15,6 +15,7 @@ import type {
 } from './workspaceStore';
 import { writeSolidLayout } from './layoutBlob';
 import type { SolidLayout } from './layoutBlob';
+import { widthsStorageKey } from '../shell';
 
 // The store is the only module here that talks to the bridge, so both bridge
 // modules are mocked wholesale (the presenceStore.test.ts pattern).
@@ -76,7 +77,7 @@ interface Fakes {
   actions: WorkspaceSessionActions;
   opened: string[];
   closed: string[];
-  storage: Pick<Storage, 'getItem' | 'setItem'>;
+  storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
   store: Record<string, string>;
 }
 
@@ -95,6 +96,7 @@ function makeFakes(): Fakes {
     storage: {
       getItem: (k: string) => store[k] ?? null,
       setItem: (k: string, v: string) => { store[k] = v; },
+      removeItem: (k: string) => { delete store[k]; },
     },
     sessions: {
       order,
@@ -203,6 +205,34 @@ describe('hydrate', () => {
     // Disk was authoritative — no write-back.
     expect(saveAppStateMock).not.toHaveBeenCalled();
   });
+
+  it('a re-hydrate does not move the active workspace out from under the open sessions', async () => {
+    getAppStateMock.mockResolvedValue(appState([entry('a'), entry('b')], 'a'));
+    const fakes = makeFakes();
+    const store = build(fakes);
+    await store.hydrate();
+    await Promise.resolve();
+    await store.switchWorkspace('b');
+    await fakes.actions.openPath('b1.log');
+
+    // Disk still names 'a' (the frontend's app-state write is fire-and-forget,
+    // and the rename path re-reads the whole file). Adopting it here would
+    // leave this window "in" 'a' with 'b's sessions on screen, then autosave
+    // them into 'a'.
+    listeners.list.forEach((cb) => cb({ workspaceId: 'a', action: 'renamed' }));
+    await vi.waitFor(() => expect(getAppStateMock.mock.calls.length).toBeGreaterThan(1));
+    expect(store.activeId()).toBe('b');
+  });
+
+  it('follows disk when the in-memory active workspace no longer exists', async () => {
+    getAppStateMock.mockResolvedValue(appState([entry('a')], 'a'));
+    const store = build(makeFakes());
+    await store.hydrate();
+    await Promise.resolve();
+    getAppStateMock.mockResolvedValue(appState([entry('b')], 'b'));
+    listeners.list.forEach((cb) => cb({ workspaceId: 'b', action: 'renamed' }));
+    await vi.waitFor(() => expect(store.activeId()).toBe('b'));
+  });
 });
 
 // ── explicit open ────────────────────────────────────────────────────────────
@@ -282,6 +312,42 @@ describe('openWorkspace', () => {
     expect(store.warnings()).toEqual([]);
   });
 
+  it('adds a list entry for the opened .ltw instead of re-pointing the active one', async () => {
+    getAppStateMock.mockResolvedValue(appState(
+      [entry('a', { ltwPath: 'C:/a.ltw', autoSavePath: 'C:/appdata/a.ltw', lastAutoSaveAt: 111 })],
+      'a',
+    ));
+    loadWorkspaceV4Mock.mockResolvedValue(ltw({ workspaceId: 'ws-b', workspaceName: 'battery' }));
+    const store = build(makeFakes());
+    await store.hydrate();
+
+    await store.openWorkspace('C:/ws/b.ltw');
+
+    // The workspace that was active survives, with its own path and auto-save
+    // bookkeeping intact — re-pointing it dropped it from Recent workspaces and
+    // left the opened file wearing the old workspace's auto-save timestamp.
+    expect(store.list().map((w) => w.id)).toEqual(['a', 'ws-b']);
+    const [a, b] = store.list();
+    expect(a!.filePath).toBe('C:/a.ltw');
+    expect(a!.autoSavePath).toBe('C:/appdata/a.ltw');
+    expect(a!.lastAutoSaveAt).toBe(111);
+    expect(store.activeId()).toBe('ws-b');
+    expect(b!.name).toBe('battery');
+    expect(b!.filePath).toBe('C:/ws/b.ltw');
+    expect(b!.autoSavePath).toBeNull();
+    expect(b!.lastAutoSaveAt).toBeNull();
+  });
+
+  it('reopening the same .ltw reuses its entry rather than growing a duplicate', async () => {
+    getAppStateMock.mockResolvedValue(appState([entry('a')], 'a'));
+    loadWorkspaceV4Mock.mockResolvedValue(ltw({ workspaceId: 'ws-b', workspaceName: 'battery' }));
+    const store = build(makeFakes());
+    await store.hydrate();
+    await store.openWorkspace('C:/ws/b.ltw');
+    await store.openWorkspace('C:/ws/b.ltw');
+    expect(store.list().map((w) => w.id)).toEqual(['a', 'ws-b']);
+  });
+
   it('hands the .ltw editor tabs to W9 rather than applying them itself', async () => {
     const tabs = [{ label: 'notes', content: '# hi', viewMode: 'editor', wordWrap: false, filePath: null }];
     loadWorkspaceV4Mock.mockResolvedValue(ltw({ editorTabs: tabs }));
@@ -324,9 +390,12 @@ describe('saveWorkspace', () => {
       centerTree: { type: 'leaf' },
       solid: { v: 1, ...current },
     });
+    // The opened `.ltw` has its own entry (it does not displace the workspace
+    // that was active), so read the one the save actually targeted.
     const state = saveAppStateMock.mock.calls[0]![0];
-    expect(state.workspaces[0]!.ltwPath).toBe('C:/ws/x.ltw');
-    expect(state.workspaces[0]!.dirty).toBe(false);
+    const saved = state.workspaces.find((w) => w.id === state.activeWorkspaceId);
+    expect(saved!.ltwPath).toBe('C:/ws/x.ltw');
+    expect(saved!.dirty).toBe(false);
   });
 
   it("keeps React's layout keys after a startup restore that trusted the mirror", async () => {
@@ -358,6 +427,49 @@ describe('saveWorkspace', () => {
       bottomPaneTab: 'timeline',
       solid: { v: 1, ...current },
     });
+  });
+
+  it("does not write one workspace's React layout keys into the next workspace's file", async () => {
+    // The blob is remembered from the `.ltw` a workspace was opened with, and
+    // "New workspace" loads no `.ltw` at all — so without a reset the fresh
+    // workspace's first save stamps the previous workspace's pane tree and tab
+    // selections into its own file.
+    loadWorkspaceV4Mock.mockResolvedValue(ltw({
+      layout: { leftPaneWidth: 260, centerTree: { type: 'leaf' }, rightPaneTab: 'analyses' },
+    }));
+    const current: SolidLayout = {
+      columns: {}, collapsed: [], tabs: [], activeTab: null,
+      split: { active: false, secondarySessionId: null, ratio: 0.5 },
+    };
+    const store = build(makeFakes(), { shellLayout: { read: () => current, apply: () => undefined } });
+    await store.hydrate();
+    await store.openWorkspace('C:/ws/a.ltw');
+
+    await store.newWorkspace();
+    await store.saveWorkspace();
+
+    const options = autoSaveWorkspaceMock.mock.calls[0]![0];
+    expect(options.layout).toEqual({ solid: { v: 1, ...current } });
+  });
+
+  it('drops the remembered blob when switching into a workspace that has no .ltw', async () => {
+    getAppStateMock.mockResolvedValue(
+      appState([entry('a', { ltwPath: 'C:/a.ltw' }), entry('b')], 'a'),
+    );
+    loadWorkspaceV4Mock.mockResolvedValue(ltw({ layout: { leftPaneWidth: 260 } }));
+    const current: SolidLayout = {
+      columns: {}, collapsed: [], tabs: [], activeTab: null,
+      split: { active: false, secondarySessionId: null, ratio: 0.5 },
+    };
+    const store = build(makeFakes(), { shellLayout: { read: () => current, apply: () => undefined } });
+    await store.hydrate();
+    await store.startupRestore();
+
+    await store.switchWorkspace('b');
+    await store.saveWorkspace();
+
+    const options = autoSaveWorkspaceMock.mock.calls[0]![0];
+    expect(options.layout).toEqual({ solid: { v: 1, ...current } });
   });
 
   it('auto-saves to the app-data dir when the workspace has no path', async () => {
@@ -524,6 +636,63 @@ describe('switchWorkspace', () => {
     await store.switchWorkspace('a');
     expect(beginSwitchMock).not.toHaveBeenCalled();
   });
+
+  it('flushes the dirty outgoing workspace before arming the switch and tearing it down', async () => {
+    // React's `runTransition` calls this ordering load-bearing: the frontend
+    // half of the payload (the Solid layout blob, the editor tabs) is written
+    // only by this save, so cancelling it instead of flushing loses it.
+    const order: string[] = [];
+    getAppStateMock.mockResolvedValue(
+      appState([entry('a', { ltwPath: 'C:/a.ltw' }), entry('b')], 'a'),
+    );
+    saveWorkspaceV4Mock.mockImplementation(() => { order.push('save'); return Promise.resolve(); });
+    beginSwitchMock.mockImplementation(() => { order.push('begin-switch'); return Promise.resolve(); });
+    const fakes = makeFakes();
+    const realClose = fakes.actions.close;
+    fakes.actions.close = (id) => { order.push('close'); return realClose(id); };
+    const store = build(fakes);
+    await store.hydrate();
+    await fakes.actions.openPath('a1.log');
+    expect(store.dirty()).toBe(true);
+
+    await store.switchWorkspace('b');
+
+    expect(order).toEqual(['save', 'begin-switch', 'close']);
+    expect(store.list().find((w) => w.id === 'a')!.dirty).toBe(false);
+  });
+
+  it('does not prompt when the flush saved the outgoing workspace', async () => {
+    getAppStateMock.mockResolvedValue(
+      appState([entry('a', { ltwPath: 'C:/a.ltw' }), entry('b')], 'a'),
+    );
+    const confirmDiscard = vi.fn(() => true);
+    const fakes = makeFakes();
+    const store = build(fakes, { confirmDiscard });
+    await store.hydrate();
+    await fakes.actions.openPath('a1.log');
+    await store.switchWorkspace('b');
+    expect(confirmDiscard).not.toHaveBeenCalled();
+    expect(store.activeId()).toBe('b');
+  });
+
+  it('asks before discarding state the flush could not save, and a refusal aborts the switch', async () => {
+    getAppStateMock.mockResolvedValue(
+      appState([entry('a', { ltwPath: 'C:/a.ltw' }), entry('b')], 'a'),
+    );
+    saveWorkspaceV4Mock.mockRejectedValue(new Error('EACCES: C:/a.ltw'));
+    const confirmDiscard = vi.fn(() => false);
+    const fakes = makeFakes();
+    const store = build(fakes, { confirmDiscard });
+    await store.hydrate();
+    await fakes.actions.openPath('a1.log');
+
+    await store.switchWorkspace('b');
+
+    expect(confirmDiscard).toHaveBeenCalledTimes(1);
+    expect(store.activeId()).toBe('a');
+    expect(beginSwitchMock).not.toHaveBeenCalled();
+    expect(fakes.closed).toEqual([]);
+  });
 });
 
 // ── rename / delete / list events ────────────────────────────────────────────
@@ -554,12 +723,31 @@ describe('rename and delete', () => {
 
   it('reconciles the list when workspace-list-changed reports a delete', async () => {
     getAppStateMock.mockResolvedValue(appState([entry('a'), entry('b')], 'a'));
-    const store = build(makeFakes());
+    const fakes = makeFakes();
+    fakes.store[widthsStorageKey('a')] = JSON.stringify({ navigator: 320 });
+    const store = build(fakes);
     await store.hydrate();
     await Promise.resolve();
     listeners.list.forEach((cb) => cb({ workspaceId: 'a', action: 'deleted' }));
     expect(store.list().map((w) => w.id)).toEqual(['b']);
     expect(store.activeId()).toBe('b');
+    // A delete from elsewhere (an agent, another window) leaks the same dead
+    // widths key as a local one.
+    expect(fakes.store[widthsStorageKey('a')]).toBeUndefined();
+  });
+
+  it("removes the workspace's shell region widths when it is deleted", async () => {
+    getAppStateMock.mockResolvedValue(appState([entry('a'), entry('b')], 'a'));
+    deleteMock.mockResolvedValue();
+    const fakes = makeFakes();
+    fakes.store[widthsStorageKey('a')] = JSON.stringify({ navigator: 320 });
+    fakes.store[widthsStorageKey('b')] = JSON.stringify({ navigator: 300 });
+    const store = build(fakes);
+    await store.hydrate();
+    await store.delete('a', { force: true });
+    // Nothing else owns `logtapper-shell-widths:<id>` or expires it.
+    expect(fakes.store[widthsStorageKey('a')]).toBeUndefined();
+    expect(fakes.store[widthsStorageKey('b')]).toBeDefined();
   });
 
   it('re-hydrates from disk when workspace-list-changed reports a rename', async () => {
@@ -591,9 +779,12 @@ describe('startupRestore', () => {
     expect(fakes.opened.sort()).toEqual(['from-manifest.log', 'opened-later.log']);
   });
 
-  it('prefers the mirror alone when a CLI startup file won', async () => {
+  it('opens the CLI startup file first, alongside the mirror, without replaying the manifest', async () => {
     getAppStateMock.mockResolvedValue(appState([entry('a', { ltwPath: 'C:/a.ltw' })], 'a'));
     startupFileMock.mockResolvedValue('D:/dropped.log');
+    loadWorkspaceV4Mock.mockResolvedValue(ltw({
+      sessions: [manifestSession('from-manifest.log')], sessionData: [emptySessionData()],
+    }));
     const fakes = makeFakes();
     fakes.store[SOLID_MIRROR_KEY] = JSON.stringify({
       activeWorkspaceId: 'a', tabPaths: ['mirrored.log'], activeTabPath: 'mirrored.log',
@@ -601,9 +792,63 @@ describe('startupRestore', () => {
     const store = build(fakes);
     await store.hydrate();
     await store.startupRestore();
-    // The `.ltw` is not even read — the startup file is what the user asked for.
-    expect(loadWorkspaceV4Mock).not.toHaveBeenCalled();
-    expect(fakes.opened).toEqual(['mirrored.log']);
+    // `consumeStartupFile()` takes the backend value once per process, so a
+    // double-clicked file that is not opened here is lost for good. It leads;
+    // the mirror follows; the `.ltw` manifest is deliberately not replayed.
+    expect(fakes.opened).toEqual(['D:/dropped.log', 'mirrored.log']);
+  });
+
+  it('does not open the CLI startup file twice when the mirror already holds it', async () => {
+    getAppStateMock.mockResolvedValue(appState([entry('a', { ltwPath: 'C:/a.ltw' })], 'a'));
+    startupFileMock.mockResolvedValue('D:/dropped.log');
+    const fakes = makeFakes();
+    fakes.store[SOLID_MIRROR_KEY] = JSON.stringify({
+      // Same file, as the mirror would have spelled it on Windows.
+      activeWorkspaceId: 'a', tabPaths: ['D:\\Dropped.log'], activeTabPath: 'D:\\Dropped.log',
+    });
+    const store = build(fakes);
+    await store.hydrate();
+    await store.startupRestore();
+    expect(fakes.opened).toEqual(['D:\\Dropped.log']);
+  });
+
+  it("keeps React's layout keys when a CLI startup file won", async () => {
+    // The `.ltw` is read for its blob only: nothing from its manifest is
+    // replayed, but the first save after a double-click start must still
+    // read-modify-write the file rather than stripping React's keys.
+    getAppStateMock.mockResolvedValue(appState([entry('a', { ltwPath: 'C:/a.ltw' })], 'a'));
+    startupFileMock.mockResolvedValue('D:/dropped.log');
+    loadWorkspaceV4Mock.mockResolvedValue(ltw({
+      sessions: [manifestSession('from-manifest.log')], sessionData: [emptySessionData()],
+      layout: { leftPaneWidth: 260, centerTree: { type: 'leaf' } },
+    }));
+    const current: SolidLayout = {
+      columns: {}, collapsed: [], tabs: ['D:/dropped.log'], activeTab: 'D:/dropped.log',
+      split: { active: false, secondarySessionId: null, ratio: 0.5 },
+    };
+    const store = build(makeFakes(), { shellLayout: { read: () => current, apply: () => undefined } });
+    await store.hydrate();
+    await store.startupRestore();
+
+    await store.saveWorkspace();
+
+    const options = saveWorkspaceV4Mock.mock.calls[0]![0] as Record<string, unknown>;
+    expect(options.layout).toEqual({
+      leftPaneWidth: 260,
+      centerTree: { type: 'leaf' },
+      solid: { v: 1, ...current },
+    });
+  });
+
+  it('leaves the remembered blob alone when the startup-time .ltw read fails', async () => {
+    getAppStateMock.mockResolvedValue(appState([entry('a', { ltwPath: 'C:/gone.ltw' })], 'a'));
+    startupFileMock.mockResolvedValue('D:/dropped.log');
+    loadWorkspaceV4Mock.mockRejectedValue(new Error('NOT_FOUND: C:/gone.ltw'));
+    const fakes = makeFakes();
+    const store = build(fakes);
+    await store.hydrate();
+    await expect(store.startupRestore()).resolves.toBeUndefined();
+    expect(fakes.opened).toEqual(['D:/dropped.log']);
   });
 
   it('restores nothing and does not throw when there is no candidate at all', async () => {

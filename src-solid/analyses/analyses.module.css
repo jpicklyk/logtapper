@@ -380,3 +380,54 @@
 .iconButton:hover {
   color: var(--danger);
 }
+
+/* ── Store / action errors and the concurrent-update banner ──────────── */
+
+.errorBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--p-radius-sm);
+  background: var(--danger-muted);
+  color: var(--danger);
+}
+
+.errorBannerText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.retryButton {
+  flex: 0 0 auto;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--danger);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.conflictBanner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border-radius: var(--p-radius-sm);
+  background: var(--warning-muted);
+  color: var(--warning);
+}
+
+.dangerButton {
+  padding: 1px 6px;
+  border: 1px solid var(--danger);
+  border-radius: var(--p-radius-sm);
+  background: var(--danger-muted);
+  color: var(--danger);
+  font-size: 10px;
+  cursor: pointer;
+}

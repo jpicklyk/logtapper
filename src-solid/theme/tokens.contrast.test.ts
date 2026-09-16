@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { AA_NORMAL_TEXT, contrastRatio } from './contrast';
+import { BASE_THEME_TOKENS } from './baseTokens';
 
 /**
  * Parses styles/tokens.css directly (no hand-maintained JS mirror of the
@@ -125,5 +126,26 @@ describe('tokens.css AA contrast', () => {
         }
       }
     });
+  }
+});
+
+/**
+ * `baseTokens.ts` hand-writes the resolved `--surface`/`--text` for each built-in
+ * theme so the theme editor can score a *draft* without reading the painted DOM.
+ * A hand-written table is only safe if drift is caught, which is what this does:
+ * the same parser above resolves tokens.css's `var(--p-*)` chains and the two
+ * must agree.
+ */
+describe('BASE_THEME_TOKENS matches styles/tokens.css', () => {
+  const css = readFileSync(TOKENS_CSS_PATH, 'utf8');
+  const blocks = parseBlocks(css);
+
+  for (const theme of THEMES) {
+    const vars = buildThemeVars(blocks, theme);
+    for (const token of ['--surface', '--text'] as const) {
+      it(`${theme} ${token}`, () => {
+        expect(BASE_THEME_TOKENS[theme][token]).toBe(resolveValue(vars.get(token) as string, vars));
+      });
+    }
   }
 });

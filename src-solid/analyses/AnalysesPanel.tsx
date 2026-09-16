@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { For, Show, createMemo, createSignal } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, on } from 'solid-js';
 import type { JSX } from 'solid-js';
 import type { AnalysisArtifact, AnalysisSeverity } from '@bridge/types';
 import { severityColor } from '@bridge/types';
@@ -27,17 +27,28 @@ function highestSeverity(artifact: AnalysisArtifact): AnalysisSeverity | null {
   return null;
 }
 
+/** One card's data: the artifact plus the attribution already computed for it. */
+interface GroupEntry {
+  artifact: AnalysisArtifact;
+  attribution: ArtifactAttribution;
+}
+
 interface Group {
   label: string;
-  artifacts: AnalysisArtifact[];
+  entries: GroupEntry[];
 }
 
 /** Groups artifacts (already newest-first) by their first resolved session
  *  label, in first-seen order; artifacts with no resolvable session land in
- *  a trailing "Unattributed" group. */
+ *  a trailing "Unattributed" group.
+ *
+ *  The attribution is returned alongside each artifact rather than recomputed
+ *  per card: `attributeArtifact` walks every reference of every section, and
+ *  calling it again in a tracked JSX position made every `labels()` change
+ *  re-walk the whole list twice. */
 function groupBySession(artifacts: readonly AnalysisArtifact[], labels: ReadonlyMap<string, string>): Group[] {
   const order: string[] = [];
-  const byLabel = new Map<string, AnalysisArtifact[]>();
+  const byLabel = new Map<string, GroupEntry[]>();
   const UNATTRIBUTED = 'Unattributed';
   for (const artifact of artifacts) {
     const attribution = attributeArtifact(artifact, labels);
@@ -46,9 +57,9 @@ function groupBySession(artifacts: readonly AnalysisArtifact[], labels: Readonly
       order.push(label);
       byLabel.set(label, []);
     }
-    byLabel.get(label)!.push(artifact);
+    byLabel.get(label)!.push({ artifact, attribution });
   }
-  return order.map((label) => ({ label, artifacts: byLabel.get(label)! }));
+  return order.map((label) => ({ label, entries: byLabel.get(label)! }));
 }
 
 function relativeTime(epochMs: number): string {
@@ -68,6 +79,7 @@ interface CardProps {
 
 function AnalysisCard(props: CardProps): JSX.Element {
   const severity = createMemo(() => highestSeverity(props.artifact));
+  const [confirmingDelete, setConfirmingDelete] = createSignal(false);
 
   return (
     <div
@@ -77,6 +89,10 @@ function AnalysisCard(props: CardProps): JSX.Element {
       data-testid="analysis-card"
       onClick={() => props.onOpen()}
       onKeyDown={(e) => {
+        // Only when the card itself has focus: this used to swallow Space
+        // while focus was on the nested delete button, so that button could
+        // never be activated with the keyboard.
+        if (e.target !== e.currentTarget) return;
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           props.onOpen();
@@ -86,17 +102,46 @@ function AnalysisCard(props: CardProps): JSX.Element {
     >
       <div class={styles.cardHeader}>
         <h4 class={styles.cardTitle}>{props.artifact.title}</h4>
-        <button
-          type="button"
-          class={styles.iconButton}
-          title="Delete analysis"
-          onClick={(e) => {
-            e.stopPropagation();
-            props.onDelete();
-          }}
+        {/* An analysis is the most expensive artifact in the app; deleting one
+            used to be a single unconfirmed click, unlike a bookmark row. */}
+        <Show
+          when={confirmingDelete()}
+          fallback={
+            <button
+              type="button"
+              class={styles.iconButton}
+              title="Delete analysis"
+              onClick={(e) => {
+                e.stopPropagation();
+                setConfirmingDelete(true);
+              }}
+            >
+              ×
+            </button>
+          }
         >
-          ×
-        </button>
+          <button
+            type="button"
+            class={styles.dangerButton}
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirmingDelete(false);
+              props.onDelete();
+            }}
+          >
+            Confirm
+          </button>
+          <button
+            type="button"
+            class={styles.iconButton}
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirmingDelete(false);
+            }}
+          >
+            Cancel
+          </button>
+        </Show>
       </div>
       <div class={styles.cardMeta}>
         <span>{relativeTime(props.artifact.createdAt)}</span>
@@ -133,6 +178,7 @@ export function AnalysesPanel(props: AnalysesPanelProps): JSX.Element {
   const [mode, setMode] = createSignal<PanelMode>('list');
   const [editingId, setEditingId] = createSignal<string | null>(null);
   const [query, setQuery] = createSignal('');
+  const [actionError, setActionError] = createSignal<string | null>(null);
 
   const sorted = createMemo(() =>
     [...props.store.list()].sort((a, b) => b.createdAt - a.createdAt),
@@ -173,6 +219,29 @@ export function AnalysesPanel(props: AnalysesPanelProps): JSX.Element {
     setMode(props.store.selected() ? 'reading' : 'list');
   };
 
+  // An `analysis-update` `deleted` for the artifact the reader is showing
+  // clears `selectedId` in the store; without this the panel sat in
+  // 'reading' mode showing "Select an analysis from the list." and a Back
+  // button.
+  createEffect(
+    on(
+      () => props.store.selected(),
+      (selected) => {
+        if (!selected && mode() === 'reading') setMode('list');
+      },
+      { defer: true },
+    ),
+  );
+
+  const handleDelete = (artifactId: string): void => {
+    // `analysesStore.remove` has no internal catch, so this used to be an
+    // unhandled rejection with the card still on screen and no message.
+    void props.store.remove(artifactId).then(
+      () => setActionError(null),
+      (e: unknown) => setActionError(String(e)),
+    );
+  };
+
   return (
     <div class={styles.panel} data-testid="analyses-panel">
       <Show when={mode() === 'list'}>
@@ -193,7 +262,27 @@ export function AnalysesPanel(props: AnalysesPanelProps): JSX.Element {
           onInput={(e) => setQuery(e.currentTarget.value)}
           aria-label="Search analyses by title"
         />
-        <Show when={!props.store.loading() && filtered().length === 0}>
+        <Show when={props.store.error()}>
+          {(message) => (
+            <div class={styles.errorBanner} role="alert" data-testid="analyses-error">
+              <span class={styles.errorBannerText}>Could not load analyses: {message()}</span>
+              <button type="button" class={styles.retryButton} onClick={() => props.store.retry()}>
+                Retry
+              </button>
+            </div>
+          )}
+        </Show>
+        <Show when={actionError()}>
+          {(message) => (
+            <div class={styles.errorBanner} role="alert" data-testid="analyses-action-error">
+              <span class={styles.errorBannerText}>{message()}</span>
+              <button type="button" class={styles.retryButton} onClick={() => setActionError(null)}>
+                Dismiss
+              </button>
+            </div>
+          )}
+        </Show>
+        <Show when={!props.store.loading() && !props.store.error() && filtered().length === 0}>
           <p class={styles.empty}>
             {props.store.list().length === 0
               ? 'No analyses yet. Claude can publish analyses via MCP, or start one yourself.'
@@ -205,13 +294,13 @@ export function AnalysesPanel(props: AnalysesPanelProps): JSX.Element {
             {(group) => (
               <section class={styles.group}>
                 <h5 class={styles.groupLabel}>{group.label}</h5>
-                <For each={group.artifacts}>
-                  {(artifact) => (
+                <For each={group.entries}>
+                  {(entry) => (
                     <AnalysisCard
-                      artifact={artifact}
-                      attribution={attributeArtifact(artifact, props.store.labels())}
-                      onOpen={() => openReader(artifact.id)}
-                      onDelete={() => void props.store.remove(artifact.id)}
+                      artifact={entry.artifact}
+                      attribution={entry.attribution}
+                      onOpen={() => openReader(entry.artifact.id)}
+                      onDelete={() => handleDelete(entry.artifact.id)}
                     />
                   )}
                 </For>

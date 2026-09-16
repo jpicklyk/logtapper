@@ -209,11 +209,65 @@ describe('packsStore', () => {
     store.dispose();
   });
 
-  it('checkUpdates failure clears the loading flag without throwing', async () => {
+  it('checkUpdates failure clears the loading flag and reports itself (D1-M12)', async () => {
     const checkUpdates = vi.fn(() => Promise.reject(new Error('offline')));
     const store = createPacksStore({ sources: noSources(), commands: baseCommands({ checkUpdates }) });
     await store.checkUpdates();
     expect(store.updatesLoading()).toBe(false);
+    // `updateErrors` only ever comes from a check that DID return, so without
+    // its own channel a wholesale failure rendered as "No pending updates."
+    expect(store.updateErrors()).toEqual([]);
+    expect(store.updatesError()).toBe('Error: offline');
+    store.dispose();
+  });
+
+  it('a later successful checkUpdates clears the previous wholesale failure', async () => {
+    const checkUpdates = vi.fn()
+      .mockImplementationOnce(() => Promise.reject(new Error('offline')))
+      .mockImplementationOnce(() => Promise.resolve({ updates: [], packUpdates: [], errors: [] } as UpdateCheckResult));
+    const store = createPacksStore({ sources: noSources(), commands: baseCommands({ checkUpdates }) });
+    await store.checkUpdates();
+    expect(store.updatesError()).toBe('Error: offline');
+    await store.checkUpdates();
+    expect(store.updatesError()).toBeNull();
+    store.dispose();
+  });
+
+  it('a refresh that fails AFTER a successful install is not reported as the install failing (D1-M11)', async () => {
+    let installed = false;
+    const listPacks = vi.fn(() => {
+      // The refresh `withMutation` runs on success.
+      if (installed) return Promise.reject(new Error('listing died'));
+      return Promise.resolve([] as PackSummary[]);
+    });
+    const installPackFromMarketplace = vi.fn(() => {
+      installed = true;
+      return Promise.resolve(packSummary());
+    });
+    const store = createPacksStore({
+      sources: noSources(),
+      commands: baseCommands({ listPacks, installPackFromMarketplace }),
+    });
+    await Promise.resolve();
+
+    await expect(store.installPack('official', packEntry)).resolves.toEqual(packSummary());
+    // The card must not show an install error under a pack that installed fine.
+    expect(store.errorFor('wifi-pack')).toBeUndefined();
+    expect(store.isPending('wifi-pack')).toBe(false);
+    store.dispose();
+  });
+
+  it('refreshSources is exposed for the panel that has no other handle on settings (D1-H1)', async () => {
+    const refreshSources = vi.fn();
+    const store = createPacksStore({ sources: noSources(), commands: baseCommands(), refreshSources });
+    store.refreshSources();
+    expect(refreshSources).toHaveBeenCalledTimes(1);
+    store.dispose();
+  });
+
+  it('refreshSources is a no-op when the host wired none', () => {
+    const store = createPacksStore({ sources: noSources(), commands: baseCommands() });
+    expect(() => store.refreshSources()).not.toThrow();
     store.dispose();
   });
 

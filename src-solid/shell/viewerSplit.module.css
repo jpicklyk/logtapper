@@ -69,7 +69,7 @@
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--p-radius-sm);
+  border-radius: var(--radius-sm);
 }
 
 .closeButton {

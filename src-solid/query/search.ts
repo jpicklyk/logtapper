@@ -78,7 +78,16 @@ export function createSearchRunner(deps: SearchRunnerDeps): SearchRunner {
     // not to subscribe, so every read is `untrack`ed.
     const publishLineSet = (): void => {
       if (!sessionId) return;
-      controller.setLineSet(sessionId, 'search', matchesOnly ? new Set(untrack(hits)) : null);
+      // An empty Set is NOT "no narrowing" to the controller: it stores `[]`,
+      // and `intersectSorted` then renders nothing. Publishing one is how
+      // "Matches only" pressed before typing — or Esc with it already on —
+      // used to blank the viewer with no way back but toggling twice (H3).
+      // Only narrow once a run has actually produced hits; until then the
+      // viewer stays whole and the bar's own "No matches"/"Searching…" label
+      // is what tells the user where they are.
+      const list = untrack(hits);
+      const narrow = matchesOnly && list.length > 0;
+      controller.setLineSet(sessionId, 'search', narrow ? new Set(list) : null);
     };
 
     const teardown = (): void => {
@@ -120,6 +129,9 @@ export function createSearchRunner(deps: SearchRunnerDeps): SearchRunner {
 
       clearState('searching');
       let jumpedFirst = false;
+      /** This run's `searchLogs` has settled (resolved, rejected or been
+       *  superseded) — see the `listen(...).then` below for why it matters. */
+      let settled = false;
 
       const onProgress = (payload: SearchProgress): void => {
         if (gen !== myGen || payload.sessionId !== targetSession) return;
@@ -146,7 +158,13 @@ export function createSearchRunner(deps: SearchRunnerDeps): SearchRunner {
       };
 
       listen(onProgress).then((fn) => {
-        if (gen !== myGen) { fn(); return; }
+        // `searchLogs` can resolve before this registration does (a small file,
+        // a cached result), in which case `teardown()` has already run and
+        // storing `fn` would leave the progress listener registered for a
+        // finished run — late `search-progress` events for the same session
+        // would keep merging into `hits` until the next run/cancel/dispose
+        // (L1). Unregister right here instead.
+        if (gen !== myGen || settled) { fn(); return; }
         unlisten = fn;
       });
 
@@ -172,7 +190,9 @@ export function createSearchRunner(deps: SearchRunnerDeps): SearchRunner {
           setPhase('error');
         })
         .finally(() => {
-          if (gen === myGen) teardown();
+          if (gen !== myGen) return;
+          settled = true;
+          teardown();
         });
     };
 

@@ -25,10 +25,14 @@
  * change; `markMutated` itself no-ops while a restore is in flight, so
  * materialising a restore's pending tabs cannot trigger a self-save.
  */
-import { createEffect, createRoot, createSignal } from 'solid-js';
+import { createEffect, createRoot, createSignal, untrack } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@bridge/commands';
+// Reused rather than re-derived: the same separator/case normalisation the
+// workspace restore uses to decide whether two paths name the same file
+// (`workspaceStore.ts:493` is the other caller).
+import { normalizePath } from '@hooks/workspace/restoreTrust';
 import type { LtwEditorTab } from '@bridge/types';
 import { basename, SAVE_FILTERS } from './EditorTab';
 import type { EditorPreviewMode } from './EditorTab';
@@ -56,7 +60,11 @@ export type CloseConfirmChoice = 'save' | 'discard' | 'cancel';
 /** Asks the caller (a panel with a real dialog) what to do with a dirty
  *  document before closing it. */
 export type ConfirmClose = (doc: EditorDoc) => Promise<CloseConfirmChoice>;
-export type CloseOutcome = 'saved' | 'discarded' | 'cancelled';
+/** `'closed'` — the document was clean, so it was closed with no write and
+ *  nothing discarded. Distinct from `'saved'`, which now means only "a write
+ *  actually happened" (review B-L11: both used to report `'saved'`, so no
+ *  caller could tell a no-op close from a real save). */
+export type CloseOutcome = 'closed' | 'saved' | 'discarded' | 'cancelled';
 
 /** The slice of W1a's `WorkspaceStore` this store reads and drives. Structural
  *  on purpose — a test can pass a literal without building the real store. */
@@ -83,6 +91,17 @@ export interface EditorStoreDeps {
   /** Injected in tests; defaults to the native save dialog. Returns `null`
    *  when the user cancels. */
   chooseSavePath?: (defaultLabel: string) => Promise<string | null>;
+  /**
+   * Notified about documents a workspace switch tore down while they were
+   * still dirty (see the teardown effect below). `saved` are the ones the
+   * store wrote back to their own path on the way out; `unsaved` are the
+   * untitled ones, which have no path to write to and cannot get one without
+   * a modal the store is in no position to open mid-switch.
+   *
+   * Optional: omitting it changes nothing about the writes, only about
+   * whether anything surfaces them.
+   */
+  onWorkspaceTeardown?: (docs: { saved: readonly EditorDoc[]; unsaved: readonly EditorDoc[] }) => void;
 }
 
 export interface EditorStore {
@@ -194,18 +213,55 @@ export function createEditorStore(deps: EditorStoreDeps): EditorStore {
     // `.ltw` — but this effect is declared first regardless, so the ordering
     // holds even if a test (or a future caller) updates both in one tick.
     //
-    // There is no app-wide dirty-tracking/autosave path for editor docs yet
-    // (out of W9's scope) — a dirty, unsaved doc still open when the
-    // workspace switches is silently dropped here, the same loss a browser
-    // tab close without saving would cause. `markMutated()` is deliberately
-    // NOT called for this teardown: it would mark the *incoming* workspace
-    // dirty purely because the outgoing one had open docs.
+    // A dirty doc open at switch time used to be dropped here with no trace
+    // (W2 handoff). Detaching it is not optional — the incoming workspace
+    // must not inherit the outgoing one's tabs, and this effect is
+    // synchronous by necessity (an `await` here would let the incoming
+    // workspace's pending tabs materialise into a half-torn-down list) — so
+    // the fix is not to *ask* before detaching but to not lose the content:
+    //
+    //   * a dirty doc that has a path is written back to it before the tabs
+    //     go, `commands.writeTextFile` being the same call `save()` makes.
+    //     The write is fired here and awaited off-effect; its content is
+    //     captured in the closure, so clearing the signal cannot affect it.
+    //   * a dirty *untitled* doc has nowhere to be written. Its content is
+    //     carried in the outgoing workspace's own `.ltw` payload (see
+    //     `toLtwTabs`, which persists `content` for pathless docs too), so
+    //     the durable fix for that half is `workspaceStore.switchWorkspace`
+    //     flushing its pending autosave instead of cancelling it — review
+    //     B-H1, `workspace/` package. Both sets are reported through
+    //     `onWorkspaceTeardown` so a caller can surface them either way.
+    //
+    // `markMutated()` is deliberately NOT called for this teardown: it would
+    // mark the *incoming* workspace dirty purely because the outgoing one had
+    // open docs.
+    const rescueDirty = (outgoing: readonly EditorDoc[]): void => {
+      const dirty = outgoing.filter((d) => d.content !== d.savedContent);
+      if (dirty.length === 0) return;
+      const saved: EditorDoc[] = [];
+      const unsaved: EditorDoc[] = [];
+      for (const doc of dirty) {
+        if (doc.filePath === null) {
+          unsaved.push(doc);
+          continue;
+        }
+        saved.push(doc);
+        void commands.writeTextFile(doc.filePath, doc.content).catch(() => undefined);
+      }
+      deps.onWorkspaceTeardown?.({ saved, unsaved });
+    };
+
     let lastWorkspaceId: string | null | undefined; // undefined: not yet observed
     createEffect(() => {
       const id = deps.workspace.activeId();
       if (lastWorkspaceId !== undefined && id !== lastWorkspaceId) {
+        // `untrack`: the outgoing list is read for its value, not to make
+        // this effect re-run on every keystroke. (The workspace accessors
+        // above stay tracked — see this module's doc comment.)
+        const outgoing = untrack(tabs);
         setTabs([]);
         setActiveId(null);
+        rescueDirty(outgoing);
       }
       lastWorkspaceId = id;
     });
@@ -219,7 +275,12 @@ export function createEditorStore(deps: EditorStoreDeps): EditorStore {
     // ── open / new / close ────────────────────────────────────────────────────
 
     const open = async (path: string): Promise<string> => {
-      const existing = tabs().find((t) => t.filePath === path);
+      // Compared normalised (review B-L10): `C:\logs\a.md` and `c:/logs/a.md`
+      // are the same file on the Windows target, and an exact string compare
+      // opened a second tab for it — two tabs editing one file, each
+      // overwriting the other on save.
+      const key = normalizePath(path);
+      const existing = tabs().find((t) => t.filePath !== null && normalizePath(t.filePath) === key);
       if (existing) {
         setActiveId(existing.id);
         return existing.id;
@@ -294,7 +355,7 @@ export function createEditorStore(deps: EditorStoreDeps): EditorStore {
       if (doc.content === doc.savedContent) {
         removeTab(id);
         notifyMutated();
-        return 'saved';
+        return 'closed';
       }
       // No confirm callback and a dirty document: refuse to close rather than
       // silently discarding — the caller must supply the dialog to go further.

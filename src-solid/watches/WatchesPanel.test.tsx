@@ -1,11 +1,13 @@
 /** @jsxImportSource solid-js */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createSignal } from 'solid-js';
 import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
 import type { WatchInfo } from '@bridge/types';
 import type { CallerLike } from '../ui';
 import type { SessionStore } from '../app/index';
 import { WatchesPanel } from './WatchesPanel';
 import type { WatchesStore } from './watchesStore';
+import styles from './watches.module.css';
 
 afterEach(cleanup);
 
@@ -35,21 +37,40 @@ function fakeSessions(focusedId: string | null): SessionStore {
 
 /** A hand-built `WatchesStore` double — the panel is tested as a renderer
  *  over the store's public surface, not against the real store (that is
- *  `watchesStore.test.ts`'s job). */
+ *  `watchesStore.test.ts`'s job).
+ *
+ *  Signal-backed, and `applyMatch` **replaces** the `WatchInfo` object the way
+ *  the real store's `watch-match` handler does (`{ ...w, totalMatches }`) —
+ *  that object replacement is precisely what used to re-create the row
+ *  (review C-M5), so a double that mutated in place would test nothing. */
 function fakeStore(overrides: { active?: WatchInfo[]; cancelled?: WatchInfo[]; loading?: boolean } = {}): WatchesStore & {
   create: ReturnType<typeof vi.fn>;
   cancel: ReturnType<typeof vi.fn>;
+  applyMatch: (watchId: string, totalMatches: number) => void;
+  setActive: (watchId: string, active: boolean) => void;
 } {
-  const activeList = overrides.active ?? [];
-  const cancelledList = overrides.cancelled ?? [];
+  const [all, setAll] = createSignal<readonly WatchInfo[]>([
+    ...(overrides.active ?? []),
+    ...(overrides.cancelled ?? []),
+  ]);
+  const replace = (watchId: string, fields: Partial<WatchInfo>): void => {
+    setAll((prev) => prev.map((w) => (w.watchId === watchId ? { ...w, ...fields } : w)));
+  };
+  const active = (): WatchInfo[] => all().filter((w) => w.active);
+  const cancelled = (): WatchInfo[] => all().filter((w) => !w.active);
   return {
-    list: () => [...activeList, ...cancelledList],
-    active: () => activeList,
-    cancelled: () => cancelledList,
+    list: () => [...all()],
+    active,
+    cancelled,
+    activeIds: () => active().map((w) => w.watchId),
+    cancelledIds: () => cancelled().map((w) => w.watchId),
+    byId: (_sessionId: string, watchId: string) => all().find((w) => w.watchId === watchId),
     loading: () => overrides.loading ?? false,
     create: vi.fn(() => Promise.resolve(watchInfo('new'))),
     cancel: vi.fn(() => Promise.resolve()),
     dispose: vi.fn(),
+    applyMatch: (watchId, totalMatches) => replace(watchId, { totalMatches }),
+    setActive: (watchId, isActive) => replace(watchId, { active: isActive }),
   };
 }
 
@@ -134,5 +155,49 @@ describe('WatchesPanel', () => {
     await Promise.resolve();
 
     expect(store.create).toHaveBeenCalledWith('s1', expect.objectContaining({ textSearch: 'boot' }));
+  });
+
+  // ── C-M5: the row must survive a match-count update ────────────────────
+  describe('a watch-match update keeps the row (C-M5)', () => {
+    it('plays the flash animation on an increment instead of remounting', () => {
+      const store = fakeStore({ active: [watchInfo('w1', { totalMatches: 3 })] });
+      render(() => <WatchesPanel store={store} sessions={fakeSessions('s1')} />);
+      const count = (): Element => screen.getByTestId('watch-row').querySelector(`.${styles.matchCount}`)!;
+      expect(count().classList.contains(styles.matchCountFlash)).toBe(false);
+
+      store.applyMatch('w1', 4);
+
+      expect(count().textContent).toBe('4');
+      // Before the fix the row was disposed and re-created, so the flash
+      // effect restarted with `prev === undefined` and never fired.
+      expect(count().classList.contains(styles.matchCountFlash)).toBe(true);
+    });
+
+    it('leaves an in-progress cancel confirmation standing', () => {
+      const store = fakeStore({ active: [watchInfo('w1', { totalMatches: 3 })] });
+      render(() => <WatchesPanel store={store} sessions={fakeSessions('s1')} />);
+      fireEvent.click(screen.getByTitle('Cancel watch'));
+      expect(screen.getByText('Confirm')).toBeTruthy();
+
+      store.applyMatch('w1', 9);
+
+      // The row kept its local `confirming()` signal, so the user reaching
+      // for Confirm still has it (the whole point of the arm-then-confirm).
+      expect(screen.getByText('Confirm')).toBeTruthy();
+      fireEvent.click(screen.getByText('Confirm'));
+      expect(store.cancel).toHaveBeenCalledWith('s1', 'w1');
+    });
+
+    it('still moves a watch to the Cancelled section when it is cancelled', () => {
+      const store = fakeStore({ active: [watchInfo('w1')] });
+      render(() => <WatchesPanel store={store} sessions={fakeSessions('s1')} />);
+      expect(screen.queryByText('Cancelled')).toBeNull();
+
+      store.setActive('w1', false);
+
+      expect(screen.getByText('Cancelled')).toBeTruthy();
+      expect(screen.getAllByTestId('watch-row')).toHaveLength(1);
+      expect(screen.queryByTitle('Cancel watch')).toBeNull();
+    });
   });
 });

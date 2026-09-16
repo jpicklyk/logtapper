@@ -45,14 +45,15 @@ export interface QueryBarProps {
    *  Defaults to true: today's shell mounts exactly one query bar at a time. */
   active?: boolean;
   /**
-   * Binds this bar's `FilterScan` instance (L4) as the live-stream
-   * incremental-match target for `sessionId` — App.tsx is the only owner of
-   * "which FilterScan is the live one" (there is at most one live session at
-   * a time), and this is the one seam that reaches it: a `FilterScan` is
-   * otherwise private to whichever `QueryBar` constructs it. Called once at
-   * mount with the freshly-constructed `scan`; the returned unbind callback
-   * is invoked from this bar's own `onCleanup`, so the binding never outlives
-   * the pane. Omitted in tests that don't exercise live streaming.
+   * Registers this bar's `FilterScan` instance (L4) as the live-stream
+   * incremental-match target **for `sessionId`** — App.tsx owns the registry
+   * of session → scan (`query/liveFilterBindings.ts`), and this is the one
+   * seam that reaches it: a `FilterScan` is otherwise private to whichever
+   * `QueryBar` constructs it. Called once from `onMount` with the
+   * freshly-constructed `scan`; the returned unbind is invoked from this
+   * bar's own `onCleanup` and removes only this session's entry, so a second
+   * pane's bar can never displace the capture's (H4). Omitted in tests that
+   * don't exercise live streaming.
    */
   bindLiveFilter?: (sessionId: string, scan: FilterScan) => () => void;
 }
@@ -63,7 +64,9 @@ export interface QueryBarProps {
  * mode. Built fresh per mount — the bar lives inside the same
  * `<Show when={store.focused()}>` as `LogViewer` in `App.tsx`, so a session
  * switch tears this instance down and a new one starts from that session's own
- * persisted `QueryState`.
+ * persisted `QueryState` — inputs **and** engines (`onMount` replays the
+ * persisted expression and matches-only flag into them), and both line-set
+ * keys it owns are released again from `onCleanup`.
  *
  * `props.bindLiveFilter` (L4, optional) is the seam that lets `App.tsx` bind
  * this bar's private `scan` as the live-stream incremental-match target when
@@ -90,21 +93,15 @@ export function QueryBar(props: QueryBarProps) {
     listen: onSearchProgress,
     commands: { searchLogs },
   });
-  const unbindLiveFilter = untrack(() => props.bindLiveFilter)?.(sessionId, scan);
   onCleanup(() => {
     scan.dispose();
     runner.dispose();
-    unbindLiveFilter?.();
   });
 
   // The rendered index space: filter mode's scan and search mode's "matches
   // only" toggle both narrow through the same two controller line-set keys.
-  // `setLineSet` reads the controller's own `sets()` signal internally to merge
-  // in the new value — calling it untracked keeps that read from also becoming
-  // a dependency of *this* effect (which would self-retrigger on every write).
   createEffect(() => {
-    const lines = scan.lines();
-    untrack(() => controller.setLineSet(sessionId, 'filter', lines));
+    controller.setLineSet(sessionId, 'filter', scan.lines());
   });
 
   const [mode, setMode] = createSignal<QueryMode>(initial.mode);
@@ -212,9 +209,44 @@ export function QueryBar(props: QueryBarProps) {
 
   const hitLabel = createMemo<string>(() => {
     const list = runner.hits();
-    if (runner.phase() === 'idle') return '';
-    if (list.length === 0) return runner.phase() === 'done' ? 'No matches' : 'Searching…';
+    const phase = runner.phase();
+    if (phase === 'idle') return '';
+    if (list.length === 0) {
+      if (phase === 'done') return 'No matches';
+      // A rejected `search_logs` (an invalid regex, say) used to leave the bar
+      // reading "Searching…" forever with nothing anywhere explaining why —
+      // filter mode surfaced the equivalent rejection correctly (M7). The
+      // message itself renders below, in the same slot filter mode uses.
+      if (phase === 'error') return 'Search failed';
+      return 'Searching…';
+    }
     return `${runner.current() + 1} / ${list.length}`;
+  });
+
+  onMount(() => {
+    // This bar is keyed on its session and remounts on every focus switch, so
+    // mount is also "restore" — and restoring the *inputs* without restoring
+    // the engines is M2: the expression sat in the box over an unfiltered
+    // viewer, and the already-lit "Matches only" button turned narrowing OFF
+    // on its first click (the toggle's appearance came from the persisted
+    // state; `SearchRunner`'s own flag still started false).
+    runner.setMatchesOnly(initial.matchesOnly);
+    if (initial.expr.trim()) void scan.setExpression(sessionId, initial.expr);
+
+    // Registered here rather than in the component body: binding during render
+    // writes another owner's state from inside a render function (L4, the
+    // project's "side effects belong in onMount/createEffect" rule).
+    const unbindLiveFilter = untrack(() => props.bindLiveFilter)?.(sessionId, scan);
+    onCleanup(() => {
+      unbindLiveFilter?.();
+      // Both keys this bar owns are released on the way out (M2). Disposing
+      // the engines only tears down *their* state: without this the last
+      // published narrowing stayed on the controller for a session that no
+      // longer has a bar, so returning to it showed a viewer still narrowed to
+      // a match set nothing could navigate or clear.
+      controller.setLineSet(sessionId, 'search', null);
+      controller.setLineSet(sessionId, 'filter', null);
+    });
   });
 
   onMount(() => {
@@ -372,6 +404,12 @@ export function QueryBar(props: QueryBarProps) {
             />
           </div>
         </div>
+        {/* The search engine's own failures land in the same slot filter mode
+            puts parse/backend errors in (M7) — nothing rendered `runner.error()`
+            before, so a rejected `search_logs` was invisible. */}
+        <Show when={runner.error()}>
+          {(message) => <div class={styles.parseError}>{message()}</div>}
+        </Show>
       </Show>
 
       <Show when={mode() === 'filter'}>

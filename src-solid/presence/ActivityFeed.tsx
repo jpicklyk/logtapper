@@ -11,7 +11,7 @@
  * by the store, and virtualizing it would mean a second viewport implementation
  * for no measured win. If that stops being true the store's cap is the knob.
  */
-import { For, Show, createMemo } from 'solid-js';
+import { For, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import type { JSX } from 'solid-js';
 import type { ActivityEntry, Caller } from '@bridge/types';
 import type { NavTarget } from './presenceStore';
@@ -23,9 +23,14 @@ export interface ActivityFeedProps {
   sessionName: (sessionId: string) => string;
   /** Invoked when a row with a resolvable target is activated. */
   onNavigate?: (target: NavTarget) => void;
-  /** Injectable clock for the relative timestamps (tests). */
+  /** Injectable clock for the relative timestamps (tests). Supplying one also
+   *  pins the clock: the internal tick that keeps "3s ago" moving is skipped. */
   now?: () => number;
 }
+
+/** How often the relative timestamps re-render. Coarse on purpose — the labels
+ *  round to seconds/minutes and the list is capped at 500 rows. */
+export const CLOCK_TICK_MS = 15_000;
 
 /**
  * Human-readable verb per journaled action. The keys are the exact action
@@ -194,9 +199,31 @@ function CallerBadge(props: { caller: Caller }): JSX.Element {
   );
 }
 
+/** Group key for the keyed outer list; `''` is the workspace (session-less) group. */
+const groupKey = (group: SessionGroup): string => group.sessionId ?? '';
+
+function sameKeys(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, i) => value === b[i]);
+}
+
 export function ActivityFeed(props: ActivityFeedProps): JSX.Element {
-  const now = () => (props.now ?? Date.now)();
+  // Without an injected clock the labels would freeze at whatever `entries` last
+  // changed; a coarse tick keeps "3s ago" honest. `onMount`, not the render body.
+  const [tick, setTick] = createSignal(Date.now());
+  onMount(() => {
+    if (props.now) return;
+    const timer = setInterval(() => setTick(Date.now()), CLOCK_TICK_MS);
+    onCleanup(() => clearInterval(timer));
+  });
+  const now = () => (props.now ? props.now() : tick());
+
   const groups = createMemo(() => groupBySession(props.entries, props.sessionName));
+  // `groupBySession` rebuilds every group object on each run, so `<For>` over it
+  // would dispose and re-create every <section> — and every row inside — on each
+  // journaled action, however stable the individual entries are. Iterate over the
+  // *ids* instead (compared by value, so a reorder moves nodes rather than
+  // re-creating them) and read each group through its own memo.
+  const keys = createMemo(() => groups().map(groupKey), [] as string[], { equals: sameKeys });
 
   return (
     <div class={styles.feed} data-testid="activity-feed">
@@ -204,17 +231,19 @@ export function ActivityFeed(props: ActivityFeedProps): JSX.Element {
         when={props.entries.length > 0}
         fallback={<p class={styles.empty}>No agent activity yet.</p>}
       >
-        <For each={groups()}>
-          {(group) => (
-            <section class={styles.group} data-session={group.sessionId ?? 'workspace'}>
+        <For each={keys()}>
+          {(key) => (
+            <Show when={groups().find((candidate) => groupKey(candidate) === key)}>
+              {(group) => (
+            <section class={styles.group} data-session={group().sessionId ?? 'workspace'}>
               <header class={styles.groupHeader}>
-                <span class={styles.groupName}>{group.name}</span>
+                <span class={styles.groupName}>{group().name}</span>
                 <span class={styles.groupCount}>
-                  {group.entries.length} {group.entries.length === 1 ? 'entry' : 'entries'}
+                  {group().entries.length} {group().entries.length === 1 ? 'entry' : 'entries'}
                 </span>
               </header>
               <ul class={styles.rows}>
-                <For each={group.entries}>
+                <For each={group().entries}>
                   {(entry) => {
                     const target = navTargetFor(entry);
                     // A thunk, not a stored element: Solid JSX evaluates to a
@@ -252,6 +281,8 @@ export function ActivityFeed(props: ActivityFeedProps): JSX.Element {
                 </For>
               </ul>
             </section>
+              )}
+            </Show>
           )}
         </For>
       </Show>

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LoadResult } from '@bridge/types';
 import { CacheManager, DataSourceRegistry } from '../viewer';
-import { createViewerController } from '../viewer';
+import { createViewerController, sessionScrollPositions } from '../viewer';
+import type { ViewerController } from '../viewer';
 import { createSessionStore, viewIdFor } from './sessions';
 import type { SessionStore } from './sessions';
 
@@ -87,6 +88,7 @@ interface Harness {
   store: SessionStore;
   cacheManager: CacheManager;
   registry: DataSourceRegistry;
+  controller: ViewerController;
   dispose: () => void;
 }
 
@@ -99,6 +101,7 @@ function mount(): Harness {
     store,
     cacheManager,
     registry,
+    controller,
     dispose: () => {
       store.dispose();
       controller.dispose();
@@ -362,5 +365,120 @@ describe('createSessionStore', () => {
     const local = mount();
     expect(() => local.store.add(load('a'))).not.toThrow();
     local.dispose();
+  });
+});
+
+// ── Per-session lifecycle: the controller and the cache manager ────────────
+
+describe('createSessionStore — closing a session forgets it everywhere (review A-M1)', () => {
+  it('remove() drops the controller state and the saved scroll position', () => {
+    const { store, controller } = harness;
+    store.add(load('a'));
+    controller.setLineSet('a', 'filter', new Set([3, 7, 11]));
+    controller.setHighlights(
+      'a',
+      new Map([[3, [{ start: 0, end: 2, kind: { type: 'Search' } }]]]),
+    );
+    sessionScrollPositions.set('a', 2_200_000);
+    expect(controller.lineNumbers('a')).toEqual([3, 7, 11]);
+
+    store.remove('a');
+
+    expect(controller.lineNumbers('a')).toBeUndefined();
+    expect(controller.highlights('a')).toBeNull();
+    expect(sessionScrollPositions.get('a')).toBe(0);
+  });
+
+  it('dispose() forgets every open session, not just the focused one', () => {
+    const { store, controller, dispose } = harness;
+    store.add(load('a'));
+    store.add(load('b'));
+    controller.setLineSet('a', 'search', new Set([1]));
+    controller.setLineSet('b', 'search', new Set([2]));
+
+    dispose();
+
+    expect(controller.lineNumbers('a')).toBeUndefined();
+    expect(controller.lineNumbers('b')).toBeUndefined();
+    // Re-dispose in afterEach must stay harmless.
+    harness = mount();
+  });
+});
+
+describe('createSessionStore — the open edge resets view state (review A-M2)', () => {
+  it('an agent open → filter → agent close → agent reopen comes back unfiltered', () => {
+    const { store, controller } = harness;
+
+    // Both edges here are the bridge's, never this UI's action surface.
+    bridge.handlers.opened?.(load('agent'));
+    controller.setLineSet('agent', 'filter', new Set([5, 6]));
+    expect(controller.lineNumbers('agent')).toEqual([5, 6]);
+
+    bridge.handlers.closed?.({ sessionId: 'agent' });
+    expect(store.order()).toEqual([]);
+
+    // Same deterministic id — the backend resolves a path to the same session.
+    bridge.handlers.opened?.(load('agent'));
+
+    expect(store.order()).toEqual(['agent']);
+    expect(controller.lineNumbers('agent')).toBeUndefined();
+    expect(controller.highlights('agent')).toBeNull();
+  });
+
+  it('add() clears line sets that outlived their session by some other route', () => {
+    const { store, controller } = harness;
+    // State for an id the store has never held — a close path that skipped
+    // `remove`, or a surface that wrote ahead of the open.
+    controller.setLineSet('late', 'section', new Set([1, 2, 3]));
+
+    store.add(load('late'));
+
+    expect(controller.lineNumbers('late')).toBeUndefined();
+  });
+
+  it('add() leaves the controller alone when there is nothing to clear', () => {
+    const { store, controller } = harness;
+    const setLineSet = vi.spyOn(controller, 'setLineSet');
+    const setHighlights = vi.spyOn(controller, 'setHighlights');
+
+    store.add(load('fresh'));
+
+    // A `bump()` per key would throw away the viewport cache on every open —
+    // the same cost D2-H1 removed from the sections store.
+    expect(setLineSet).not.toHaveBeenCalled();
+    expect(setHighlights).not.toHaveBeenCalled();
+    expect(controller.revision('fresh')).toBe(0);
+  });
+});
+
+describe('createSessionStore — cache budget follows the focused session (review A-M3)', () => {
+  it('calls setFocus for the first session and again on every focus change', () => {
+    const { store, cacheManager } = harness;
+    const setFocus = vi.spyOn(cacheManager, 'setFocus');
+
+    store.add(load('a'));
+    expect(setFocus).toHaveBeenCalledWith(viewIdFor('a'));
+
+    store.add(load('b'));
+    setFocus.mockClear();
+    store.setFocused('b');
+
+    expect(setFocus).toHaveBeenCalledWith(viewIdFor('b'));
+    // Without this, `allocateView` would have left 'b' on the small 'visible'
+    // allocation for the app's lifetime because 'a' claimed 'focused' first
+    // (60% of the budget goes to the focused view).
+    const viewA = cacheManager.allocateView(viewIdFor('a'), 'a');
+    const viewB = cacheManager.allocateView(viewIdFor('b'), 'b');
+    expect(viewB.allocation).toBeGreaterThan(viewA.allocation);
+  });
+
+  it('does not call setFocus for a session that is no longer open', () => {
+    const { store, cacheManager } = harness;
+    store.add(load('a'));
+    const setFocus = vi.spyOn(cacheManager, 'setFocus');
+
+    store.remove('a');
+
+    expect(setFocus).not.toHaveBeenCalled();
   });
 });

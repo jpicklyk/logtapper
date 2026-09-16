@@ -120,13 +120,38 @@ describe('Switcher', () => {
     expect(switchWorkspace).not.toHaveBeenCalled();
   });
 
-  it('"Save" invokes store.saveWorkspace with no destination', () => {
+  it('"Save" on a saved workspace invokes store.saveWorkspace with no destination', () => {
+    const saveWorkspace = vi.fn(() => Promise.resolve());
+    const store = fakeWorkspaceStore({
+      list: [ws('w1', { filePath: '/ws/w1.ltw' })], activeId: 'w1', saveWorkspace,
+    });
+    render(() => <Switcher store={store} />);
+    const panel = openPanel();
+    fireEvent.click(panel.getByText('Save'));
+    expect(saveWorkspace).toHaveBeenCalledWith();
+  });
+
+  it('"Save" on a never-saved workspace prompts for a path like "Save As…"', async () => {
+    // Without the prompt this silently auto-saves into the app-data dir: no
+    // filename, no location, nothing on screen to say where it went.
+    vi.mocked(saveDialog).mockResolvedValueOnce('/tmp/first.ltw');
     const saveWorkspace = vi.fn(() => Promise.resolve());
     const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1', saveWorkspace });
     render(() => <Switcher store={store} />);
     const panel = openPanel();
     fireEvent.click(panel.getByText('Save'));
-    expect(saveWorkspace).toHaveBeenCalledWith();
+    await vi.waitFor(() => expect(saveWorkspace).toHaveBeenCalledWith('/tmp/first.ltw'));
+  });
+
+  it('a cancelled prompt from "Save" on a never-saved workspace saves nothing', async () => {
+    vi.mocked(saveDialog).mockResolvedValueOnce(null);
+    const saveWorkspace = vi.fn(() => Promise.resolve());
+    const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1', saveWorkspace });
+    render(() => <Switcher store={store} />);
+    const panel = openPanel();
+    fireEvent.click(panel.getByText('Save'));
+    await Promise.resolve();
+    expect(saveWorkspace).not.toHaveBeenCalled();
   });
 
   it('"Save As…" prompts the native dialog and saves to the chosen path', async () => {
@@ -152,7 +177,9 @@ describe('Switcher', () => {
 
   it('a refused save shows the error verbatim', async () => {
     const saveWorkspace = vi.fn(() => Promise.reject(new Error('CONFLICT: workspace is locked')));
-    const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1', saveWorkspace });
+    const store = fakeWorkspaceStore({
+      list: [ws('w1', { filePath: '/ws/w1.ltw' })], activeId: 'w1', saveWorkspace,
+    });
     render(() => <Switcher store={store} />);
     const panel = openPanel();
     fireEvent.click(panel.getByText('Save'));

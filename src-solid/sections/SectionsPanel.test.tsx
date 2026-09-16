@@ -19,6 +19,7 @@ function fakeStore(overrides: {
   isBugreportSession?: boolean;
   scanning?: boolean;
   activeIndex?: number;
+  error?: string | null;
   /** Pre-expanded group/parent keys — lets a test render an already-open group directly. */
   expanded?: readonly string[];
 } = {}): SectionsStore {
@@ -28,7 +29,8 @@ function fakeStore(overrides: {
   const [activeIndex] = createSignal(overrides.activeIndex ?? -1);
   const [metadata] = createSignal(null);
   const [notice] = createSignal<string | null>(null);
-  const [selected, setSelected] = createSignal<ReadonlySet<string>>(new Set<string>());
+  const [error] = createSignal<string | null>(overrides.error ?? null);
+  const [selected, setSelected] = createSignal<ReadonlySet<number>>(new Set<number>());
   const [expanded, setExpanded] = createSignal<ReadonlySet<string>>(new Set<string>(overrides.expanded ?? []));
 
   return {
@@ -37,28 +39,30 @@ function fakeStore(overrides: {
     sections,
     metadata,
     activeIndex,
-    isSelected: (name) => selected().has(name),
+    error,
+    retry: vi.fn(),
+    isSelected: (startLine) => selected().has(startLine),
     selectionCount: () => selected().size,
-    toggle: vi.fn((name: string) => {
+    toggle: vi.fn((startLine: number) => {
       setSelected((prev) => {
         const next = new Set(prev);
-        if (next.has(name)) next.delete(name);
-        else next.add(name);
+        if (next.has(startLine)) next.delete(startLine);
+        else next.add(startLine);
         return next;
       });
     }),
-    toggleGroup: vi.fn((names: readonly string[]) => {
+    toggleGroup: vi.fn((startLines: readonly number[]) => {
       setSelected((prev) => {
-        const all = names.every((n) => prev.has(n));
+        const all = startLines.every((n) => prev.has(n));
         const next = new Set(prev);
-        for (const n of names) {
+        for (const n of startLines) {
           if (all) next.delete(n);
           else next.add(n);
         }
         return next;
       });
     }),
-    clearSelection: vi.fn(() => setSelected(new Set<string>())),
+    clearSelection: vi.fn(() => setSelected(new Set<number>())),
     isExpanded: (key) => expanded().has(key),
     toggleExpanded: vi.fn((key: string) => {
       setExpanded((prev) => {
@@ -72,6 +76,11 @@ function fakeStore(overrides: {
     notice,
     dispose: vi.fn(),
   };
+}
+
+/** The row element for a label — rows are `role="treeitem"` divs, not buttons. */
+function rowFor(label: string): HTMLElement {
+  return screen.getByText(label).closest('[role="treeitem"]') as HTMLElement;
 }
 
 const FIXTURE: SectionEntry[] = [
@@ -128,9 +137,9 @@ describe('SectionsPanel — tree rendering (reuses sectionTree.ts, not a copy)',
     // exported constant — a local copy would need to happen to match it, but
     // could drift from it silently; importing it ties this test to whichever
     // value the real module actually uses.
-    const header = screen.getByText('SHOW MAP').closest('button');
+    const header = rowFor('SHOW MAP');
     expect(header).toBeTruthy();
-    expect(header?.textContent).toContain(String(GROUP_THRESHOLD + 1));
+    expect(header.textContent).toContain(String(GROUP_THRESHOLD + 1));
     expect(screen.queryByText('SHOW MAP 0')).toBeNull();
   });
 
@@ -161,7 +170,7 @@ describe('SectionsPanel — checkbox selection', () => {
     expect(checkbox.checked).toBe(false);
 
     fireEvent.click(checkbox);
-    expect(store.toggle).toHaveBeenCalledWith('MEMORY INFO');
+    expect(store.toggle).toHaveBeenCalledWith(0);
     expect(checkbox.checked).toBe(true);
   });
 
@@ -202,7 +211,7 @@ describe('SectionsPanel — keyboard', () => {
     render(() => <SectionsPanel store={store} />);
 
     fireEvent.keyDown(panel(), { key: 'ArrowDown' });
-    expect(document.activeElement).toBe(screen.getByText('MEMORY INFO').closest('button'));
+    expect(document.activeElement).toBe(rowFor('MEMORY INFO'));
 
     fireEvent.keyDown(panel(), { key: 'Enter' });
     expect(store.jumpTo).toHaveBeenCalledWith(FIXTURE[0]);
@@ -227,7 +236,7 @@ describe('SectionsPanel — keyboard', () => {
     fireEvent.keyDown(panel(), { key: 'ArrowDown' });
     fireEvent.keyDown(panel(), { key: ' ' });
 
-    expect(store.toggle).toHaveBeenCalledWith('MEMORY INFO');
+    expect(store.toggle).toHaveBeenCalledWith(0);
   });
 
   it('does not hijack arrow keys while typing in the filter input', () => {
@@ -238,5 +247,55 @@ describe('SectionsPanel — keyboard', () => {
 
     fireEvent.keyDown(panel(), { key: 'ArrowDown' });
     expect(store.jumpTo).not.toHaveBeenCalled();
+  });
+});
+
+describe('SectionsPanel — auto-expand does not fight the user', () => {
+  it('lets the user collapse the group the cursor is inside', () => {
+    // activeIndex 2 is the child at startLine 15, inside the `p-10` parent.
+    const store = fakeStore({ sections: FIXTURE, activeIndex: 2 });
+    render(() => <SectionsPanel store={store} />);
+
+    // Auto-expanded on mount because the cursor landed inside it…
+    expect(screen.getByText('DUMPSYS activity.child')).toBeTruthy();
+
+    // …and collapsing it must stick. The old effect read the same `expanded`
+    // signal it wrote, so this click re-fired it and re-expanded immediately.
+    fireEvent.click(screen.getByText('DUMPSYS activity'));
+    expect(screen.queryByText('DUMPSYS activity.child')).toBeNull();
+  });
+});
+
+describe('SectionsPanel — tree semantics', () => {
+  it('renders rows as treeitem divs with no interactive descendants and one tab stop', () => {
+    render(() => <SectionsPanel store={fakeStore({ sections: FIXTURE })} />);
+    const rows = screen.getAllByRole('treeitem');
+    expect(rows.length).toBeGreaterThan(0);
+
+    for (const row of rows) {
+      // A checkbox nested in a <button> is an invalid content model.
+      expect(row.tagName).toBe('DIV');
+      expect(row.querySelector('button')).toBeNull();
+      expect(row.getAttribute('aria-level')).toBeTruthy();
+      expect(row.querySelector('input[type="checkbox"]')?.getAttribute('tabindex')).toBe('-1');
+      expect(row.getAttribute('tabindex')).toBe('-1');
+    }
+
+    fireEvent.keyDown(screen.getByTestId('sections-panel'), { key: 'ArrowDown' });
+    const stops = screen.getAllByRole('treeitem').filter((r) => r.getAttribute('tabindex') === '0');
+    expect(stops).toHaveLength(1);
+  });
+});
+
+describe('SectionsPanel — fetch errors', () => {
+  it('shows the error with a Retry instead of claiming the dumpstate has no sections', () => {
+    const store = fakeStore({ sections: [], error: 'Error: bridge down' });
+    render(() => <SectionsPanel store={store} />);
+
+    expect(screen.getByTestId('sections-error').textContent).toContain('bridge down');
+    expect(screen.queryByText(/no sections found/i)).toBeNull();
+
+    fireEvent.click(screen.getByText('Retry'));
+    expect(store.retry).toHaveBeenCalled();
   });
 });
