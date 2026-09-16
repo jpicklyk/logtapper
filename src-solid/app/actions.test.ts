@@ -161,6 +161,54 @@ describe('openPath', () => {
   });
 });
 
+describe('openPath — reopen as a different source type (C2)', () => {
+  it('is a plain, deduping add when replace is not set, even at the same id', async () => {
+    commands.loadLogFile.mockResolvedValue([load('same')]);
+    await actions.openPath('C:/logs/a.log');
+
+    const replace = vi.spyOn(store, 'replace');
+    commands.loadLogFile.mockResolvedValue([load('same', { sourceType: 'Kernel' })]);
+    await actions.openPath('C:/logs/a.log', { sourceType: 'Kernel' });
+
+    expect(commands.loadLogFile).toHaveBeenLastCalledWith('C:/logs/a.log', 'Kernel');
+    expect(replace).not.toHaveBeenCalled();
+    // add() dedupes: the original ('Logcat') entry survives, unreplaced.
+    expect(store.byId('same')?.load.sourceType).toBe('Logcat');
+  });
+
+  it('replace: true rebuilds the existing session in place instead of adding a duplicate', async () => {
+    commands.loadLogFile.mockResolvedValue([load('same', { totalLines: 10 })]);
+    await actions.openPath('C:/logs/a.log');
+
+    const replace = vi.spyOn(store, 'replace');
+    const add = vi.spyOn(store, 'add');
+    commands.loadLogFile.mockResolvedValue([load('same', { totalLines: 500, sourceType: 'Kernel' })]);
+    commands.getLines.mockResolvedValue(page(500));
+
+    const id = await actions.openPath('C:/logs/a.log', { sourceType: 'Kernel', replace: true });
+
+    expect(id).toBe('same');
+    expect(commands.loadLogFile).toHaveBeenLastCalledWith('C:/logs/a.log', 'Kernel');
+    expect(replace).toHaveBeenCalledOnce();
+    expect(add).not.toHaveBeenCalled();
+    expect(store.order()).toEqual(['same']);
+    expect(store.byId('same')?.load.sourceType).toBe('Kernel');
+    expect(store.byId('same')?.totalLines).toBe(500);
+  });
+
+  it('re-probes the total after a replace, same as a fresh open', async () => {
+    commands.loadLogFile.mockResolvedValue([load('same', { totalLines: 10 })]);
+    await actions.openPath('C:/logs/a.log');
+
+    commands.loadLogFile.mockResolvedValue([load('same', { totalLines: 10, sourceType: 'Kernel' })]);
+    commands.getLines.mockResolvedValue(page(4_242));
+
+    await actions.openPath('C:/logs/a.log', { sourceType: 'Kernel', replace: true });
+
+    expect(store.byId('same')?.totalLines).toBe(4_242);
+  });
+});
+
 describe('openFileDialog', () => {
   it('opens the chosen path', async () => {
     chooseFile.mockResolvedValue('C:/logs/a.log');

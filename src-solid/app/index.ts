@@ -14,6 +14,9 @@ export type {
 export { createAppActions, MAIN_PANE_ID, INDEX_PROBE_MS, INDEX_PROBE_TIMEOUT_MS } from './actions';
 export type { AppActions, AppActionsDeps, OpenPathOptions } from './actions';
 
+export { SessionInfo } from './SessionInfo';
+export type { SessionInfoProps } from './SessionInfo';
+
 export { installBenchApp, isBenchMode } from './benchDriver';
 export type { BenchApp, BenchDriverDeps } from './benchDriver';
 

@@ -70,6 +70,33 @@ export interface SessionStore {
    * The first session added also becomes the focused one.
    */
   add(load: LoadResult): SessionEntry;
+
+  /**
+   * Reopen an already-open session with a fresh parse — the "reopen as…"
+   * control's entry point. The backend's session id is deterministic per
+   * path, so this targets the SAME id {@link SessionStore.add} would just
+   * dedupe against; `add` is idempotent by design (a bridge open echo must
+   * build nothing), so a real reparse needs an explicit call that actually
+   * does the work: dispose the stale data source, clear this session's
+   * cached lines (`cacheManager.clearSession` — clears content but keeps the
+   * view's budget allocation, unlike closing), reset the controller's line
+   * sets/highlights exactly like the open edge does ({@link resetSessionView}
+   * — the same sweep `remove` does on close), unconditionally bump the
+   * controller's revision for this session (unlike the open edge, this is
+   * swapping content the user is already looking at — the bump is what
+   * makes `viewer/cacheBinding.ts`'s revision-keyed effect discard its fetch
+   * generation, bump its cache version and force an immediate refetch; a new
+   * `dataSource` object alone re-registers `FetchScheduler`'s `onFetch`
+   * callback but does not itself trigger a fetch), and rebuild the entry
+   * (`totalLines`/`isIndexing`/`kind`/`dataSource`) from the fresh
+   * `LoadResult`.
+   *
+   * Falls back to {@link SessionStore.add} if the id is not actually open —
+   * the control this backs only exists for an already-open focused session,
+   * but a caller racing a close should not silently lose the reopen.
+   */
+  replace(load: LoadResult): SessionEntry;
+
   /** Drop a session: dispose its source, release its view cache, refocus a neighbour. */
   remove(sessionId: string): void;
   setFocused(sessionId: string | null): void;
@@ -245,6 +272,52 @@ export function createSessionStore(deps: SessionStoreDeps): SessionStore {
       return entries[load.sessionId];
     };
 
+    const replace = (load: LoadResult): SessionEntry => {
+      const sessionId = load.sessionId;
+      const existing = entries[sessionId];
+      if (!existing) return add(load);
+
+      existing.dataSource.dispose();
+      // Content only — `releaseView` would also drop the view's budget
+      // allocation, and `remove`/`add` already isn't called here.
+      cacheManager.clearSession(sessionId);
+      // Same sweep the open edge runs in `add` (and `remove` on close): a
+      // stale filter/section/search set or highlight map from the previous
+      // parse of this id must not survive into the reparsed one.
+      resetSessionView(controller, sessionId);
+      // `resetSessionView` only bumps the controller's revision when it
+      // actually clears a line set or highlight map — correct for `add`
+      // (nothing was ever rendered from this id yet, so there is nothing on
+      // screen to invalidate), but WRONG here: a plain, unfiltered session
+      // (the common case — a logcat with no section/search/highlight state
+      // ever set) reopened as a different type would then leave
+      // `viewer/cacheBinding.ts`'s revision-keyed reset effect never firing,
+      // and `FetchScheduler.onFetch` only re-registers its callback — it does
+      // not itself trigger a fetch (that needs `reportScroll` or
+      // `forceFetch`). The result would be a viewer still showing the STALE
+      // pre-reopen lines until the user happened to scroll. `replace`, unlike
+      // `add`, is always swapping content the user is already looking at, so
+      // it must force that reset unconditionally. `setViewMode` is the
+      // controller's only other revision-bumping setter and bumps
+      // unconditionally regardless of whether the value actually changes
+      // (see its own doc comment) — reusing it here, re-set to its own
+      // current value, is a real API call rather than a new one-off
+      // "just bump the counter" method for a single caller.
+      controller.setViewMode(sessionId, controller.viewMode(sessionId));
+
+      const entry: SessionEntry = {
+        load,
+        totalLines: load.totalLines,
+        isIndexing: load.isIndexing,
+        kind: kindOf(load),
+        dataSource: buildSource(load),
+      };
+      setEntries(sessionId, entry);
+      // Same reason `add` hands back the store's own proxied entry rather
+      // than the literal above.
+      return entries[sessionId];
+    };
+
     const remove = (sessionId: string): void => {
       const entry = entries[sessionId];
       if (!entry) return;
@@ -373,6 +446,7 @@ export function createSessionStore(deps: SessionStoreDeps): SessionStore {
       byId,
       focused,
       add,
+      replace,
       remove,
       setFocused: setFocusedId,
       updateTotal,

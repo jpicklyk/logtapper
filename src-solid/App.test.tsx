@@ -344,6 +344,59 @@ describe('App', () => {
     expect(within(screen.getByTestId('top-bar')).queryByText(/4,321 lines/)).toBeNull();
   });
 
+  // C2: the status-bar session chip opens a popover with a "reopen as…"
+  // control that REPLACES the session at its own tab rather than opening a
+  // second one — the backend id is deterministic per path, and closing first
+  // would destroy the bookmarks/analyses the reopen is supposed to keep (see
+  // `app/SessionInfo.tsx`'s doc comment).
+  it('reopens the focused session as a different source type from the status-bar popover, without duplicating the tab', async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const { getLines, loadLogFile } = await import('@bridge/commands');
+
+    vi.mocked(open).mockReset();
+    vi.mocked(loadLogFile).mockReset();
+    vi.mocked(open).mockResolvedValueOnce('/reopen.log');
+    const session = (sourceType: string) => [
+      {
+        sessionId: '/reopen.log',
+        sourceId: '/reopen.log',
+        sourceName: 'reopen.log',
+        filePath: '/reopen.log',
+        totalLines: 10,
+        fileSize: 0,
+        firstTimestamp: null,
+        lastTimestamp: null,
+        sourceType,
+        isStreaming: false,
+        isIndexing: false,
+        hasCrlf: false,
+        encoding: 'UTF-8',
+      },
+    ];
+    vi.mocked(loadLogFile).mockResolvedValueOnce(session('Logcat'));
+    vi.mocked(getLines).mockResolvedValue({ lines: [], totalLines: 10 } as never);
+
+    render(() => <App />);
+    fireEvent.click(within(screen.getByTestId('top-bar')).getByRole('button', { name: /^open file/i }));
+    await screen.findByTestId('status-session');
+    expect(screen.getAllByRole('tab')).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId('status-session'));
+    // Scoped to the popover's own testid, not `role="dialog"` — workspace
+    // home's own drawer (`aria-label="Workspace"`) is also a dialog and is
+    // still open behind it at this point in the test.
+    expect(screen.getByTestId('session-info-popover')).toBeTruthy();
+
+    vi.mocked(loadLogFile).mockResolvedValueOnce(session('Kernel'));
+    fireEvent.change(screen.getByLabelText(/reopen this file as/i), { target: { value: 'Kernel' } });
+
+    expect(loadLogFile).toHaveBeenLastCalledWith('/reopen.log', 'Kernel');
+    // Same tab — not a second one alongside it.
+    await waitFor(() => expect(screen.getAllByRole('tab')).toHaveLength(1));
+    // The popover closed itself on a successful reopen selection.
+    expect(screen.queryByTestId('session-info-popover')).toBeNull();
+  });
+
   it('shows the empty state until a file is opened', () => {
     render(() => <App />);
     expect(screen.getByText(/no log open/i)).toBeTruthy();
