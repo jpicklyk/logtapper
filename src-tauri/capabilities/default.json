@@ -15,6 +15,10 @@
     "core:window:allow-is-maximized",
     "core:window:allow-set-title",
     "dialog:allow-open",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "http://*" }, { "url": "https://*" }, { "url": "mailto:*" }]
+    }
   ]
 }

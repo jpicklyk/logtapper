@@ -4,6 +4,7 @@ import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { AnalysisSection, SourceReference } from '../../bridge/types';
 import { severityColor } from '../../bridge/types';
+import { openExternalLinkFromEvent } from '../../bridge/externalLinks';
 import LineReference from './LineReference';
 import styles from './AnalysisReader.module.css';
 
@@ -66,7 +67,15 @@ const MarkdownSection = React.memo(function MarkdownSection({ section, onJump }:
           ))}
         </div>
       )}
-      <div className={styles.sectionBody}>
+      {/*
+        One delegated click handler rather than a `components.a` override: the
+        anchors are markdown output, not components, and the section body is
+        their only container. An `http`/`https`/`mailto` link — this prose can
+        come from an agent via `publish_analysis` — must never navigate the
+        webview away from the app; `openExternalLinkFromEvent` cancels it and
+        hands the URL to the OS. See `bridge/externalLinks.ts`.
+      */}
+      <div className={styles.sectionBody} onClick={openExternalLinkFromEvent}>
         <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{section.body}</Markdown>
       </div>
     </div>

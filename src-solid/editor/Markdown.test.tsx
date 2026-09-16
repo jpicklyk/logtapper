@@ -8,8 +8,18 @@ import type { ResolvedSection } from './AnalysisSectionView';
 import { renderMarkdown } from './renderMarkdown';
 import type { LineRefSource } from './lineRefs';
 
+// The one bridge call this component makes. Stubbed so the default (un-injected)
+// external-link path runs end to end without a Tauri host.
+const openExternalUrl = vi.fn((_url: string) => Promise.resolve());
+vi.mock('@bridge/commands', () => ({
+  openExternalUrl: (url: string) => openExternalUrl(url),
+}));
+
 // vitest `globals` is off, so @solidjs/testing-library's auto-cleanup never registers.
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  openExternalUrl.mockClear();
+});
 
 const REFERENCE: LineRefSource = {
   lineNumber: 482,
@@ -125,6 +135,66 @@ describe('Markdown component', () => {
     ));
     fireEvent.keyDown(container.querySelector('a.lt-line-ref')!, { key: 'Enter' });
     expect(onLineRef).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens an external link in the OS handler instead of navigating', () => {
+    // Without this the chrome-less webview follows the link and the whole UI is
+    // replaced by the remote page, unrecoverably.
+    const { container } = render(() => (
+      <Markdown content="See [docs](https://example.com/a?b=1) now." />
+    ));
+    const anchor = container.querySelector<HTMLAnchorElement>('a[href^="https://"]')!;
+    const dispatched = fireEvent.click(anchor);
+
+    expect(dispatched).toBe(false); // preventDefault() ran
+    expect(openExternalUrl).toHaveBeenCalledWith('https://example.com/a?b=1');
+  });
+
+  it('opens a mailto link the same way', () => {
+    const { container } = render(() => <Markdown content="[mail](mailto:a@example.com)" />);
+    fireEvent.click(container.querySelector('a[href^="mailto:"]')!);
+    expect(openExternalUrl).toHaveBeenCalledWith('mailto:a@example.com');
+  });
+
+  it('activates an external link from the keyboard (Enter, not Space)', () => {
+    const { container } = render(() => <Markdown content="[docs](https://example.com/)" />);
+    const anchor = container.querySelector('a[href^="https://"]')!;
+
+    fireEvent.keyDown(anchor, { key: ' ' });
+    expect(openExternalUrl).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(anchor, { key: 'Enter' });
+    expect(openExternalUrl).toHaveBeenCalledWith('https://example.com/');
+  });
+
+  it('leaves relative hrefs and a stripped javascript: link alone', () => {
+    const { container } = render(() => (
+      <Markdown content="[rel](./notes.md) [frag](#h) [js](javascript:alert(1))" />
+    ));
+    for (const anchor of container.querySelectorAll('a')) fireEvent.click(anchor);
+    expect(openExternalUrl).not.toHaveBeenCalled();
+  });
+
+  it('keeps the line-reference path untouched by the external-link check', () => {
+    const onLineRef = vi.fn();
+    const { container } = render(() => (
+      <Markdown content="See L482 now." references={[REFERENCE]} onLineRef={onLineRef} />
+    ));
+    fireEvent.click(container.querySelector('a.lt-line-ref')!);
+
+    expect(onLineRef).toHaveBeenCalledWith({ sessionId: 'sess-1', line: 482, endLine: null });
+    expect(openExternalUrl).not.toHaveBeenCalled();
+  });
+
+  it('lets a caller override the interception', () => {
+    const intercept = vi.fn(() => true);
+    const { container } = render(() => (
+      <Markdown content="[docs](https://example.com/)" interceptExternalLink={intercept} />
+    ));
+    fireEvent.click(container.querySelector('a[href^="https://"]')!);
+
+    expect(intercept).toHaveBeenCalledTimes(1);
+    expect(openExternalUrl).not.toHaveBeenCalled();
   });
 
   it('re-renders when the content changes', () => {

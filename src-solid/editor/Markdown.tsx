@@ -1,5 +1,6 @@
 /** @jsxImportSource solid-js */
 import { createMemo } from 'solid-js';
+import { openExternalLinkFromEvent } from '@bridge/externalLinks';
 import { renderMarkdown } from './renderMarkdown';
 import { lineRefTargetFrom } from './lineRefs';
 import type { LineRefSource, LineRefTarget } from './lineRefs';
@@ -14,6 +15,13 @@ export interface MarkdownProps {
   class?: string;
   /** Shown instead of the prose when `content` is empty. */
   emptyText?: string;
+  /**
+   * Handles an `http`/`https`/`mailto` anchor in the prose. Defaults to
+   * `openExternalLinkFromEvent` (OS default handler via `tauri-plugin-opener`);
+   * overridable so a test can assert the interception without a Tauri host.
+   * Returns whether it consumed the event.
+   */
+  interceptExternalLink?: (event: MouseEvent | KeyboardEvent) => boolean;
 }
 
 /**
@@ -30,7 +38,16 @@ export function Markdown(props: MarkdownProps) {
     renderMarkdown(props.content, { references: props.references }),
   );
 
+  // An `http`/`https`/`mailto` anchor that survived sanitisation would otherwise
+  // navigate the whole webview away from the app (see `@bridge/externalLinks`),
+  // so it is intercepted before the line-reference check — the two anchor kinds
+  // are disjoint (a line-ref anchor carries no `href` at all), the order just
+  // keeps the expensive-to-recover case first.
+  const interceptExternal = (event: MouseEvent | KeyboardEvent): boolean =>
+    (props.interceptExternalLink ?? openExternalLinkFromEvent)(event);
+
   const handleClick = (event: MouseEvent) => {
+    if (interceptExternal(event)) return;
     const target = lineRefTargetFrom(event.target);
     if (!target) return;
     event.preventDefault();
@@ -40,6 +57,10 @@ export function Markdown(props: MarkdownProps) {
   // Space/Enter on a focused anchor is the keyboard equivalent of the click.
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
+    // External anchors are real links, and a real link activates on Enter only
+    // (Space scrolls). Cancelling the Enter here also cancels the synthetic
+    // click the browser would otherwise dispatch, so the URL opens once.
+    if (event.key === 'Enter' && interceptExternal(event)) return;
     const target = lineRefTargetFrom(event.target);
     if (!target) return;
     event.preventDefault();

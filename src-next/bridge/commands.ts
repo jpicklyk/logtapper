@@ -883,3 +883,25 @@ export function writeTheme(slug: string, theme: UserTheme): Promise<void> {
 export function deleteTheme(slug: string): Promise<void> {
   return invoke('delete_theme', { slug });
 }
+
+// ---------------------------------------------------------------------------
+// External links (tauri-plugin-opener)
+// ---------------------------------------------------------------------------
+
+/**
+ * Hand a URL to the OS default handler (browser, mail client).
+ *
+ * The one command wrapper here that is not one of our own `#[tauri::command]`s:
+ * it targets `tauri-plugin-opener`'s `open_url`, registered in `lib.rs` and
+ * scoped in `capabilities/default.json` to `http`/`https`/`mailto` only — any
+ * other scheme is refused by the backend scope check, so this rejects rather
+ * than opening it. `plugin:opener|open_url` with an `{ url, with }` payload is
+ * the plugin's IPC contract; `@tauri-apps/plugin-opener`'s `openUrl()` is the
+ * same one-line `invoke` and is not a dependency of this project.
+ *
+ * Callers should go through `bridge/externalLinks.ts` rather than calling this
+ * directly — that is where the scheme allow-list lives on the frontend side.
+ */
+export function openExternalUrl(url: string): Promise<void> {
+  return invoke('plugin:opener|open_url', { url });
+}

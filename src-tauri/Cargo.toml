@@ -78,6 +78,13 @@ tauri-plugin-single-instance = "2"
 # Window state persistence (saves position/size across restarts)
 tauri-plugin-window-state = "2"
 
+# Opening external URLs in the OS default handler. Markdown prose (including
+# analyses published by an MCP agent) can contain http/https/mailto links; the
+# navigation guard in `navigation.rs` refuses to let the webview follow them, so
+# the frontend hands them to this plugin instead. Scoped to `opener:allow-open-url`
+# in `capabilities/default.json` — no `open_path`, no `reveal_item_in_dir`.
+tauri-plugin-opener = "2"
+
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
 windows-sys = { version = "0.59", features = ["Win32_UI_Shell"] }
