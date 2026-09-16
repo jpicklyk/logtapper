@@ -158,11 +158,11 @@
 .modalBackdrop {
   position: fixed;
   inset: 0;
-  z-index: var(--p-z-modal);
+  z-index: var(--z-modal);
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--scrim);
 }
 .modal {
   display: flex;
