@@ -16,3 +16,6 @@ export type { AppActions, AppActionsDeps, OpenPathOptions } from './actions';
 
 export { installBenchApp, isBenchMode } from './benchDriver';
 export type { BenchApp, BenchDriverDeps } from './benchDriver';
+
+export { classifyShortcut, installShortcuts } from './shortcuts';
+export type { ShortcutAction, ShortcutActions } from './shortcuts';

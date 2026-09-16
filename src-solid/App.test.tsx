@@ -575,3 +575,84 @@ describe('App — a failing workspace restore is reported, not swallowed', () =>
     expect(screen.queryByRole('alert')).toBeNull();
   });
 });
+
+// ── Global shortcuts (C3) — app/shortcuts.ts wired from App.tsx's onMount ──
+
+describe('App — global keyboard shortcuts (C3)', () => {
+  it('Ctrl+O opens the file dialog, the same action the top-bar button uses', async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    vi.mocked(open).mockClear();
+
+    render(() => <App />);
+    fireEvent.keyDown(window, { key: 'o', ctrlKey: true });
+
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+  });
+
+  it('Ctrl+Shift+O opens the "open in editor" file picker and switches to the editor surface', async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    vi.mocked(open).mockClear();
+    vi.mocked(open).mockResolvedValueOnce(null); // cancelled — no readTextFile call needed
+
+    render(() => <App />);
+    fireEvent.keyDown(window, { key: 'O', ctrlKey: true, shiftKey: true });
+
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+  });
+
+  it('Ctrl+N starts a new workspace (same transition Switcher/WorkspaceHome use)', async () => {
+    const { beginWorkspaceSwitch } = await import('@bridge/commands');
+    vi.mocked(beginWorkspaceSwitch).mockClear();
+
+    render(() => <App />);
+    fireEvent.keyDown(window, { key: 'n', ctrlKey: true });
+
+    await waitFor(() => expect(beginWorkspaceSwitch).toHaveBeenCalledTimes(1));
+  });
+
+  it('Ctrl+Shift+E opens the Export rail drawer', async () => {
+    render(() => <App />);
+    expect(screen.queryByTestId('export-dialog')).toBeNull();
+
+    fireEvent.keyDown(window, { key: 'E', ctrlKey: true, shiftKey: true });
+
+    await waitFor(() => expect(screen.getByTestId('export-dialog')).toBeTruthy());
+  });
+
+  // Plain Ctrl+S is `EditorTabs.tsx:58`'s own shortcut, not this module's —
+  // pressing it with no editor document open must not reach any of the
+  // actions this module owns (open-file dialog, new/save workspace, export).
+  it('plain Ctrl+S is ignored here — no file dialog, no workspace transition, no export drawer', async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const { beginWorkspaceSwitch, saveWorkspaceV4, autoSaveWorkspace } = await import('@bridge/commands');
+    vi.mocked(open).mockClear();
+    vi.mocked(beginWorkspaceSwitch).mockClear();
+    vi.mocked(saveWorkspaceV4).mockClear();
+    vi.mocked(autoSaveWorkspace).mockClear();
+
+    render(() => <App />);
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+
+    // Give any (wrongly) triggered async action a turn to run before asserting.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(open).not.toHaveBeenCalled();
+    expect(beginWorkspaceSwitch).not.toHaveBeenCalled();
+    expect(saveWorkspaceV4).not.toHaveBeenCalled();
+    expect(autoSaveWorkspace).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('export-dialog')).toBeNull();
+  });
+
+  it('disposes the listener on unmount — a keypress afterwards does nothing', async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    vi.mocked(open).mockClear();
+
+    const { unmount } = render(() => <App />);
+    unmount();
+    fireEvent.keyDown(window, { key: 'o', ctrlKey: true });
+
+    await Promise.resolve();
+    expect(open).not.toHaveBeenCalled();
+  });
+});

@@ -8,7 +8,13 @@ import {
   LogViewer,
   createViewerController,
 } from './viewer';
-import { createAppActions, createSessionStore, installBenchApp, isBenchMode } from './app/index';
+import {
+  createAppActions,
+  createSessionStore,
+  installBenchApp,
+  installShortcuts,
+  isBenchMode,
+} from './app/index';
 import type { SessionEntry } from './app/index';
 import {
   AppShell,
@@ -443,6 +449,39 @@ export function App(props: AppProps) {
       actions.reportError(String(e));
     }
   };
+
+  // Global shortcuts (C3) — one `window` `keydown` listener for the whole
+  // app: Ctrl/Cmd+N new workspace, +O open file, +Shift+O open in editor,
+  // +Shift+S save workspace, +Shift+E open export. Plain Ctrl+S is
+  // deliberately excluded (`shortcuts.ts`'s module doc) — it stays
+  // `EditorTabs.tsx:58`'s own listener.
+  //
+  // `openExport` has no imperative "open" call of its own to reach: the
+  // export surface is a rail drawer whose open/closed state is private to
+  // `AppShell` (`shell/AppShell.tsx`, out of this package's ownership — see
+  // this task's implementation-notes for the follow-up this should get). The
+  // rail button is the one affordance already public outside `shell/`, at a
+  // fixed rail placement in every mode/tier (`shell/surfaces.ts`'s `export`
+  // entry), so this invokes it exactly as a click would, scoped to the rail
+  // nav so it can never match a same-named control inside a drawer body.
+  onMount(() => {
+    const openExport = (): void => {
+      document
+        .querySelector<HTMLButtonElement>('nav[aria-label="Surfaces"] button[title="Export"]')
+        ?.click();
+    };
+    const disposeShortcuts = installShortcuts({
+      newWorkspace: () =>
+        void workspace.newWorkspace().catch((e: unknown) => actions.reportError(String(e))),
+      openFileDialog: () => void actions.openFileDialog(),
+      openInEditor: () => void openInEditor(),
+      saveWorkspace: () =>
+        void workspace.saveWorkspace().catch((e: unknown) => actions.reportError(String(e))),
+      openExport,
+      isBusy: actions.busy,
+    });
+    onCleanup(disposeShortcuts);
+  });
 
   const topBar = (
     <>
