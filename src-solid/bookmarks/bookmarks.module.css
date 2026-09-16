@@ -1,8 +1,4 @@
 .panel {
-  /* `.overlay` below is `position: absolute; inset: 0`. Without this the
-     nearest positioned ancestor was the shell — in the pushed drawer
-     placement neither `.drawer` nor `.drawerBody` is positioned, so the
-     create-bookmark form covered the whole application window. */
   position: relative;
   display: flex;
   flex-direction: column;
@@ -227,23 +223,33 @@
   cursor: pointer;
 }
 
-/* ── Create dialog (overlay, same shape as analyzers/AddAnalyzer) ────── */
+/* ── Create dialog ───────────────────────────────────────────────────── */
 
+/* A viewport-level modal, not an in-panel overlay: the panel used to fill a
+   navigator column, so `position: absolute; inset: 0` had room; inside the
+   workspace drawer the panel is only as tall as its (short) list and the form
+   was clipped to that box (sign-off review). */
 .overlay {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: var(--p-z-overlay);
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-raised);
-  border-left: 1px solid var(--border);
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  background: var(--scrim);
 }
 
 .dialog {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 10px;
+  width: min(380px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
 }
 
 .dialogHeader {
