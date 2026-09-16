@@ -100,11 +100,18 @@ export function AnalyzerCard(props: AnalyzerCardProps): JSX.Element {
       .filter(Boolean)
       .join(' ');
 
+  // The card is a tab stop because Alt+Arrow reorders it from anywhere inside;
+  // without a role and a name it was announced as nothing at all (D1-L8), and
+  // the shortcut was discoverable only through the reorder buttons' `title`.
+  // `aria-keyshortcuts` states it on the element that actually handles the key.
   return (
     <div
       class={cardClass()}
       style={{ '--card-accent': accent() } as JSX.CSSProperties}
       tabIndex={0}
+      role="group"
+      aria-label={`${props.processor.name} — ${typeLabel()}`}
+      aria-keyshortcuts={props.pinned ? undefined : 'Alt+ArrowUp Alt+ArrowDown'}
       data-testid={`analyzer-card-${props.processor.id}`}
       data-processor-id={props.processor.id}
       onKeyDown={onKeyDown}

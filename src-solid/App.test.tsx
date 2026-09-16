@@ -497,14 +497,19 @@ describe('App', () => {
   it('refreshes the analyzer catalog and the installed packs once each on catalog-update', async () => {
     const { onCatalogUpdate } = await import('@bridge/events');
     render(() => <App />);
-    expect(onCatalogUpdate).toHaveBeenCalledTimes(1);
-    const fire = vi.mocked(onCatalogUpdate).mock.calls[0][0];
+    // Two subscribers: App's refresh wiring and `analyzerStore`'s own
+    // uninstall-pruning listener (W4a). The real event reaches both, so the
+    // test fires every registered handler — the refresh counts below are what
+    // pin the no-double-fetch contract, not the subscriber count.
+    expect(onCatalogUpdate).toHaveBeenCalledTimes(2);
+    const handlers = vi.mocked(onCatalogUpdate).mock.calls.map((call) => call[0]);
     // Construction-time seeds go through each store's internal closure, not
     // the public method — so nothing has hit the spies yet.
     expect(refreshSpies.refreshCatalog).not.toHaveBeenCalled();
     expect(refreshSpies.refreshInstalled).not.toHaveBeenCalled();
 
-    fire({ caller: { kind: 'agent', client: 'claude' }, action: 'install', ids: ['wifi@official'] });
+    const event = { caller: { kind: 'agent', client: 'claude' }, action: 'install', ids: ['wifi@official'] } as const;
+    for (const fire of handlers) fire(event);
 
     expect(refreshSpies.refreshCatalog).toHaveBeenCalledTimes(1);
     expect(refreshSpies.refreshInstalled).toHaveBeenCalledTimes(1);

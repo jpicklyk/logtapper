@@ -121,7 +121,7 @@ export function createAppActions(deps: AppActionsDeps): AppActions {
    * also leave through an agent's close, which this surface never sees.
    */
   const resetView = (sessionId: string): void => {
-    for (const key of ['section', 'filter', 'search'] as const) {
+    for (const key of ['section', 'filter', 'search', 'matched'] as const) {
       controller.setLineSet(sessionId, key, null);
     }
     controller.setHighlights(sessionId, null);

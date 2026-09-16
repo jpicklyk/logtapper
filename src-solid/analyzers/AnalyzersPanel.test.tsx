@@ -31,7 +31,9 @@ function proc(id: string, overrides: Partial<ProcessorSummary> = {}): ProcessorS
  *  memos to re-render on toggle/reorder/run — the panel is tested as a pure
  *  renderer over the store's public surface, not against the real store
  *  (that is `analyzerStore.test.ts`'s job, already done by W4a). */
-function fakeStore(overrides: { result?: PipelineRunResult | null } = {}): AnalyzerStore {
+function fakeStore(
+  overrides: { result?: PipelineRunResult | null; lastError?: (sessionId: string) => string | null } = {},
+): AnalyzerStore {
   const catalog = [proc('p1'), proc('p2'), proc('__pii_anonymizer')];
   const [order, setOrder] = createSignal<string[]>(['p1', 'p2']);
   const [disabled, setDisabled] = createSignal<string[]>([]);
@@ -72,8 +74,9 @@ function fakeStore(overrides: { result?: PipelineRunResult | null } = {}): Analy
     running: () => running(),
     progress: () => new Map(),
     result: () => result(),
-    lastError: () => null,
+    lastError: overrides.lastError ?? (() => null),
     lastRunAt: () => null,
+    catalogError: () => null,
     run: vi.fn(() => {
       setRunning(true);
       return Promise.resolve();
@@ -164,6 +167,57 @@ describe('AnalyzersPanel', () => {
     const store = fakeStore({ result });
     render(() => <AnalyzersPanel store={store} controller={fakeController()} sessionId="s1" />);
     expect(screen.getByText(/not applicable to this bugreport source/)).toBeTruthy();
+  });
+
+  it('renders a failed run instead of silently resetting the Run button (D1-H2)', () => {
+    const store = fakeStore({ lastError: () => 'rhai compile error: line 4' });
+    render(() => <AnalyzersPanel store={store} controller={fakeController()} sessionId="s1" />);
+    const banner = screen.getByTestId('analyzer-run-error');
+    expect(banner.getAttribute('role')).toBe('alert');
+    expect(banner.textContent).toContain('rhai compile error: line 4');
+  });
+
+  it('shows no error banner when the last run succeeded', () => {
+    const store = fakeStore();
+    render(() => <AnalyzersPanel store={store} controller={fakeController()} sessionId="s1" />);
+    expect(screen.queryByTestId('analyzer-run-error')).toBeNull();
+  });
+
+  describe('session switch (D1-M4)', () => {
+    it('closes the add-analyzer drawer so it cannot add to the session the user left', async () => {
+      const store = fakeStore();
+      const [sessionId, setSessionId] = createSignal('A');
+      render(() => <AnalyzersPanel store={store} controller={fakeController()} sessionId={sessionId()} />);
+      fireEvent.click(screen.getByText('Add analyzer'));
+      expect(screen.getByTestId('add-analyzer')).toBeTruthy();
+
+      // `App.tsx` mounts this panel under a non-keyed `<Show>`, so a tab switch
+      // mutates `props.sessionId` on the SAME instance — the drawer used to
+      // stay open, visually unchanged, now pointed at B.
+      setSessionId('B');
+      await Promise.resolve();
+      expect(screen.queryByTestId('add-analyzer')).toBeNull();
+    });
+
+    it('closes the detail drawer so it cannot fetch another session\'s vars for it', async () => {
+      const store = fakeStore();
+      const [sessionId, setSessionId] = createSignal('A');
+      render(() => <AnalyzersPanel store={store} controller={fakeController()} sessionId={sessionId()} />);
+      fireEvent.click(screen.getByText('p1'));
+      expect(screen.getByTestId('analyzer-detail')).toBeTruthy();
+
+      setSessionId('B');
+      await Promise.resolve();
+      expect(screen.queryByTestId('analyzer-detail')).toBeNull();
+    });
+
+    it('does not close a drawer opened on the first render', async () => {
+      const store = fakeStore();
+      render(() => <AnalyzersPanel store={store} controller={fakeController()} sessionId="A" />);
+      fireEvent.click(screen.getByText('Add analyzer'));
+      await Promise.resolve();
+      expect(screen.getByTestId('add-analyzer')).toBeTruthy();
+    });
   });
 
   it('shows the empty state when there is nothing active or pinned', () => {

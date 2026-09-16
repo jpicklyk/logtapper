@@ -19,7 +19,10 @@
  *    model section.
  *  - Which lines are highlighted/scrolled-to: that is
  *    `src-solid/viewer/controller.ts`'s job. `showMatched`/`clearMatched` are
- *    thin calls into it (`setLineSet(sid, 'filter', …)` + `scrollToLine`).
+ *    thin calls into it (`setLineSet(sid, 'matched', …)` + `scrollToLine`).
+ *    The key is `'matched'`, not `'filter'`: the controller keeps the two line
+ *    sets independent so clearing an analyzer's matches does not silently
+ *    discard the query bar's filter (and vice versa).
  *
  * Lifetime: owns a `createRoot` (same pattern as `app/sessions.ts`,
  * `viewer/controller.ts`). `dispose()` unlistens the progress subscription
@@ -70,6 +73,35 @@
  *    any path — that is what `AnalyzerCard`'s "Added" badge reads.
  *  - **Foreign runs** (an agent's `run_pipeline`) are visible here too — see
  *    the progress/complete handlers' comment for the rule.
+ *
+ * ## Uninstall is a catalog event, not a store method (D1-H4/M1)
+ *
+ * A processor can leave the catalog by two paths: this store's `uninstall()`
+ * (the Add-analyzer drawer's row action) and `packs/packsStore.ts`'s
+ * `uninstallProcessor`/`uninstallPack` (Settings → Packs), which calls the
+ * backend directly and knows nothing about session chains. Both make the
+ * backend emit `catalog-update`, so the prune lives on THAT event rather than
+ * inside `uninstall()` — one path, whichever surface (or agent) triggered it.
+ * `dropFromEveryChain` also pushes each affected session, because the backend
+ * holds its own `session_pipeline_meta` copy: pruning locally without pushing
+ * left an agent reading `GET …/chain` a processor that no longer exists, and
+ * the usual self-healing echo is closed (a compensating `chain-update` arrives
+ * with `caller.kind === 'ui'` and is deliberately ignored).
+ *
+ * Note this listener never re-fetches the catalog: `App.tsx` owns the single
+ * `catalog-update` → `refreshCatalog()` wiring for both stores, and a second
+ * fetch from here would just double every install's IPC.
+ *
+ * ## The default template is persisted, not read-only (D1-M2)
+ *
+ * `defaultTemplate` is seeded once from the localStorage keys the React app
+ * shares (`loadChainFromStorage`) and every later write goes back out through
+ * `saveChainToStorage`, matching `usePipelineWiring.ts`'s persist-on-change
+ * effect — before this, Solid read those keys and never wrote them, so an
+ * uninstall's prune of the template evaporated on restart. Per-session chain
+ * edits deliberately do NOT touch the template (React's reducer routes a
+ * `sessionId`-bearing edit to `chainBySession` only); the template changes on
+ * an uninstall prune and on a legacy single-chain workspace restore.
  */
 import { batch, createEffect, createRoot, createSignal, untrack } from 'solid-js';
 import type { Accessor } from 'solid-js';
@@ -89,7 +121,7 @@ import {
   getCorrelatorEvents,
   getProcessorVars,
 } from '@bridge/commands';
-import { onPipelineProgress, onChainUpdate, onPipelineComplete, onWorkspaceRestored } from '@bridge/events';
+import { onPipelineProgress, onChainUpdate, onPipelineComplete, onWorkspaceRestored, onCatalogUpdate } from '@bridge/events';
 import { groupProcessorsByPack } from '@bridge/types';
 import type {
   Caller,
@@ -101,6 +133,7 @@ import type {
   PipelineProgress,
   PipelineCompleteEvent,
   ChainUpdateEvent,
+  CatalogUpdateEvent,
   ChainState,
   WorkspaceRestoredEvent,
   MatchedLine,
@@ -111,7 +144,7 @@ import type {
 // Framework-free localStorage seed for the default chain, shared with the
 // React app's key names (`logtapper_pipeline_chain` / `_disabled`) — same
 // file the file-level ESLint allow-list on `@hooks` names.
-import { loadChainFromStorage, loadDisabledFromStorage } from '@hooks/pipelineChainStorage';
+import { loadChainFromStorage, loadDisabledFromStorage, saveChainToStorage } from '@hooks/pipelineChainStorage';
 import { coalesceMicrotask, createGenerationGuard } from '../reactive';
 import type { GenerationGuard } from '../reactive';
 
@@ -171,7 +204,10 @@ export interface AnalyzerSessions {
 /** The slice of W0a's `ViewerController` this store drives. Structural on
  *  purpose (see `AnalyzerSessions`) — the real controller satisfies it as-is. */
 export interface AnalyzerController {
-  setLineSet(sessionId: string, key: 'filter', lines: Set<number> | null): void;
+  /** Only `'matched'` is written from here (see the module doc); the union is
+   *  the controller's own two *content* keys so a caller passing the real
+   *  `ViewerController` stays assignable without importing `LineSetKey`. */
+  setLineSet(sessionId: string, key: 'filter' | 'matched', lines: Set<number> | null): void;
   scrollToLine(sessionId: string, line: number, opts?: { source?: 'user' | 'agent' | 'search' | 'analysis' }): void;
 }
 
@@ -215,6 +251,8 @@ export interface AnalyzerStoreDeps {
   listenComplete?: (cb: (payload: PipelineCompleteEvent) => void) => Promise<UnlistenFn>;
   /** Injected for tests; defaults to `onWorkspaceRestored`. */
   listenRestored?: (cb: (payload: WorkspaceRestoredEvent) => void) => Promise<UnlistenFn>;
+  /** Injected for tests; defaults to `onCatalogUpdate`. */
+  listenCatalog?: (cb: (payload: CatalogUpdateEvent) => void) => Promise<UnlistenFn>;
   /** Injected for tests; defaults to the real bridge wrappers. */
   commands?: AnalyzerCommands;
   /** Injected for tests; defaults to the Tauri native dialog. */
@@ -225,8 +263,13 @@ export interface AnalyzerStore {
   // ── Catalog ──────────────────────────────────────────────────────────────
   catalog: Accessor<ProcessorSummary[]>;
   packs: Accessor<PackSummary[]>;
-  /** Re-fetch the catalog + packs. Call after install/uninstall/load-from-file. */
+  /** Re-fetch the catalog + packs. Call after install/uninstall/load-from-file.
+   *  Never rejects — a failed fetch leaves the previous catalog in place and
+   *  lands in {@link catalogError} instead, so the "catalog is empty" state a
+   *  picker renders can be told apart from "the load failed". */
   refreshCatalog(): Promise<void>;
+  /** The last {@link refreshCatalog} failure, or `null` after a success. */
+  catalogError: Accessor<string | null>;
   byId(processorId: string): ProcessorSummary | undefined;
   groups(): { packGroups: ProcessorPackGroup[]; standaloneProcessors: ProcessorSummary[] };
   /** Active `state_tracker`s in this session's chain, for W5. */
@@ -260,8 +303,9 @@ export interface AnalyzerStore {
 
   // ── Result helpers ───────────────────────────────────────────────────────
   summaryFor(sessionId: string, processorId: string): PipelineRunSummary | undefined;
-  /** Cached per run generation — repeat calls within one run reuse the promise. */
-  matchedLines(sessionId: string, processorId: string): Promise<MatchedLine[]>;
+  /** Cached per run generation — repeat calls within one run reuse the promise.
+   *  Returns a {@link MatchedLineDigest}, not the raw rows: see its doc. */
+  matchedLines(sessionId: string, processorId: string): Promise<MatchedLineDigest>;
   /** Cached per run generation, same as {@link matchedLines}. */
   correlatorEvents(sessionId: string, processorId: string): Promise<CorrelatorResult>;
   vars(sessionId: string, processorId: string): Promise<Record<string, unknown>>;
@@ -335,11 +379,49 @@ const emptyRun = (): SessionRun => ({
  *  as a substring because the backend interpolates the session id into it. */
 const NO_CHAIN_CONFIGURED = 'no pipeline chain configured';
 
+/**
+ * How many matched rows keep their raw text in the cache — the drawer renders
+ * at most this many, and the rest are only ever needed as line *numbers*
+ * (`showMatched`). Exported so `AnalyzerDetail` caps its list at exactly the
+ * number the digest actually carries rather than a second, drifting constant.
+ */
+export const MATCHED_PREVIEW_CAP = 500;
+
+/**
+ * What one processor's matched lines reduce to for the two consumers that
+ * exist (D1-M8).
+ *
+ * `get_matched_lines` returns every match with its raw text; a broad reporter
+ * over a multi-million-line bugreport therefore hands back a million strings.
+ * Retaining that array for the life of the run generation pinned the log in
+ * the renderer heap a second time (three such reporters, three copies). The
+ * fetch result is reduced to this digest as soon as it lands and only the
+ * digest is cached: every line number (the drawer's "Show in viewer" set, and
+ * the count it displays) plus the first {@link MATCHED_PREVIEW_CAP} rows' raw
+ * text, which is all the drawer can render anyway.
+ */
+export interface MatchedLineDigest {
+  /** Every matched line's absolute backend line number, ascending. */
+  lineNums: number[];
+  /** The first {@link MATCHED_PREVIEW_CAP} matches, raw text included. */
+  preview: MatchedLine[];
+  /** Total matches — `lineNums.length`, named for the reader. */
+  total: number;
+}
+
+function toDigest(lines: MatchedLine[]): MatchedLineDigest {
+  return {
+    lineNums: lines.map((l) => l.lineNum).sort((a, b) => a - b),
+    preview: lines.slice(0, MATCHED_PREVIEW_CAP),
+    total: lines.length,
+  };
+}
+
 /** One run's result-fetch cache, replaced wholesale when the generation moves
  *  on so a stale promise is never handed to a caller asking about a new run. */
 interface RunCache {
   generation: number;
-  matchedLines: Map<string, Promise<MatchedLine[]>>;
+  matchedLines: Map<string, Promise<MatchedLineDigest>>;
   correlatorEvents: Map<string, Promise<CorrelatorResult>>;
 }
 
@@ -361,10 +443,17 @@ interface OwnRunState {
  * replacing any pre-existing entry for the same processor (including
  * dropping a stale `skipped` — a real update means the processor did run,
  * not that it was excluded) or appending a new one. Pure — exported for unit
- * tests. Mirrors React's `PipelineContext.tsx`'s `mergeProcessorResult`;
- * `scriptErrors`/`scannedFrom` are 0 because `AdbProcessorUpdate` doesn't
- * carry them, the same "not applicable / not yet known" default file-mode
- * runs use.
+ * tests. Mirrors React's `PipelineContext.tsx`'s `mergeProcessorResult` for
+ * the counts — `AdbProcessorUpdate` carries only `matchedLines`/
+ * `emissionCount`, so those two are replaced wholesale and a stale `skipped`
+ * is dropped.
+ *
+ * The run *diagnostics* are carried over from the existing entry rather than
+ * zeroed (D1-L4): `scriptErrors`/`firstScriptError`/`scannedFrom` describe a
+ * post-mortem run of the same session and a live counter says nothing about
+ * them, so overwriting with 0 erased the script-error row from a session that
+ * was both streamed and run. A processor with no prior entry still starts at
+ * the "not applicable / not yet known" 0 the file-mode path uses.
  */
 export function mergeProcessorResult(
   summaries: readonly PipelineRunSummary[],
@@ -373,7 +462,15 @@ export function mergeProcessorResult(
   emissionCount: number,
 ): PipelineRunSummary[] {
   const idx = summaries.findIndex((s) => s.processorId === processorId);
-  const updated: PipelineRunSummary = { processorId, matchedLines, emissionCount, scriptErrors: 0, scannedFrom: 0 };
+  const prev = idx >= 0 ? summaries[idx] : undefined;
+  const updated: PipelineRunSummary = {
+    processorId,
+    matchedLines,
+    emissionCount,
+    scriptErrors: prev?.scriptErrors ?? 0,
+    scannedFrom: prev?.scannedFrom ?? 0,
+    ...(prev?.firstScriptError ? { firstScriptError: prev.firstScriptError } : {}),
+  };
   return idx >= 0
     ? summaries.map((s, i) => (i === idx ? updated : s))
     : [...summaries, updated];
@@ -420,11 +517,13 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
   const listenChain = deps.listenChain ?? onChainUpdate;
   const listenComplete = deps.listenComplete ?? onPipelineComplete;
   const listenRestored = deps.listenRestored ?? onWorkspaceRestored;
+  const listenCatalog = deps.listenCatalog ?? onCatalogUpdate;
   const chooseFile = deps.chooseFile ?? openDialog;
 
   return createRoot((disposeRoot) => {
     const [catalog, setCatalog] = createSignal<ProcessorSummary[]>([]);
     const [packs, setPacks] = createSignal<PackSummary[]>([]);
+    const [catalogError, setCatalogError] = createSignal<string | null>(null);
     const [defaultTemplate, setDefaultTemplate] = createSignal<SessionChain>(emptyChain());
 
     const [chains, setChains] = createStore<Record<string, SessionChain>>({});
@@ -489,11 +588,33 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       return guard;
     };
 
+    /** The one writer of the shared template — see the module doc's
+     *  "default template is persisted" section. `persist: false` is the
+     *  seed's own write-back, which would only re-save what was just read. */
+    const writeDefaultTemplate = (next: SessionChain, opts: { persist?: boolean } = {}): void => {
+      setDefaultTemplate(next);
+      if (opts.persist !== false) saveChainToStorage([...next.order], [...next.disabled]);
+    };
+
+    /** Never rejects: a failed catalog fetch is reported through
+     *  `catalogError()` rather than thrown, so the fire-and-forget callers
+     *  (construction, `App.tsx`'s `catalog-update` listener) cannot produce an
+     *  unhandled rejection, and `installFromFile`/`uninstall` are not blamed
+     *  for a refresh that failed after their own mutation succeeded. */
     const refreshCatalog = async (): Promise<void> => {
-      const [list, pk] = await Promise.all([commands.listProcessors(), commands.listPacks()]);
+      let list: ProcessorSummary[];
+      let pk: PackSummary[];
+      try {
+        [list, pk] = await Promise.all([commands.listProcessors(), commands.listPacks()]);
+      } catch (e) {
+        if (!disposed) setCatalogError(String(e));
+        return;
+      }
+      if (disposed) return;
       batch(() => {
         setCatalog(list);
         setPacks(pk);
+        setCatalogError(null);
       });
       // Seed the shared default ONCE, from whatever the React app (or a prior
       // Solid session) last persisted — never re-seed on a later refresh, or
@@ -504,7 +625,7 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
         const validIds = new Set(list.map((p) => p.id));
         const chainIds = loadChainFromStorage(validIds).filter((id) => id !== PII_ANONYMIZER_ID);
         const disabledIds = loadDisabledFromStorage(new Set(chainIds));
-        setDefaultTemplate({ order: chainIds, disabled: new Set(disabledIds) });
+        writeDefaultTemplate({ order: chainIds, disabled: new Set(disabledIds) }, { persist: false });
       }
     };
 
@@ -812,10 +933,16 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
           }
           return;
         }
-        if (!sessions.order().includes(sessionId)) return;
+        // Consumed BEFORE the membership check (D1-L3): returning early with
+        // the token still in the map left it to be picked up by the next
+        // completion after a close/reopen of the same session id, whose
+        // generation would no longer match — dropping a live foreign run's
+        // result. The token belongs to the completion that arrived, whether or
+        // not there is still a tab to show it in.
         const token = foreignRuns.get(sessionId);
+        if (token !== undefined) foreignRuns.delete(sessionId);
+        if (!sessions.order().includes(sessionId)) return;
         if (token !== undefined) {
-          foreignRuns.delete(sessionId);
           if (!guardFor(sessionId).isCurrent(token)) return;
         } else if (currentRun(sessionId).running || ownRuns.has(sessionId)) {
           return; // the in-flight row is an own run's — not this completion's
@@ -847,11 +974,14 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       return cache;
     };
 
-    const matchedLines = (sessionId: string, processorId: string): Promise<MatchedLine[]> => {
+    const matchedLines = (sessionId: string, processorId: string): Promise<MatchedLineDigest> => {
       const cache = ensureCache(sessionId, guardFor(sessionId).current());
       let p = cache.matchedLines.get(processorId);
       if (!p) {
-        p = commands.getMatchedLines(sessionId, processorId);
+        // Reduced to the digest inside the cached promise, so the full raw
+        // array is garbage as soon as this `then` returns — see
+        // `MatchedLineDigest`.
+        p = commands.getMatchedLines(sessionId, processorId).then(toDigest);
         cache.matchedLines.set(processorId, p);
       }
       return p;
@@ -871,14 +1001,13 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       commands.getProcessorVars(sessionId, processorId);
 
     const showMatched = async (sessionId: string, processorId: string): Promise<void> => {
-      const lines = await matchedLines(sessionId, processorId);
-      const nums = lines.map((l) => l.lineNum).sort((a, b) => a - b);
-      controller.setLineSet(sessionId, 'filter', new Set(nums));
-      if (nums.length > 0) controller.scrollToLine(sessionId, nums[0], { source: 'user' });
+      const { lineNums } = await matchedLines(sessionId, processorId);
+      controller.setLineSet(sessionId, 'matched', new Set(lineNums));
+      if (lineNums.length > 0) controller.scrollToLine(sessionId, lineNums[0], { source: 'user' });
     };
 
     const clearMatched = (sessionId: string): void => {
-      controller.setLineSet(sessionId, 'filter', null);
+      controller.setLineSet(sessionId, 'matched', null);
     };
 
     // ── Live counters (L3) ───────────────────────────────────────────────
@@ -892,8 +1021,18 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
     const liveResultBase = (sessionId: string): PipelineRunResult =>
       currentRun(sessionId).result ?? { sessionId, effectiveProcessorIds: [], summaries: [] };
 
+    /** A live counter for a session this store does not know has nowhere to
+     *  render (D1-L2) — and writing one would recreate a `runs` row the prune
+     *  effect already swept, leaving it orphaned until the next session
+     *  open/close. Same rule the progress listener applies. Untracked because
+     *  the caller is a stream flush, which may run under someone else's
+     *  reactive owner and must not subscribe to the session list. */
+    const isKnownSession = (sessionId: string): boolean =>
+      untrack(() => sessions.order().includes(sessionId));
+
     const applyProcessorUpdates = (sessionId: string, updates: AdbProcessorUpdate[]): void => {
       if (updates.length === 0) return;
+      if (!isKnownSession(sessionId)) return;
       const base = liveResultBase(sessionId);
       let summaries = base.summaries;
       for (const u of updates) {
@@ -903,6 +1042,13 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
     };
 
     const applyProcessorsExcluded = (sessionId: string, excluded: AdbExcludedProcessor[]): void => {
+      // An empty exclusion set for a session with no result yet has nothing to
+      // clear and nothing to record (D1-L1): manufacturing `{summaries: []}`
+      // here would flip `result()` from `null` to non-null, so `result() !==
+      // null` would stop meaning "something ran". With an existing result the
+      // empty set is meaningful — it clears stale `source_type_mismatch` rows.
+      if (excluded.length === 0 && currentRun(sessionId).result === null) return;
+      if (!isKnownSession(sessionId)) return;
       const base = liveResultBase(sessionId);
       const summaries = applyExcludedProcessors(base.summaries, excluded);
       setRuns(sessionId, { ...currentRun(sessionId), result: { ...base, summaries } });
@@ -921,28 +1067,72 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       await refreshCatalog();
     };
 
-    const dropFromEveryChain = (processorId: string): void => {
+    /** Remove `processorIds` from every session's chain and from the shared
+     *  template, pushing each session whose chain actually changed (D1-M1):
+     *  the backend keeps its own `session_pipeline_meta`, and a prune that is
+     *  never pushed leaves an agent reading a chain member that no longer
+     *  exists. Idempotent — an id already gone costs nothing and pushes
+     *  nothing, which is what makes calling this from both `uninstall()` and
+     *  the `catalog-update` echo of that same uninstall safe. */
+    const dropFromEveryChain = (processorIds: readonly string[]): void => {
+      const drop = new Set(processorIds);
+      if (drop.size === 0) return;
+      const touched: string[] = [];
       batch(() => {
         for (const sessionId of Object.keys(chains)) {
           const cur = chains[sessionId];
-          if (!cur.order.includes(processorId)) continue;
+          if (!cur.order.some((id) => drop.has(id))) continue;
           const disabled = new Set(cur.disabled);
-          disabled.delete(processorId);
-          setSessionChain(sessionId, { order: cur.order.filter((id) => id !== processorId), disabled });
+          for (const id of drop) disabled.delete(id);
+          setSessionChain(sessionId, { order: cur.order.filter((id) => !drop.has(id)), disabled });
+          touched.push(sessionId);
         }
         const tpl = defaultTemplate();
-        if (tpl.order.includes(processorId)) {
+        if (tpl.order.some((id) => drop.has(id))) {
           const disabled = new Set(tpl.disabled);
-          disabled.delete(processorId);
-          setDefaultTemplate({ order: tpl.order.filter((id) => id !== processorId), disabled });
+          for (const id of drop) disabled.delete(id);
+          writeDefaultTemplate({ order: tpl.order.filter((id) => !drop.has(id)), disabled });
         }
       });
+      for (const sessionId of touched) schedulePush(sessionId);
     };
+
+    /** Every id an uninstall of `ids` takes out of the catalog: the ids
+     *  themselves plus, for a pack id, that pack's member processors — a
+     *  `catalog-update` for `uninstall_pack` names the pack, and it is the
+     *  members that sit in session chains. Read from `packs()` synchronously,
+     *  before `App.tsx`'s refresh of the catalog can drop the pack row. */
+    const uninstalledIds = (ids: readonly string[]): string[] => {
+      const out = new Set<string>(ids);
+      const known = untrack(packs);
+      for (const id of ids) {
+        const pk = known.find((p) => p.id === id);
+        if (pk) for (const memberId of pk.processorIds) out.add(memberId);
+      }
+      return [...out];
+    };
+
+    // A processor or pack left the catalog — by this store's `uninstall()`, by
+    // the Packs tab (`packsStore`, which talks to the backend directly), or by
+    // an agent. See the module doc's "uninstall is a catalog event" section
+    // for why the prune lives here and not in `uninstall()`. Deliberately NOT
+    // a second `refreshCatalog()`: `App.tsx` owns that single wiring.
+    track(
+      listenCatalog((payload) => {
+        if (disposed) return;
+        if (payload.action !== 'uninstall') return;
+        dropFromEveryChain(uninstalledIds(payload.ids));
+      }),
+    );
 
     const uninstall = async (processorId: string): Promise<void> => {
       // Every session's chain first — an uninstalled processor must not linger
-      // as a dangling id anywhere, mirroring `processor:removed`'s reducer case.
-      dropFromEveryChain(processorId);
+      // as a dangling id anywhere, mirroring `processor:removed`'s reducer
+      // case. The backend's `catalog-update` prunes it too (and is the only
+      // thing that prunes a Packs-tab uninstall); doing it up front keeps the
+      // cards from rendering a row whose processor is already gone while the
+      // IPC is in flight.
+      dropFromEveryChain([processorId]);
       await commands.uninstallProcessor(processorId);
       await refreshCatalog();
     };
@@ -972,7 +1162,7 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       // no per-session push here: `run()` pushes before every run regardless,
       // and one restore must not fan out into N chain writes.
       batch(() => {
-        setDefaultTemplate(next);
+        writeDefaultTemplate(next);
         for (const id of sessions.order()) {
           if (!chains[id]) setSessionChain(id, { order: [...next.order], disabled: new Set(next.disabled) });
         }
@@ -1064,6 +1254,7 @@ export function createAnalyzerStore(deps: AnalyzerStoreDeps): AnalyzerStore {
       catalog,
       packs,
       refreshCatalog,
+      catalogError,
       byId,
       groups,
       trackers,

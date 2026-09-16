@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { For, Show, createMemo, createSignal } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, on } from 'solid-js';
 import type { JSX } from 'solid-js';
 import { groupProcessorsByPack, resolveChainProcessors } from '@bridge/types';
 import type { ProcessorSummary } from '@bridge/types';
@@ -33,6 +33,26 @@ export function AnalyzersPanel(props: AnalyzersPanelProps): JSX.Element {
   const [detailId, setDetailId] = createSignal<string | null>(null);
   const [addOpen, setAddOpen] = createSignal(false);
 
+  // The focused session changes underneath this component, it is not
+  // remounted: `App.tsx` mounts the panel under a non-keyed `<Show>` whose
+  // callback child is re-created only when truthiness flips, so switching tabs
+  // just mutates `props.sessionId` on this instance (D1-M4). Both drawers act
+  // on `props.sessionId` at click time, so leaving them open across the switch
+  // meant "Add analyzer" added to the session the user had just left — and the
+  // detail drawer kept showing processor P while fetching P's vars and matched
+  // lines for a session P may not even be in. `defer` so the first render does
+  // not clear anything.
+  createEffect(
+    on(
+      () => props.sessionId,
+      () => {
+        setDetailId(null);
+        setAddOpen(false);
+      },
+      { defer: true },
+    ),
+  );
+
   const chain = createMemo(() => props.store.chain(props.sessionId));
   const result = createMemo(() => props.store.result(props.sessionId));
   const running = createMemo(() => props.store.running(props.sessionId));
@@ -54,6 +74,8 @@ export function AnalyzersPanel(props: AnalyzersPanelProps): JSX.Element {
       .map((id) => props.store.byId(id))
       .filter((p): p is ProcessorSummary => p !== undefined),
   );
+
+  const lastError = createMemo(() => props.store.lastError(props.sessionId));
 
   const skippedCount = createMemo(
     () => result()?.summaries.filter((s) => s.skipped).length ?? 0,
@@ -131,6 +153,18 @@ export function AnalyzersPanel(props: AnalyzersPanelProps): JSX.Element {
           Reset
         </button>
       </div>
+
+      {/* A failed run used to be completely silent — the Stop button simply
+          became Run again and the user re-clicked forever (D1-H2). The store
+          records the failure for both an own run and an agent's; this is the
+          only place it reaches the DOM. */}
+      <Show when={lastError()}>
+        {(message) => (
+          <div class={styles.errorBanner} role="alert" data-testid="analyzer-run-error">
+            Run failed — {message()}
+          </div>
+        )}
+      </Show>
 
       <Show when={skippedCount() > 0}>
         <div class={styles.banner}>

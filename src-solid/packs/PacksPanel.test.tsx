@@ -45,9 +45,11 @@ function fakeStore(overrides: Partial<PacksStore> = {}): PacksStore {
   const [pendingPackUpdates] = createSignal<PackUpdateAvailable[]>([]);
   const [updatesLoading] = createSignal(false);
   const [updateErrors] = createSignal<SourceError[]>([]);
+  const [updatesError] = createSignal<string | null>(null);
 
   return {
     sources,
+    refreshSources: vi.fn(),
     selectedSource,
     entries,
     packEntries,
@@ -67,6 +69,7 @@ function fakeStore(overrides: Partial<PacksStore> = {}): PacksStore {
     pendingPackUpdates,
     updatesLoading,
     updateErrors,
+    updatesError,
     checkUpdates: vi.fn(() => Promise.resolve()),
     updateOne: vi.fn(() => Promise.resolve()),
     updateAllFromSource: vi.fn(() => Promise.resolve()),
@@ -77,8 +80,12 @@ function fakeStore(overrides: Partial<PacksStore> = {}): PacksStore {
 }
 
 describe('PacksPanel', () => {
-  it('fetches the first enabled source on mount', () => {
-    const store = fakeStore();
+  it('fetches the first enabled source when nothing is selected yet', () => {
+    const [selectedSource, setSelectedSource] = createSignal<string | null>(null);
+    const store = fakeStore({
+      selectedSource,
+      fetchEntries: vi.fn((name: string) => { setSelectedSource(name); return Promise.resolve(); }),
+    });
     render(() => <PacksPanel store={store} sourcesPanel={<div data-testid="sources-slot" />} />);
     expect(store.fetchEntries).toHaveBeenCalledWith('official');
   });
@@ -129,7 +136,7 @@ describe('PacksPanel', () => {
     expect(store.uninstallPack).toHaveBeenCalledWith('official', 'wifi-pack');
   });
 
-  it('shows an Update button instead of Remove when a pack update is available, and calls updatePack', () => {
+  it('offers Update AND Remove when a pack update is available (D1-L12)', () => {
     const update: PackUpdateAvailable = {
       packId: 'wifi-pack', packName: 'WiFi Pack', sourceName: 'official',
       installedVersion: '1.0.0', availableVersion: '1.1.0', newProcessorIds: [], entry: wifiPack,
@@ -143,6 +150,12 @@ describe('PacksPanel', () => {
     expect(within(card).getByText('Update available')).toBeTruthy();
     fireEvent.click(within(card).getByText('Update'));
     expect(store.updatePack).toHaveBeenCalledWith('official', wifiPack);
+
+    // Update used to REPLACE Remove, so a pack with a pending update could
+    // only be uninstalled by updating it first.
+    fireEvent.click(within(card).getByText('Remove'));
+    fireEvent.click(within(card).getByText('Confirm remove'));
+    expect(store.uninstallPack).toHaveBeenCalledWith('official', 'wifi-pack');
   });
 
   it('filters packs by search query across name/description/tags', () => {
@@ -210,5 +223,66 @@ describe('PacksPanel', () => {
     const store = fakeStore({ sources, selectedSource: () => null });
     render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
     expect(screen.getByText(/No marketplace sources configured/)).toBeTruthy();
+  });
+
+  describe('source selection (D1-H1)', () => {
+    it('asks the owner to load the sources when the list is empty at mount', () => {
+      const [sources] = createSignal<Source[]>([]);
+      const store = fakeStore({ sources, selectedSource: () => null });
+      render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+      // Nothing else loads them: `SourcesTab` is rendered *inside* this panel.
+      expect(store.refreshSources).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not re-ask when the sources are already loaded', () => {
+      const store = fakeStore();
+      render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+      expect(store.refreshSources).not.toHaveBeenCalled();
+    });
+
+    it('picks the first enabled source when the list arrives AFTER mount', async () => {
+      const [sources, setSources] = createSignal<Source[]>([]);
+      const [selectedSource, setSelectedSource] = createSignal<string | null>(null);
+      const store = fakeStore({
+        sources,
+        selectedSource,
+        fetchEntries: vi.fn((name: string) => { setSelectedSource(name); return Promise.resolve(); }),
+      });
+      render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+      // `onMount` ran against an empty list — the old code stopped here, with
+      // no selected source, a disabled Fetch button and no `<select>`.
+      expect(store.fetchEntries).not.toHaveBeenCalled();
+
+      setSources([{ name: 'official', type: 'github', repo: 'jpicklyk/logtapper', enabled: true, autoUpdate: true }]);
+      await Promise.resolve();
+      expect(store.fetchEntries).toHaveBeenCalledWith('official');
+    });
+
+    it('skips disabled sources', async () => {
+      const [sources, setSources] = createSignal<Source[]>([]);
+      const store = fakeStore({ sources, selectedSource: () => null });
+      render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+      setSources([
+        { name: 'off', type: 'github', repo: 'a/b', enabled: false, autoUpdate: false },
+        { name: 'on', type: 'github', repo: 'c/d', enabled: true, autoUpdate: true },
+      ]);
+      await Promise.resolve();
+      expect(store.fetchEntries).toHaveBeenCalledWith('on');
+    });
+
+    it('does not refetch on a later visit once a source is selected (D1-L10)', () => {
+      const store = fakeStore(); // selectedSource is already 'official'
+      render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+      expect(store.fetchEntries).not.toHaveBeenCalled();
+    });
+  });
+
+  it('renders a wholesale update-check failure rather than "No pending updates." (D1-M12)', () => {
+    const store = fakeStore({ updatesError: () => 'Error: network down' });
+    render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+    const banner = screen.getByTestId('updates-check-error');
+    expect(banner.getAttribute('role')).toBe('alert');
+    expect(banner.textContent).toContain('network down');
+    expect(screen.queryByText('No pending updates.')).toBeNull();
   });
 });

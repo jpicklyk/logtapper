@@ -26,14 +26,20 @@ function proc(id: string, overrides: Partial<ProcessorSummary> = {}): ProcessorS
   };
 }
 
-function fakeStore(catalog: ProcessorSummary[], activeOrder: string[] = []): AnalyzerStore {
+function fakeStore(
+  catalog: ProcessorSummary[],
+  activeOrder: string[] = [],
+  overrides: Partial<AnalyzerStore> = {},
+): AnalyzerStore {
   const chain: SessionChainSnapshot = { order: activeOrder, disabled: [], active: activeOrder };
   return {
     catalog: () => catalog,
+    catalogError: () => null,
     chain: () => chain,
     add: vi.fn(),
     installFromFile: vi.fn(() => Promise.resolve()),
     uninstall: vi.fn(() => Promise.resolve()),
+    ...overrides,
   } as unknown as AnalyzerStore;
 }
 
@@ -84,6 +90,49 @@ describe('AddAnalyzer', () => {
     fireEvent.click(screen.getByText('Uninstall'));
     fireEvent.click(screen.getByText('Confirm'));
     expect(store.uninstall).toHaveBeenCalledWith('p1');
+  });
+
+  it('renders the store\'s catalog-load failure instead of reading as "nothing installed" (D1-M9)', () => {
+    const store = fakeStore([], [], { catalogError: () => 'Error: ipc down' });
+    render(() => <AddAnalyzer store={store} sessionId="s1" onClose={vi.fn()} />);
+    const banner = screen.getByTestId('add-analyzer-error');
+    expect(banner.getAttribute('role')).toBe('alert');
+    expect(banner.textContent).toContain('ipc down');
+  });
+
+  it('surfaces a rejected load-from-file rather than swallowing it', async () => {
+    const store = fakeStore([], [], {
+      installFromFile: vi.fn(() => Promise.reject(new Error('bad yaml'))),
+    });
+    render(() => <AddAnalyzer store={store} sessionId="s1" onClose={vi.fn()} />);
+    expect(screen.queryByTestId('add-analyzer-error')).toBeNull();
+    fireEvent.click(screen.getByText('Load YAML from file…'));
+    const banner = await screen.findByTestId('add-analyzer-error');
+    expect(banner.textContent).toContain('bad yaml');
+  });
+
+  it('surfaces a rejected uninstall', async () => {
+    const store = fakeStore([proc('p1')], [], {
+      uninstall: vi.fn(() => Promise.reject(new Error('still in use'))),
+    });
+    render(() => <AddAnalyzer store={store} sessionId="s1" onClose={vi.fn()} />);
+    fireEvent.click(screen.getByText('Uninstall'));
+    fireEvent.click(screen.getByText('Confirm'));
+    const banner = await screen.findByTestId('add-analyzer-error');
+    expect(banner.textContent).toContain('still in use');
+  });
+
+  it('is a dialog a keyboard user can leave: role, label and Escape', () => {
+    const onClose = vi.fn();
+    const store = fakeStore([proc('p1')]);
+    render(() => <AddAnalyzer store={store} sessionId="s1" onClose={onClose} />);
+    const overlay = screen.getByTestId('add-analyzer');
+    expect(overlay.getAttribute('role')).toBe('dialog');
+    expect(overlay.getAttribute('aria-modal')).toBe('true');
+    expect(document.getElementById(overlay.getAttribute('aria-labelledby') ?? '')?.textContent).toBe('Add analyzer');
+    expect(document.activeElement).toBe(overlay);
+    fireEvent.keyDown(overlay, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalled();
   });
 
   it('offers no uninstall button for a built-in processor', () => {

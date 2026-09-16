@@ -5,6 +5,7 @@ import type { Caller, ProcessorSummary } from '@bridge/types';
 import { CallerBadge, callerClient } from '../ui';
 import { PII_ANONYMIZER_ID } from './analyzerStore';
 import type { AnalyzerStore } from './analyzerStore';
+import { createOverlayDialog } from './overlayDialog';
 import styles from './analyzers.module.css';
 
 const OTHER_GROUP = 'Other';
@@ -56,6 +57,16 @@ export interface AddAnalyzerProps {
 export function AddAnalyzer(props: AddAnalyzerProps): JSX.Element {
   const [query, setQuery] = createSignal('');
   const [pendingUninstall, setPendingUninstall] = createSignal<string | null>(null);
+  // Uninstall / load-from-file used to be `void store.…()` with no `.catch`
+  // (D1-M9): a malformed YAML or a refused uninstall became an unhandled
+  // rejection and the drawer looked like it had simply ignored the click.
+  const [actionError, setActionError] = createSignal<string | null>(null);
+  const dialog = createOverlayDialog(() => props.onClose());
+
+  /** The store's catalog-load failure, or this drawer's own last action
+   *  failure — either way the row below the header says what went wrong
+   *  instead of the list silently reading as "nothing is installed". */
+  const error = createMemo(() => actionError() ?? props.store.catalogError());
 
   const activeIds = createMemo(() => new Set(props.store.chain(props.sessionId).order));
 
@@ -97,17 +108,19 @@ export function AddAnalyzer(props: AddAnalyzerProps): JSX.Element {
 
   const handleConfirmUninstall = (id: string): void => {
     setPendingUninstall(null);
-    void props.store.uninstall(id);
+    setActionError(null);
+    void props.store.uninstall(id).catch((e: unknown) => setActionError(`Uninstall failed — ${String(e)}`));
   };
 
   const handleLoadFromFile = (): void => {
-    void props.store.installFromFile();
+    setActionError(null);
+    void props.store.installFromFile().catch((e: unknown) => setActionError(`Could not load that file — ${String(e)}`));
   };
 
   return (
-    <div class={styles.overlay} data-testid="add-analyzer">
+    <div class={styles.overlay} data-testid="add-analyzer" {...dialog.props}>
       <div class={styles.overlayHeader}>
-        <span class={styles.overlayTitle}>Add analyzer</span>
+        <span id={dialog.labelId} class={styles.overlayTitle}>Add analyzer</span>
         <button type="button" class={styles.btn} onClick={handleLoadFromFile}>
           Load YAML from file…
         </button>
@@ -116,6 +129,13 @@ export function AddAnalyzer(props: AddAnalyzerProps): JSX.Element {
         </button>
       </div>
       <div class={styles.overlayBody}>
+        <Show when={error()}>
+          {(message) => (
+            <div class={styles.errorBanner} role="alert" data-testid="add-analyzer-error">
+              {message()}
+            </div>
+          )}
+        </Show>
         <div class={styles.hint}>
           Looking for more? Curated packs by subsystem are under Settings → Packs.
         </div>
