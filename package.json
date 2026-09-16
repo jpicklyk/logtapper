@@ -39,7 +39,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@fontsource/geist": "^5.2.8",
     "@tanstack/react-virtual": "^3.10.0",
-    "@tauri-apps/api": "^2.10.0",
+    "@tauri-apps/api": "~2.10.0",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-window-state": "^2.4.1",
     "clsx": "^2.1.1",
