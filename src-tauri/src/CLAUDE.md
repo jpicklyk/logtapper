@@ -37,7 +37,7 @@ contract, test harness, Windows build quirks).
 
 `app.security.csp` (production) and `app.security.devCsp` (dev) are directive-map objects
 — see `node_modules/@tauri-apps/cli/config.schema.json`'s `SecurityConfig`/`Csp` defs. Both
-frontends (React `dist/` and Solid `dist-solid/`, via `tauri.solid.conf.json`) and the bench
+frontends (Solid `dist-solid/` by default; the legacy React `dist/` via `tauri.react.conf.json`) and the bench
 configs (`scripts/bench/*.bench.conf.json`) share this policy: every overlay only overrides
 `build`, never `app`, so there is exactly one `app.security` to keep in sync — pinned by
 `overlays_do_not_override_security` in `src-tauri/tests/csp_config.rs`.

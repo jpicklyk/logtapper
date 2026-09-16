@@ -4,10 +4,10 @@
   "version": "0.11.0",
   "identifier": "io.github.jpicklyk.logtapper",
   "build": {
-    "frontendDist": "../dist",
-    "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "npm run build:mcpb && npm run dev",
-    "beforeBuildCommand": "npm run build && npm run build:mcpb"
+    "frontendDist": "../dist-solid",
+    "devUrl": "http://localhost:1421",
+    "beforeDevCommand": "npm run build:mcpb && npm run dev:solid",
+    "beforeBuildCommand": "npm run build:solid && npm run build:mcpb"
   },
   "app": {
     "windows": [

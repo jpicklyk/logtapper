@@ -1,8 +1,0 @@
-{
-  "build": {
-    "devUrl": "http://localhost:1421",
-    "frontendDist": "../dist-solid",
-    "beforeDevCommand": "npm run dev:solid",
-    "beforeBuildCommand": "npm run build:solid && npm run build:mcpb"
-  }
-}
