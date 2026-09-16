@@ -10,10 +10,41 @@
 }
 
 .empty {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   margin: 0;
   padding: 12px 4px;
   color: var(--text-muted);
   line-height: 1.45;
+}
+
+.emptyText {
+  margin: 0;
+}
+
+/* ── File info entry point ───────────────────────────────────────────── */
+
+.metaActions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.infoButton {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  color: var(--text);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.infoButton:hover,
+.infoButton:focus-visible {
+  border-color: var(--accent-border);
+  color: var(--accent);
 }
 
 .scanning {

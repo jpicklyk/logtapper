@@ -78,7 +78,7 @@ describe('surface map', () => {
     expect(existsInMode('sections', 'live')).toBe(false);
     expect(existsInMode('analyses', 'live')).toBe(false);
     expect(existsInMode('timeline', 'live')).toBe(false);
-    for (const id of ['viewer', 'analyzers', 'device-state', 'bookmarks', 'presence'] as const) {
+    for (const id of ['viewer', 'analyzers', 'device-state', 'presence'] as const) {
       expect(existsInMode(id, 'postmortem')).toBe(true);
       expect(existsInMode(id, 'live')).toBe(true);
     }
@@ -88,7 +88,6 @@ describe('surface map', () => {
     for (const mode of MODES) {
       const railIds = railSurfaces(mode, 'compact').map((s) => s.id);
       expect(railIds).toContain('presence');
-      expect(railIds).toContain('bookmarks');
       expect(regionSurfaces('navigator', mode, 'compact')).toHaveLength(0);
       expect(regionSurfaces('presence', mode, 'compact')).toHaveLength(0);
 

@@ -90,6 +90,24 @@ const FIXTURE: SectionEntry[] = [
 ];
 
 describe('SectionsPanel — empty and scanning states', () => {
+  it('offers a "File info…" button beside the device header and in the non-bugreport state, only when given a handler', () => {
+    const onShowFileInfo = vi.fn();
+    const { unmount } = render(() => (
+      <SectionsPanel store={fakeStore({ isBugreportSession: false })} onShowFileInfo={onShowFileInfo} />
+    ));
+    fireEvent.click(screen.getByTestId('sections-file-info'));
+    expect(onShowFileInfo).toHaveBeenCalledTimes(1);
+    unmount();
+
+    render(() => <SectionsPanel store={fakeStore({ sections: [] })} onShowFileInfo={onShowFileInfo} />);
+    fireEvent.click(screen.getByTestId('sections-file-info'));
+    expect(onShowFileInfo).toHaveBeenCalledTimes(2);
+    cleanup();
+
+    render(() => <SectionsPanel store={fakeStore({ isBugreportSession: false })} />);
+    expect(screen.queryByTestId('sections-file-info')).toBeNull();
+  });
+
   it('shows the non-bugreport empty state and no tree', () => {
     render(() => <SectionsPanel store={fakeStore({ isBugreportSession: false, sections: FIXTURE })} />);
     expect(screen.getByText(/sections apply to bugreports and dumpstates/i)).toBeTruthy();

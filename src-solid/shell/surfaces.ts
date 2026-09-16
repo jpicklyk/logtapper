@@ -10,7 +10,6 @@ export type SurfaceId =
   | 'analyzers'
   | 'device-state'
   | 'analyses'
-  | 'bookmarks'
   | 'watches'
   | 'stream-controls'
   | 'timeline'
@@ -112,14 +111,10 @@ export const SURFACES: readonly SurfaceDef[] = [
     modes: POSTMORTEM,
     placement: [DRAWER, R('details'), R('analyses'), R('analyses')],
   },
-  {
-    id: 'bookmarks',
-    title: 'Bookmarks',
-    glyph: 'BK',
-    description: 'Shared line artifacts, each with its caller badge.',
-    modes: BOTH,
-    placement: [RAIL, R('navigator'), R('navigator'), R('navigator')],
-  },
+  // Bookmarks are not a surface of their own any more: they are workspace
+  // content (saved in the `.ltw` beside the sessions) and stacked under the
+  // sections tree they kept getting pushed off-screen by, so `BookmarksPanel`
+  // now renders inside `workspace-home` (see `workspace/WorkspaceHome.tsx`).
   {
     id: 'watches',
     title: 'Watches',

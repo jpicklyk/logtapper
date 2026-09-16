@@ -472,8 +472,9 @@ export function App(props: AppProps) {
     setActiveSurface('editor');
   };
 
-  // Owned here rather than inside `SessionInfo` so the top-bar "File info"
-  // button and the footer chip drive the same popover.
+  // Owned here rather than inside `SessionInfo` so the sections navigator's
+  // "File info" button (beside the device model and date span, where the user
+  // looks for it) and the footer chip drive the same popover.
   const [sessionInfoOpen, setSessionInfoOpen] = createSignal(false);
 
   const openInEditor = async (): Promise<void> => {
@@ -555,20 +556,6 @@ export function App(props: AppProps) {
         title={isSplitTier(tier()) ? undefined : 'Widen the window to split the viewer'}
       >
         Split view
-      </button>
-      {/* React had a permanent "File Info" pane; here the same fields live in
-          the footer chip's popover, which nothing advertised — the sign-off
-          review read it as missing. A top-bar button is the second, visible
-          way in; both toggle the one popover. */}
-      <button
-        type="button"
-        class={styles.openButton}
-        onClick={() => setSessionInfoOpen((v) => !v)}
-        disabled={!store.focused()}
-        aria-pressed={sessionInfoOpen()}
-        title={store.focused() ? 'Lines, size, time range, device details and reopen-as for the focused session' : 'Open a file first'}
-      >
-        File info
       </button>
     </>
   );
@@ -657,7 +644,13 @@ export function App(props: AppProps) {
         statusBar={statusBar}
         slots={{
           'workspace-home': () => (
-            <WorkspaceHome store={workspace} sessions={store} actions={actions} liveStream={liveStream} />
+            <WorkspaceHome
+              store={workspace}
+              sessions={store}
+              actions={actions}
+              liveStream={liveStream}
+              bookmarks={<BookmarksPanel store={bookmarks} sessions={store} />}
+            />
           ),
           presence: () => <PresencePanel store={presence} />,
           sections: () => (
@@ -666,6 +659,7 @@ export function App(props: AppProps) {
               sourceName={store.focused()?.load.sourceName}
               firstTimestamp={store.focused()?.load.firstTimestamp}
               lastTimestamp={store.focused()?.load.lastTimestamp}
+              onShowFileInfo={store.focused() ? () => setSessionInfoOpen(true) : undefined}
             />
           ),
           analyzers: () => (
@@ -690,7 +684,6 @@ export function App(props: AppProps) {
             </Show>
           ),
           analyses: () => <AnalysesPanel store={analyses} />,
-          bookmarks: () => <BookmarksPanel store={bookmarks} sessions={store} />,
           watches: () => <WatchesPanel store={watches} sessions={store} callerFor={watchCaller} />,
           viewer: () => (
             <ViewerSplit

@@ -344,7 +344,15 @@ describe('App', () => {
     expect(within(screen.getByTestId('top-bar')).queryByText(/4,321 lines/)).toBeNull();
   });
 
-  it('the top-bar "File info" button opens the same session-info popover the footer chip does', async () => {
+  it('mounts the bookmarks panel inside the workspace drawer, not as a navigator surface', () => {
+    render(() => <App />);
+    // Cold start with no session opens the workspace drawer (2c first-run fix).
+    const panel = screen.getByTestId('bookmarks-panel');
+    expect(screen.getByTestId('workspace-bookmarks').contains(panel)).toBe(true);
+    expect(within(screen.getByTestId('top-bar')).queryByRole('button', { name: /^file info/i })).toBeNull();
+  });
+
+  it('the footer chip owns the session-info popover state that the sections "File info…" button shares', async () => {
     const { open } = await import('@tauri-apps/plugin-dialog');
     const { getLines, loadLogFile } = await import('@bridge/commands');
 
@@ -372,20 +380,15 @@ describe('App', () => {
 
     render(() => <App />);
     const topBar = within(screen.getByTestId('top-bar'));
-    const fileInfo = topBar.getByRole('button', { name: /^file info$/i }) as HTMLButtonElement;
-    // Nothing open yet: the button is present but disabled.
-    expect(fileInfo.disabled).toBe(true);
-
     fireEvent.click(topBar.getByRole('button', { name: /^open file/i }));
-    await screen.findByTestId('status-session');
-    expect(fileInfo.disabled).toBe(false);
+    const chip = await screen.findByTestId('status-session');
 
-    fireEvent.click(fileInfo);
+    fireEvent.click(chip);
     expect(screen.getByTestId('session-info-popover')).toBeTruthy();
-    // The footer chip reports the same open state, and closes it too.
-    expect(screen.getByTestId('status-session').getAttribute('aria-expanded')).toBe('true');
-    fireEvent.click(screen.getByTestId('status-session'));
+    expect(chip.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(chip);
     expect(screen.queryByTestId('session-info-popover')).toBeNull();
+    expect(chip.getAttribute('aria-expanded')).toBe('false');
   });
 
   // C2: the status-bar session chip opens a popover with a "reopen as…"

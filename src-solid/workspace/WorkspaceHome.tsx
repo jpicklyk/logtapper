@@ -56,6 +56,13 @@ export interface WorkspaceHomeProps {
   actions: AppActions;
   /** L1's live-session store — the attach action renders its picker in place. */
   liveStream: LiveStreamStore;
+  /**
+   * The bookmarks panel, rendered under the sessions list. Bookmarks are
+   * workspace content (saved in the `.ltw`), and as a navigator surface they
+   * sat under the sections tree and were pushed off-screen by any long
+   * bugreport; here they have a home that scrolls with the workspace.
+   */
+  bookmarks?: JSX.Element;
 }
 
 /**
@@ -416,6 +423,12 @@ export function WorkspaceHome(props: WorkspaceHomeProps): JSX.Element {
           </div>
         </Show>
       </section>
+
+      <Show when={props.bookmarks}>
+        <section class={styles.section} data-testid="workspace-bookmarks">
+          {props.bookmarks}
+        </section>
+      </Show>
     </div>
   );
 }

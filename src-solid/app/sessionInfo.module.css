@@ -139,10 +139,13 @@
 }
 
 .fieldLabel {
-  color: var(--text-dimmed);
-  font-size: 10px;
+  /* Was --text-dimmed at 10px: unreadable on the raised surface (sign-off
+     review). Muted is the lightest text token that still clears AA here. */
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
 }
 
 .fieldValue {

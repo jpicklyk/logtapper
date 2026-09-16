@@ -14,6 +14,35 @@ export interface SectionsPanelProps {
   sourceName?: string;
   firstTimestamp?: number | null;
   lastTimestamp?: number | null;
+  /**
+   * Opens the focused session's info popover (lines, size, time range, the
+   * full device block, reopen-as). Rendered as a "File info…" button beside
+   * the device model and date span — the place a user looks for it — and in
+   * the non-bugreport empty state, so a logcat has the same way in. Absent
+   * when nothing is focused.
+   */
+  onShowFileInfo?: () => void;
+}
+
+/** The "File info…" entry point; renders nothing when no session is focused. */
+function FileInfoButton(props: { onClick?: () => void }): JSX.Element {
+  return (
+    <Show when={props.onClick}>
+      {(onClick) => (
+        <div class={styles.metaActions}>
+          <button
+            type="button"
+            class={styles.infoButton}
+            data-testid="sections-file-info"
+            title="Lines, size, time range, device details and reopen-as for the focused session"
+            onClick={() => onClick()()}
+          >
+            File info…
+          </button>
+        </div>
+      )}
+    </Show>
+  );
 }
 
 /** The group/parent header row (if any) whose members include `startLine`. */
@@ -138,11 +167,24 @@ export function SectionsPanel(props: SectionsPanelProps): JSX.Element {
     <div ref={containerRef} class={styles.panel} data-testid="sections-panel" onKeyDown={onKeyDown}>
       <Show
         when={props.store.isBugreportSession()}
-        fallback={<p class={styles.empty}>Sections apply to bugreports and dumpstates.</p>}
+        fallback={
+          <div class={styles.empty}>
+            <p class={styles.emptyText}>Sections apply to bugreports and dumpstates.</p>
+            <FileInfoButton onClick={props.onShowFileInfo} />
+          </div>
+        }
       >
-        <Show when={props.store.metadata()}>
+        <Show
+          when={props.store.metadata()}
+          fallback={
+            <div class={styles.metaHeader}>
+              <FileInfoButton onClick={props.onShowFileInfo} />
+            </div>
+          }
+        >
           {(meta) => (
             <div class={styles.metaHeader}>
+              <FileInfoButton onClick={props.onShowFileInfo} />
               <Show when={meta().manufacturer || meta().deviceModel}>
                 <div class={styles.metaRow}>
                   <Show when={meta().manufacturer}>{(v) => <span class={styles.metaMaker}>{v()}</span>}</Show>
