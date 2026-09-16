@@ -1,5 +1,5 @@
 export { AppShell } from './AppShell';
-export type { AppShellProps, RegionSlots, SurfaceSlots } from './AppShell';
+export type { AppShellProps, RegionSlots, ShellLayoutHandle, SurfaceSlots } from './AppShell';
 export { TabStrip } from './TabStrip';
 export type { TabDescriptor, TabKind, TabStripProps } from './TabStrip';
 export { createMode, modeForKind } from './mode';

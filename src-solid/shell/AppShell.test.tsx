@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
 import { AppShell } from './AppShell';
+import type { ShellLayoutHandle } from './AppShell';
 import type { SessionKind } from './mode';
 
 // The shell now renders `WindowControls`, which calls `getCurrentWindow()` from
@@ -341,5 +342,80 @@ describe('AppShell — resize handle placement', () => {
     const footer = container.querySelector('footer') as HTMLElement;
     expect(footer.textContent).toBe('ready');
     expect(footer.textContent).not.toMatch(/postmortem|ultrawide|wide/);
+  });
+});
+
+// ── S1c: the workspace port's forward reference (region widths + drawer) ──
+
+describe('AppShell — onReady handle for the workspace shellLayout port', () => {
+  it('hands back the live region-width store, seedable from a restored blob', () => {
+    setViewportWidth(2600);
+    let handle!: ShellLayoutHandle;
+    render(() => (
+      <AppShell
+        workspaceId="ws"
+        sessionKind="file"
+        slots={{ viewer: () => <div /> }}
+        onReady={(h) => {
+          handle = h;
+        }}
+      />
+    ));
+
+    expect(handle).toBeTruthy();
+    expect(handle.widths.toColumns()).toEqual({});
+
+    // A restore seeds the same store the splitters render from.
+    handle.widths.applyColumns({ navigator: 333, details: 480 });
+    expect(handle.widths.width('navigator')).toBe(333);
+    expect(handle.widths.width('details')).toBe(480);
+  });
+
+  it('applyDrawer opens a drawer that is valid for the current tier/mode', () => {
+    setViewportWidth(1280);
+    let handle!: ShellLayoutHandle;
+    const { container } = render(() => (
+      <AppShell
+        workspaceId="ws"
+        sessionKind="file"
+        slots={{ viewer: () => <div /> }}
+        onReady={(h) => {
+          handle = h;
+        }}
+      />
+    ));
+
+    expect(container.querySelector('aside[aria-label="Analyzers"]')).toBeNull();
+    handle.applyDrawer('analyzers');
+    expect(handle.openDrawer()).toBe('analyzers');
+    expect(container.querySelector('aside[aria-label="Analyzers"]')).toBeTruthy();
+  });
+
+  it('applyDrawer ignores a saved id that no longer opens anything here', () => {
+    setViewportWidth(1280);
+    let handle!: ShellLayoutHandle;
+    render(() => (
+      <AppShell
+        workspaceId="ws"
+        sessionKind="file"
+        slots={{ viewer: () => <div /> }}
+        onReady={(h) => {
+          handle = h;
+        }}
+      />
+    ));
+
+    // Not a real surface id at all.
+    handle.applyDrawer('not-a-surface');
+    expect(handle.openDrawer()).toBeNull();
+
+    // A real surface id, but one this session's build never renders as a
+    // rail/drawer surface on a compact 'file' session — 'viewer' is the
+    // always-present region, never a drawer.
+    handle.applyDrawer('viewer');
+    expect(handle.openDrawer()).toBeNull();
+
+    handle.applyDrawer(null);
+    expect(handle.openDrawer()).toBeNull();
   });
 });

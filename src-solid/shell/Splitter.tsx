@@ -84,6 +84,30 @@ export interface RegionWidths {
   commit(): void;
   /** Back to the default width, persisted immediately. */
   reset(region: ResizableRegion): void;
+  /**
+   * Snapshot of every region with an explicit (non-default) width, keyed by
+   * region id — exactly the shape `SolidLayout.columns` wants for a `.ltw`
+   * save. A region still at its default is omitted, the same way the
+   * `localStorage` payload already omits it.
+   */
+  toColumns(): Record<string, number>;
+  /**
+   * Seed widths from a restored `.ltw` blob's `columns`, for every key that
+   * names a known resizable region — an unrecognised key (a future region, a
+   * hand-edited file) is ignored rather than throwing. A region the blob has
+   * no entry for is left exactly as it was (the per-machine `localStorage`
+   * value already loaded for this workspace, or the default), so a workspace
+   * saved before this method existed still opens with the widths the user
+   * had on this machine.
+   *
+   * Deliberately does not write `localStorage`: this runs during a restore,
+   * not a drag the user made on this machine, and the whole point of the
+   * `.ltw` column is that it can carry a width from a different machine —
+   * stamping that into the per-machine cache would make the "per-machine"
+   * fallback lie the next time a *different* workspace with no saved columns
+   * falls back to it.
+   */
+  applyColumns(columns: Readonly<Record<string, number>>): void;
 }
 
 /**
@@ -112,6 +136,27 @@ export function createRegionWidths(workspaceId: Accessor<string>): RegionWidths 
         return next;
       });
       writeStored(workspaceId(), widths());
+    },
+    toColumns: () => {
+      const out: Record<string, number> = {};
+      for (const [region, px] of Object.entries(widths())) {
+        if (typeof px === 'number') out[region] = px;
+      }
+      return out;
+    },
+    applyColumns: (columns) => {
+      setWidths((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const region of RESIZABLE_REGIONS) {
+          const px = columns[region];
+          if (typeof px === 'number' && Number.isFinite(px)) {
+            next[region] = clamp(region, px);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
     },
   };
 }
