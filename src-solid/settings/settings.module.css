@@ -44,3 +44,19 @@
 .contrastBadge { flex: 0 0 auto; padding: 0 6px; border-radius: var(--radius-sm, 3px); font-size: 10px; white-space: nowrap; }
 .contrastPass { color: var(--success); background: var(--success-muted); }
 .contrastFail { color: var(--danger); background: var(--danger-muted); }
+
+/* ── MCP agent setup (C1: sidecar path + copyable client config) ─────────── */
+.mcpAgentSetup { display: flex; flex-direction: column; gap: 6px; }
+.mcpAgentSetupTitle { font-size: 11px; font-weight: 600; color: var(--text-muted); }
+.mcpAgentPathRow { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mcpAgentPath {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 4px 8px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm, 3px);
+  background: var(--bg-input); font-family: var(--font-mono, monospace); font-size: 11px; color: var(--text);
+}
+.mcpAgentCode { padding: 1px 4px; border-radius: var(--radius-sm, 3px); background: var(--bg-input); font-family: var(--font-mono, monospace); font-size: 10px; }
+.mcpAgentActions { display: flex; flex-wrap: wrap; gap: 8px; }
+.mcpAgentClient { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
+.mcpAgentClient + .mcpAgentClient { border-top: 1px solid var(--border-subtle); }
+.mcpAgentClientName { font-size: 11px; font-weight: 600; color: var(--text); }
+.mcpAgentNote { font-size: 11px; line-height: 1.4; color: var(--text-subtle); background: var(--bg-input); border-radius: var(--radius-sm, 3px); padding: 4px 8px; }

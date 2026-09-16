@@ -3,3 +3,5 @@ export { createSettingsStore } from './settingsStore';
 export type { SettingsStore, SettingsStoreDeps, SettingsCommands } from './settingsStore';
 export { SettingsPanel } from './SettingsPanel';
 export type { SettingsPanelProps } from './SettingsPanel';
+export { McpAgentSetup } from './McpAgentSetup';
+export type { McpAgentSetupProps } from './McpAgentSetup';
