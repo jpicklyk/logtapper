@@ -3,7 +3,7 @@ import { Index, Show, batch, createEffect, createMemo, createSignal, on, onClean
 import type { JSX } from 'solid-js';
 import type { DataSource } from '@viewport/DataSource';
 import { buildCopyText, writeClipboard } from '@viewport/copyText';
-import { absoluteLineToFilteredIndex } from '@logviewer/scrollMapping';
+import { absoluteLineToFilteredIndex } from '@viewer';
 import { createCacheBinding } from './cacheBinding';
 import { DEFAULT_PANE_ID } from './controller';
 import type { ViewerController } from './controller';

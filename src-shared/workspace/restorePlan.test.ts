@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { planStartupRestore, planExplicitOpen, buildRestoreOutcomes, type StoredTab } from './restorePlan';
 import { pairArtifactsWithSessions } from './artifactPairing';
-import type { LtwManifestSession, LoadWorkspaceSessionData } from '../../bridge/types';
+import type { LtwManifestSession, LoadWorkspaceSessionData } from '../bridge/types';
 
 // ---------------------------------------------------------------------------
 // Factories

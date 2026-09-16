@@ -1,7 +1,7 @@
 /** @jsxImportSource solid-js */
 import { For } from 'solid-js';
-import type { SectionEntry, SectionRow } from '@fileinfo/sectionTree';
-import { getSectionDescription } from '@fileinfo/sectionDescriptions';
+import type { SectionEntry, SectionRow } from '@fileinfo';
+import { getSectionDescription } from '@fileinfo';
 import styles from './sections.module.css';
 
 /**

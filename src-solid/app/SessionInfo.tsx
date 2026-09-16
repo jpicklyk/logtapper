@@ -3,9 +3,8 @@ import { For, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-j
 import type { JSX } from 'solid-js';
 import type { DumpstateMetadata, SourceType } from '@bridge/types';
 import { isBugreportLike } from '@bridge/types';
-import { buildReopenOptions, REOPEN_SOURCE_TYPES } from '@fileinfo/reopenOptions';
-import type { ReopenOption } from '@fileinfo/reopenOptions';
-import { formatDuration, formatTimestamp } from '@fileinfo/formatters';
+import { buildReopenOptions, formatDuration, formatTimestamp, REOPEN_SOURCE_TYPES } from '@fileinfo';
+import type { ReopenOption } from '@fileinfo';
 import type { SessionEntry } from './sessions';
 import styles from './sessionInfo.module.css';
 

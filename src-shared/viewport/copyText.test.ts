@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildCopyText } from './copyText';
-import type { Selection } from './SelectionManager';
+import type { Selection } from './selection';
 
 function makeLineSelection(lines: number[]): Selection {
   return { anchor: lines[0] ?? null, selected: new Set(lines), mode: 'line' };

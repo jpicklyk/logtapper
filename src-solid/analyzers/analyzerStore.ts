@@ -144,7 +144,7 @@ import type {
 // Framework-free localStorage seed for the default chain, shared with the
 // React app's key names (`logtapper_pipeline_chain` / `_disabled`) — same
 // file the file-level ESLint allow-list on `@hooks` names.
-import { loadChainFromStorage, loadDisabledFromStorage, saveChainToStorage } from '@hooks/pipelineChainStorage';
+import { loadChainFromStorage, loadDisabledFromStorage, saveChainToStorage } from '@pipeline';
 import { coalesceMicrotask, createGenerationGuard } from '../reactive';
 import type { GenerationGuard } from '../reactive';
 

@@ -9,7 +9,7 @@
  * time-range search computed results that nothing displayed.
  */
 import { describe, it, expect } from 'vitest';
-import { intersectAllSorted } from './utils';
+import { intersectAllSorted } from './index';
 
 describe('intersectAllSorted', () => {
   it('returns null when every filter is inactive', () => {

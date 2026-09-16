@@ -1,4 +1,4 @@
-import type { AppStateFile } from '../../bridge/types';
+import type { AppStateFile } from '../bridge/types';
 
 /**
  * Build an `AppStateFile` payload from workspace context state.

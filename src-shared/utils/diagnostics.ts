@@ -13,7 +13,7 @@
  * start of the current operation, making it easy to spot where time is spent.
  */
 
-import { storageGet } from '../utils';
+import { storageGet } from './index';
 
 const isEnabled = () =>
   import.meta.env.DEV || storageGet('logtapper_diag') === '1';

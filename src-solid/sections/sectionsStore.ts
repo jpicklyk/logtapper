@@ -23,7 +23,7 @@ import type { Accessor, Owner } from 'solid-js';
 import { getDumpstateMetadata, getSections } from '@bridge/commands';
 import { isBugreportLike } from '@bridge/types';
 import type { DumpstateMetadata } from '@bridge/types';
-import type { SectionEntry } from '@fileinfo/sectionTree';
+import type { SectionEntry } from '@fileinfo';
 // `'../app'` also matches `App.tsx` on a case-insensitive filesystem and TS
 // refuses the program (TS1149) — always import the barrel via `/index`.
 import type { SessionStore } from '../app/index';

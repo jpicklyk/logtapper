@@ -50,7 +50,7 @@ import {
 } from '@bridge/commands';
 import { onBookmarkUpdate } from '@bridge/events';
 import type { Bookmark, BookmarkCategory, BookmarkUpdateEvent, CreatedBy } from '@bridge/types';
-import { exportBookmarksAsMarkdown } from '@bookmarkPanel/exportMarkdown';
+import { exportBookmarksAsMarkdown } from '@bookmarks';
 // `'../app'` also matches `App.tsx` on a case-insensitive filesystem and TS
 // refuses the program (TS1149) — always import the barrel via `/index`.
 import type { SessionStore } from '../app/index';

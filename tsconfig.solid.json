@@ -1,49 +1,40 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    // No global jsxImportSource: the shared src-next modules reach React types
-    // through barrels. Every src-solid/**/*.tsx carries its own
-    // /** @jsxImportSource solid-js */ pragma instead.
+    // No global jsxImportSource: every src-solid/**/*.tsx carries its own
+    // /** @jsxImportSource solid-js */ pragma. src-shared/ has no JSX at all.
     "jsx": "preserve",
     "baseUrl": ".",
     // Mirrors `solid.aliases.ts`, which vite.solid.config.ts and
     // vitest.solid.config.ts share. `src-solid/aliases.test.ts` asserts the two
-    // stay in sync. Bare entries exist only for barrels imported without a
-    // subpath; Vite resolves those through the same directory alias.
+    // stay in sync. Bare entries exist for the barrel-only modules (imported
+    // as `from '@workspace'`); Vite resolves those through the same directory
+    // alias.
     "paths": {
-      "@bench": ["src-next/bench/index.ts"],
-      "@bridge/*": ["src-next/bridge/*"],
-      "@viewport/*": ["src-next/viewport/*"],
-      "@cache/*": ["src-next/cache/*"],
-      "@events/*": ["src-next/events/*"],
-      "@filter/*": ["src-next/filter/*"],
-      "@bench/*": ["src-next/bench/*"],
-      // Directory alias, file-level allow-list: ESLint lets exactly
-      // `@hooks/useLogViewer/multiSessionImport` through.
-      "@hooks/*": ["src-next/hooks/*"],
-      // Directory alias, file-level allow-list: ESLint lets exactly
-      // `sectionTree`, `formatters`, `sectionDescriptions` through.
-      "@fileinfo/*": ["src-next/components/FileInfoPanel/*"],
-      // Directory alias, file-level allow-list: ESLint lets exactly
-      // `@procdash/utils` through.
-      "@procdash/*": ["src-next/components/ProcessorDashboard/*"],
-      // Directory alias, file-level allow-list: ESLint lets exactly
-      // `analysisAttribution` through.
-      "@analysisPanel/*": ["src-next/components/AnalysisPanel/*"],
-      // Directory alias, file-level allow-list: ESLint lets exactly
-      // `pendingSelection` through.
-      "@analysisReader/*": ["src-next/components/AnalysisReader/*"],
-      // Directory alias, file-level allow-list: ESLint lets exactly
-      // `@statetimeline/timelineUtils` through.
-      "@statetimeline/*": ["src-next/components/StateTimeline/*"],
-      // Directory alias, file-level allow-list: ESLint lets exactly
-      // `exportMarkdown` through.
-      "@bookmarkPanel/*": ["src-next/components/BookmarkPanel/*"],
-      // Directory alias, file-level allow-list: ESLint lets exactly
-      // `@logviewer/scrollMapping` through.
-      "@logviewer/*": ["src-next/components/LogViewer/*"]
+      "@bridge/*": ["src-shared/bridge/*"],
+      "@viewport/*": ["src-shared/viewport/*"],
+      "@cache/*": ["src-shared/cache/*"],
+      "@filter/*": ["src-shared/filter/*"],
+      "@bench": ["src-shared/bench/index.ts"],
+      "@bench/*": ["src-shared/bench/*"],
+      "@workspace": ["src-shared/workspace/index.ts"],
+      "@workspace/*": ["src-shared/workspace/*"],
+      "@pipeline": ["src-shared/pipeline/index.ts"],
+      "@pipeline/*": ["src-shared/pipeline/*"],
+      "@fileinfo": ["src-shared/fileinfo/index.ts"],
+      "@fileinfo/*": ["src-shared/fileinfo/*"],
+      "@processors": ["src-shared/processors/index.ts"],
+      "@processors/*": ["src-shared/processors/*"],
+      "@analysis": ["src-shared/analysis/index.ts"],
+      "@analysis/*": ["src-shared/analysis/*"],
+      "@timeline": ["src-shared/timeline/index.ts"],
+      "@timeline/*": ["src-shared/timeline/*"],
+      "@viewer": ["src-shared/viewer/index.ts"],
+      "@viewer/*": ["src-shared/viewer/*"],
+      "@bookmarks": ["src-shared/bookmarks/index.ts"],
+      "@bookmarks/*": ["src-shared/bookmarks/*"]
     }
   },
-  "include": ["src-solid"],
+  "include": ["src-solid", "src-shared"],
   "references": []
 }

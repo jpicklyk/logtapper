@@ -4,8 +4,8 @@ import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
 import { SectionsPanel } from './SectionsPanel';
 import type { SectionsStore } from './sectionsStore';
-import { GROUP_THRESHOLD } from '@fileinfo/sectionTree';
-import type { SectionEntry } from '@fileinfo/sectionTree';
+import { GROUP_THRESHOLD } from '@fileinfo';
+import type { SectionEntry } from '@fileinfo';
 
 afterEach(cleanup);
 

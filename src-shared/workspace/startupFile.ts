@@ -7,7 +7,7 @@
  * single backend read so both observe the same value without racing over who
  * consumed the `.take()`.
  */
-import { getStartupFile } from '../../bridge/commands';
+import { getStartupFile } from '../bridge/commands';
 
 let cached: Promise<string | null> | null = null;
 

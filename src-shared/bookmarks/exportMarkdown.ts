@@ -1,4 +1,4 @@
-import type { Bookmark } from '../../bridge/types';
+import type { Bookmark } from '../bridge/types';
 
 export interface ExportContext {
   sourceName?: string;

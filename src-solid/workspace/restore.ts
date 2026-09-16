@@ -38,8 +38,7 @@
  */
 import { restoreWorkspaceSession } from '@bridge/commands';
 import type { LoadWorkspaceSessionData } from '@bridge/types';
-import { buildRestoreOutcomes, type RestorePlan } from '@hooks/workspace/restorePlan';
-import { pairArtifactsWithSessions } from '@hooks/workspace/artifactPairing';
+import { buildRestoreOutcomes, pairArtifactsWithSessions, type RestorePlan } from '@workspace';
 
 /** The one piece of IO the plan runner needs injected (tests stub it). */
 export interface RestoreIo {

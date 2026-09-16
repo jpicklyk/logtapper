@@ -1,4 +1,4 @@
-import type { AnalysisArtifact } from '../../bridge/types';
+import type { AnalysisArtifact } from '../bridge/types';
 
 /**
  * Attribution summary for one analysis artifact: which sessions its line

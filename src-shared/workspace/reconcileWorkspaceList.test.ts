@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { reconcileWorkspaceList } from './reconcileWorkspaceList';
-import type { WorkspaceIdentity, WorkspaceListState } from '../../bridge/workspaceTypes';
-import type { AppStateFile, WorkspaceEntry } from '../../bridge/types';
+import type { WorkspaceIdentity, WorkspaceListState } from '../bridge/workspaceTypes';
+import type { AppStateFile, WorkspaceEntry } from '../bridge/types';
 
 // --- Factories --------------------------------------------------------------
 

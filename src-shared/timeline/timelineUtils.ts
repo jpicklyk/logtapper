@@ -1,9 +1,9 @@
-import type { StateTransition } from '../../bridge/types';
-import { clamp } from '../../utils';
+import type { StateTransition } from '../bridge/types';
+import { clamp } from '../utils/index';
 // Thin re-export over the shared nanosecond timestamp/duration formatters
 // (see ../../utils/timeFormat) so StateTimeline's call sites and tests keep
 // their existing names.
-export { formatTimestampCompact as formatTs, formatDurationNs as fmtDuration } from '../../utils/timeFormat';
+export { formatTimestampCompact as formatTs, formatDurationNs as fmtDuration } from '../utils/timeFormat';
 
 export type Viewport = readonly [number, number];
 

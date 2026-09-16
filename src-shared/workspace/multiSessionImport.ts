@@ -4,7 +4,7 @@
  * Extracted from useFileSession so the logic can be tested directly
  * without React, Tauri, or bus dependencies.
  */
-import { isBugreportLike } from '../../bridge/types';
+import { isBugreportLike } from '../bridge/types';
 
 /** Minimal session info needed from a LoadResult. */
 export interface ImportedSession {

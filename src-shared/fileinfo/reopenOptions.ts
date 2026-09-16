@@ -1,4 +1,4 @@
-import type { SourceType } from '../../bridge/types';
+import type { SourceType } from '../bridge/types';
 
 /** Types a user can reopen a file as. Mirrors the labels the backend's
  *  `SourceType::from_label` accepts; `Unknown` is a frontend-only sentinel and

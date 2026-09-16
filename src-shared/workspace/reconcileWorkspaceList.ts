@@ -20,9 +20,9 @@
  *
  * React-free by design — same pattern as `artifactPairing.ts` / `autoSaveGate.ts`.
  */
-import type { AppStateFile } from '../../bridge/types';
-import type { WorkspaceIdentity, WorkspaceListState } from '../../bridge/workspaceTypes';
-import { createEmptyListState } from '../../bridge/workspaceTypes';
+import type { AppStateFile } from '../bridge/types';
+import type { WorkspaceIdentity, WorkspaceListState } from '../bridge/workspaceTypes';
+import { createEmptyListState } from '../bridge/workspaceTypes';
 
 export interface ReconcileResult {
   /** The resolved workspace list to apply. */

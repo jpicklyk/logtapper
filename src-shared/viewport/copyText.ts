@@ -1,4 +1,4 @@
-import type { Selection } from './SelectionManager';
+import type { Selection } from './selection';
 
 /**
  * Build the clipboard text for a given selection.

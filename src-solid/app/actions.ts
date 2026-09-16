@@ -16,8 +16,8 @@ import type { LoadResult, SourceType } from '@bridge/types';
 // The one src-next reach-through W0b adds: the multi-session `.lts` import
 // planner. Framework-free and already unit-tested on the React side — reused
 // verbatim rather than reimplemented, per "search before creating".
-import { planExtraSessionImport } from '@hooks/useLogViewer/multiSessionImport';
-import type { ImportedSession } from '@hooks/useLogViewer/multiSessionImport';
+import { planExtraSessionImport } from '@workspace';
+import type { ImportedSession } from '@workspace';
 import type { ViewerController } from '../viewer';
 import { resetSessionView } from './sessions';
 import type { SessionStore } from './sessions';

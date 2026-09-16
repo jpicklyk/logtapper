@@ -72,7 +72,7 @@ export { buildCopyText, writeClipboard } from '@viewport/copyText';
  * second copy — `src-next/components/LogViewer/scrollMapping.ts` is the one
  * implementation, with its own unit tests.
  */
-export { absoluteLineToFilteredIndex } from '@logviewer/scrollMapping';
+export { absoluteLineToFilteredIndex } from '@viewer';
 
 export { CacheManager, ViewCacheHandle } from '@cache/CacheManager';
 export type { ViewCache, WritableViewCache, CacheController, ViewPriority } from '@cache/CacheManager';

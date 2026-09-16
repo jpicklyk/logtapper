@@ -28,8 +28,8 @@ export {
   snakeToTitle,
   splitValueDesc,
   formatNumber,
-} from '@procdash/utils';
-export type { VarGroup } from '@procdash/utils';
+} from '@processors';
+export type { VarGroup } from '@processors';
 
 // W4b — the analyzers surface: cards, detail drawer, add-analyzer catalog.
 export { AnalyzersPanel } from './AnalyzersPanel';

@@ -5,7 +5,7 @@ import type { JSX } from 'solid-js';
 // line/viewport math, reused verbatim rather than reimplemented. See
 // `deviceStateStore.ts`'s module doc for why this strip does not draw
 // `ChartData`/`DataSeries` (Reporter-only, unreachable for a state tracker).
-import { linePct } from '@statetimeline/timelineUtils';
+import { linePct } from '@timeline';
 import type { DeviceStateController, DeviceStateStore } from './deviceStateStore';
 import styles from './devicestate.module.css';
 

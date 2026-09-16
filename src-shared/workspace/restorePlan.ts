@@ -19,7 +19,7 @@
  * The caller (`useStartupRestore` / `doLoadWorkspace`) does all IPC and
  * localStorage reads and hands this function plain data.
  */
-import type { LtwManifestSession, LoadWorkspaceSessionData } from '../../bridge/types';
+import type { LtwManifestSession, LoadWorkspaceSessionData } from '../bridge/types';
 import type { SessionLoadOutcome } from './artifactPairing';
 import { normalizePath } from './restoreTrust';
 

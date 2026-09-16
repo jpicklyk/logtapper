@@ -9,7 +9,7 @@ export function isRankedObject(v: unknown): v is Record<string, number> {
   return Object.values(v as Record<string, unknown>).every(isNumeric);
 }
 
-export { formatNumber } from '../../utils';
+export { formatNumber } from '../utils/index';
 
 export function snakeToTitle(s: string): string {
   return s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());

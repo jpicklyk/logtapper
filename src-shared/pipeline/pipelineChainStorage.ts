@@ -1,4 +1,4 @@
-import { storageGetJSON, storageSetJSON } from '../utils';
+import { storageGetJSON, storageSetJSON } from '../utils/index';
 
 /**
  * localStorage for the DEFAULT processor chain — the template a new session

@@ -14,6 +14,8 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    include: ["src-solid/**/*.test.{ts,tsx}"],
+    // src-shared/ carries its own unit tests (they moved with the modules out
+    // of the React tree, which used to run them under its own vitest config).
+    include: ["src-solid/**/*.test.{ts,tsx}", "src-shared/**/*.test.ts"],
   },
 });

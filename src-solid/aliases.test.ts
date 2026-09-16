@@ -1,13 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { solidAliasPaths, solidAliases, solidRepoRoot } from '../solid.aliases';
+import { solidAliasPaths, solidAliases, solidBarrelAliases, solidRepoRoot } from '../solid.aliases';
 
 /**
- * The Solid frontend declares its aliases three times: `solid.aliases.ts` (which
- * vite.solid.config.ts and vitest.solid.config.ts both import) and the `paths`
- * block of tsconfig.solid.json, which cannot import anything. This pins the two
- * together — a new alias in one and not the other fails here, not at runtime.
+ * The frontend declares its aliases three times: `solid.aliases.ts` (which
+ * vite.config.ts and vitest.config.ts both import) and the `paths` block of
+ * tsconfig.json, which cannot import anything. This pins the two together — a
+ * new alias in one and not the other fails here, not at runtime.
+ *
+ * The barrel-only subset is declared a fourth time, as a regex alternation in
+ * `eslint.config.js` (a flat config this file cannot import into a vitest
+ * run without loading the whole plugin graph), so that list is pinned here by
+ * reading the file.
  */
 
 // Resolve from the alias module's own location, not cwd — vitest may be
@@ -51,5 +56,25 @@ describe('solid alias map', () => {
       expect(existsSync(abs), `${key} → ${abs}`).toBe(true);
       expect(existsSync(resolve(repoRoot, solidAliasPaths[key]))).toBe(true);
     }
+  });
+});
+
+describe('barrel-only aliases', () => {
+  const paths = readTsconfigPaths();
+
+  it('declares a bare tsconfig path resolving to the barrel, for each', () => {
+    for (const key of solidBarrelAliases) {
+      const rel = solidAliasPaths[key];
+      expect(rel, `${key} is not a declared alias`).toBeDefined();
+      expect(paths[key]).toEqual([`${rel}/index.ts`]);
+      expect(existsSync(resolve(repoRoot, `${rel}/index.ts`)), `${rel}/index.ts`).toBe(true);
+    }
+  });
+
+  it('matches the alternation ESLint enforces', () => {
+    const config = readFileSync(resolve(repoRoot, 'eslint.config.js'), 'utf8');
+    const match = /\^@\(([a-zA-Z|]+)\)\//.exec(config);
+    expect(match, 'no barrel-only alternation found in eslint.config.js').not.toBeNull();
+    expect(match![1].split('|').map((a) => `@${a}`).sort()).toEqual([...solidBarrelAliases].sort());
   });
 });

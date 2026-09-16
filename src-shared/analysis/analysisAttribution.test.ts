@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { attributeArtifact, artifactAppliesToSession } from './analysisAttribution';
-import type { AnalysisArtifact, SourceReference } from '../../bridge/types';
+import type { AnalysisArtifact, SourceReference } from '../bridge/types';
 
 function makeRef(overrides: Partial<SourceReference> = {}): SourceReference {
   return {
