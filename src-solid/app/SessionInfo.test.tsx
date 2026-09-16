@@ -1,6 +1,7 @@
 /** @jsxImportSource solid-js */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
+import { createSignal } from 'solid-js';
 import type { DumpstateMetadata, LoadResult } from '@bridge/types';
 import { SessionInfo } from './SessionInfo';
 import type { SessionEntry } from './sessions';
@@ -65,6 +66,30 @@ describe('SessionInfo', () => {
     expect(trigger.textContent).toContain('bugreport.log');
     expect(trigger.textContent).toContain('4,321 lines');
     expect(trigger.textContent).toContain('indexing');
+  });
+
+  it('advertises itself: an info glyph and a title on the trigger', () => {
+    render(() => <SessionInfo entry={entry()} metadata={null} onReopenAs={vi.fn()} />);
+
+    const trigger = screen.getByTestId('status-session');
+    expect(trigger.getAttribute('title')).toMatch(/session info/i);
+    expect(trigger.querySelector('[aria-hidden="true"]')?.textContent).toBe('ⓘ');
+  });
+
+  it('follows a controlled open state and reports toggles through onOpenChange', () => {
+    const [open, setOpen] = createSignal(false);
+    const onOpenChange = vi.fn((next: boolean) => setOpen(next));
+    render(() => (
+      <SessionInfo entry={entry()} metadata={null} onReopenAs={vi.fn()} open={open} onOpenChange={onOpenChange} />
+    ));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    setOpen(true);
+    expect(screen.getByRole('dialog')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('status-session'));
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('opens a dialog popover on click, closed by default', () => {

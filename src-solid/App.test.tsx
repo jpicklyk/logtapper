@@ -344,6 +344,50 @@ describe('App', () => {
     expect(within(screen.getByTestId('top-bar')).queryByText(/4,321 lines/)).toBeNull();
   });
 
+  it('the top-bar "File info" button opens the same session-info popover the footer chip does', async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const { getLines, loadLogFile } = await import('@bridge/commands');
+
+    vi.mocked(open).mockReset();
+    vi.mocked(loadLogFile).mockReset();
+    vi.mocked(open).mockResolvedValueOnce('/info.log');
+    vi.mocked(loadLogFile).mockResolvedValueOnce([
+      {
+        sessionId: '/info.log',
+        sourceId: '/info.log',
+        sourceName: 'info.log',
+        filePath: '/info.log',
+        totalLines: 12,
+        fileSize: 0,
+        firstTimestamp: null,
+        lastTimestamp: null,
+        sourceType: 'Logcat',
+        isStreaming: false,
+        isIndexing: false,
+        hasCrlf: false,
+        encoding: 'UTF-8',
+      },
+    ]);
+    vi.mocked(getLines).mockResolvedValue({ lines: [], totalLines: 12 } as never);
+
+    render(() => <App />);
+    const topBar = within(screen.getByTestId('top-bar'));
+    const fileInfo = topBar.getByRole('button', { name: /^file info$/i }) as HTMLButtonElement;
+    // Nothing open yet: the button is present but disabled.
+    expect(fileInfo.disabled).toBe(true);
+
+    fireEvent.click(topBar.getByRole('button', { name: /^open file/i }));
+    await screen.findByTestId('status-session');
+    expect(fileInfo.disabled).toBe(false);
+
+    fireEvent.click(fileInfo);
+    expect(screen.getByTestId('session-info-popover')).toBeTruthy();
+    // The footer chip reports the same open state, and closes it too.
+    expect(screen.getByTestId('status-session').getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(screen.getByTestId('status-session'));
+    expect(screen.queryByTestId('session-info-popover')).toBeNull();
+  });
+
   // C2: the status-bar session chip opens a popover with a "reopen as…"
   // control that REPLACES the session at its own tab rather than opening a
   // second one — the backend id is deterministic per path, and closing first

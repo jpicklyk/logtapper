@@ -21,6 +21,14 @@
 .trigger:hover,
 .trigger:focus-visible {
   color: var(--text);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+/* The one visible hint that the footer chip opens something. */
+.glyph {
+  margin-right: 5px;
+  color: var(--accent);
 }
 
 .popover {

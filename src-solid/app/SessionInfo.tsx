@@ -36,6 +36,13 @@ export interface SessionInfoProps {
   metadata: DumpstateMetadata | null;
   /** Reopen the session's file with an explicit source type (a replace). */
   onReopenAs: (sourceType: SourceType) => void;
+  /**
+   * Controlled open state, so a second entry point (the top bar's "File info"
+   * button) can drive the same popover. Pass both or neither; without them
+   * the chip owns its own state.
+   */
+  open?: () => boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 /**
@@ -53,7 +60,12 @@ export interface SessionInfoProps {
  * implementation-notes).
  */
 export function SessionInfo(props: SessionInfoProps): JSX.Element {
-  const [open, setOpen] = createSignal(false);
+  const [localOpen, setLocalOpen] = createSignal(false);
+  const open = (): boolean => (props.open ? props.open() : localOpen());
+  const setOpen = (next: boolean): void => {
+    if (props.onOpenChange) props.onOpenChange(next);
+    else setLocalOpen(next);
+  };
   let triggerRef: HTMLButtonElement | undefined;
 
   const load = () => props.entry.load;
@@ -85,8 +97,10 @@ export function SessionInfo(props: SessionInfoProps): JSX.Element {
         data-testid="status-session"
         aria-haspopup="dialog"
         aria-expanded={open()}
-        onClick={() => { setOpen((v) => !v); }}
+        title="Session info: lines, size, time range, device details and reopen as"
+        onClick={() => { setOpen(!open()); }}
       >
+        <span class={styles.glyph} aria-hidden="true">ⓘ</span>
         {load().sourceName} — {props.entry.totalLines.toLocaleString()} lines
         <Show when={props.entry.isIndexing}> (indexing…)</Show>
       </button>

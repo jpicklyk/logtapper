@@ -472,6 +472,10 @@ export function App(props: AppProps) {
     setActiveSurface('editor');
   };
 
+  // Owned here rather than inside `SessionInfo` so the top-bar "File info"
+  // button and the footer chip drive the same popover.
+  const [sessionInfoOpen, setSessionInfoOpen] = createSignal(false);
+
   const openInEditor = async (): Promise<void> => {
     const selected = await openDialog({
       multiple: false,
@@ -552,6 +556,20 @@ export function App(props: AppProps) {
       >
         Split view
       </button>
+      {/* React had a permanent "File Info" pane; here the same fields live in
+          the footer chip's popover, which nothing advertised — the sign-off
+          review read it as missing. A top-bar button is the second, visible
+          way in; both toggle the one popover. */}
+      <button
+        type="button"
+        class={styles.openButton}
+        onClick={() => setSessionInfoOpen((v) => !v)}
+        disabled={!store.focused()}
+        aria-pressed={sessionInfoOpen()}
+        title={store.focused() ? 'Lines, size, time range, device details and reopen-as for the focused session' : 'Open a file first'}
+      >
+        File info
+      </button>
     </>
   );
 
@@ -570,6 +588,8 @@ export function App(props: AppProps) {
         {(entry) => (
           <SessionInfo
             entry={entry()}
+            open={sessionInfoOpen}
+            onOpenChange={setSessionInfoOpen}
             // Bugreport/dumpstate device fields the sections store already
             // fetches for the focused session (`sections/sectionsStore.ts`'s
             // `metadata()`) — no second `getDumpstateMetadata` call here.
