@@ -39,12 +39,6 @@ export function Switcher(props: SwitcherProps): JSX.Element {
     void props.store.switchWorkspace(id).catch((e: unknown) => setError(String(e)));
   };
 
-  const handleSave = (): void => {
-    close();
-    setError('');
-    void props.store.saveWorkspace().catch((e: unknown) => setError(String(e)));
-  };
-
   const handleSaveAs = async (): Promise<void> => {
     close();
     const dest = await saveDialog({ filters: LTW_SAVE_FILTERS });
@@ -55,6 +49,20 @@ export function Switcher(props: SwitcherProps): JSX.Element {
     } catch (e) {
       setError(String(e));
     }
+  };
+
+  const handleSave = (): void => {
+    // A workspace that has never been saved has no path to save *to*: a bare
+    // Save would auto-save it into the app-data dir, with no filename, no
+    // location and nothing on screen to say where it went. Prompt instead —
+    // "Save" on an untitled document is "Save As…" everywhere else.
+    if (!props.store.active()?.filePath) {
+      void handleSaveAs();
+      return;
+    }
+    close();
+    setError('');
+    void props.store.saveWorkspace().catch((e: unknown) => setError(String(e)));
   };
 
   return (
