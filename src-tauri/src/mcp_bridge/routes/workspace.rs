@@ -29,7 +29,7 @@
 //! ## Load is the one orchestrating route
 //!
 //! The desktop reads a `.ltw` and then runs its own restore rules in
-//! TypeScript (`src-next/hooks/workspace/*.ts`) — trust assessment, drift
+//! TypeScript (`src-shared/workspace/*.ts`) — trust assessment, drift
 //! detection, artifact/session pairing, auto-run scheduling. An agent has no
 //! frontend to run them, so `POST /mcp/workspace/load` calls
 //! `services::workspace::load_and_restore`, which arms the autosave

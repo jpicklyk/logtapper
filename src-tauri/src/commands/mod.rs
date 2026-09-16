@@ -237,9 +237,8 @@ pub struct AppState {
     pub activity: crate::services::ActivityJournal,
     /// Session id the frontend currently has focused (the active pane's
     /// logviewer session), or `None` when no pane is focused. Pushed by the
-    /// frontend via the `set_focused_session` command whenever focus changes
-    /// (see `src-next/hooks/useLogViewer` / `HookWiring`). Exposed over the
-    /// MCP bridge (`GET /mcp/sessions`, `focused` field per session) so an
+    /// frontend via the `set_focused_session` command whenever focus changes.
+    /// Exposed over the MCP bridge (`GET /mcp/sessions`, `focused` field per session) so an
     /// agent can tell which of several open — possibly same-named — sessions
     /// the user is actually looking at, without guessing from tab order.
     pub focused_session: Mutex<Option<String>>,

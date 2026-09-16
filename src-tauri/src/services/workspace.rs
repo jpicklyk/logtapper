@@ -11,7 +11,7 @@
 //!
 //! The *restore rules* — which `.ltw` candidate to trust, how to pair manifest
 //! entries with the sessions a load actually produced, drift detection,
-//! auto-run scheduling — live in `src-next/hooks/workspace/*.ts` and are
+//! auto-run scheduling — live in `src-shared/workspace/*.ts` and are
 //! deliberately **not** moved here (see plans/service-layer-phase1.md "Out of
 //! scope"). This module exposes the primitives those rules drive:
 //! [`save`], [`auto_save`], [`sync_envelope`], [`begin_switch`], [`load`],
@@ -735,7 +735,7 @@ pub struct WorkspaceLoadOutcome {
 /// artifacts.
 ///
 /// This is the **agent** entry point. The desktop does not call it: the
-/// frontend runs its own restore rules (`src-next/hooks/workspace/*.ts`) —
+/// frontend runs its own restore rules (`src-shared/workspace/*.ts`) —
 /// trust assessment, drift detection, artifact/session pairing, auto-run
 /// scheduling — over the same primitives, and those rules stay in TypeScript
 /// (plans/service-layer-phase1.md "Out of scope").

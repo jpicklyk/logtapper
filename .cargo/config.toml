@@ -14,6 +14,6 @@ linker = "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools
 
 # ts-rs binding export target (see src-tauri/tests/export_bindings.rs).
 # `relative = true` resolves against this config file's parent directory —
-# the project root — so bindings land in <root>/src-next/bridge/generated/.
+# the project root — so bindings land in <root>/src-shared/bridge/generated/.
 [env]
-TS_RS_EXPORT_DIR = { value = "src-next/bridge/generated", relative = true }
+TS_RS_EXPORT_DIR = { value = "src-shared/bridge/generated", relative = true }

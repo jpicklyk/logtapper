@@ -174,15 +174,15 @@ pub fn json(bytes: &[u8]) -> Value {
 // TS binding cross-checks
 // ---------------------------------------------------------------------------
 
-/// Read the generated `src-next/bridge/generated/{type_name}.ts` file. Panics
+/// Read the generated `src-shared/bridge/generated/{type_name}.ts` file. Panics
 /// with a helpful message if it is missing — that itself is a signal that a
 /// wire type isn't actually `#[derive(TS)]`-exported yet.
 pub fn read_generated_ts(type_name: &str) -> String {
     // `CARGO_MANIFEST_DIR` is `.../src-tauri`; the generated bindings live at
-    // `../src-next/bridge/generated` from there.
+    // `../src-shared/bridge/generated` from there.
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
-        .join("src-next")
+        .join("src-shared")
         .join("bridge")
         .join("generated")
         .join(format!("{type_name}.ts"));

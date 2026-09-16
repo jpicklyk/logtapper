@@ -29,7 +29,7 @@ contract, test harness, Windows build quirks).
 - **`TS_RS_EXPORT_DIR` resolves against the invoking shell's cwd, not `--manifest-path`.**
   Running a cargo command against a worktree's `Cargo.toml` from a shell whose cwd is the
   main repo root silently writes generated `.ts` bindings into the *main repo's*
-  `src-next/bridge/generated/` instead of the worktree's own copy. Always set
+  `src-shared/bridge/generated/` instead of the worktree's own copy. Always set
   `$env:TS_RS_EXPORT_DIR` to the worktree's absolute path first when working in a
   worktree — see `mcp_bridge/CLAUDE.md` for the fuller writeup.
 
@@ -87,12 +87,12 @@ the app actually needs it:
   bundles those `@font-face` rules plus their `.woff2`/`.woff` files into the app's own
   `dist/assets/`, so they load from `'self'` — no external font CDN involved. `asset:`
   and `http://asset.localhost` are included for the Tauri asset protocol even though
-  `app.security.assetProtocol.enable` is currently `false` (nothing in `src-next`/
+  `app.security.assetProtocol.enable` is currently `false` (nothing in `src-shared`/
   `src-solid` calls `convertFileSrc`/uses `asset://` yet) — harmless now, ready if that
   protocol is turned on later.
 - **`connect-src 'self' ipc: http://ipc.localhost`** — Tauri IPC on Windows answers at
-  `http://ipc.localhost`; `ipc:` covers other platforms. Neither frontend calls
-  `fetch`/`WebSocket`/`XMLHttpRequest` directly (checked via `grep -rn 'fetch(\|WebSocket(\|XMLHttpRequest' src-next src-solid` — zero hits): all data access goes through
+  `http://ipc.localhost`; `ipc:` covers other platforms. The frontend never calls
+  `fetch`/`WebSocket`/`XMLHttpRequest` directly (checked via `grep -rn 'fetch(\|WebSocket(\|XMLHttpRequest' src-shared src-solid` — zero hits): all data access goes through
   Tauri's `invoke()`/event system. The MCP bridge (`127.0.0.1:40404`) is a separate
   transport the frontend never calls (see this file's parent `CLAUDE.md`'s "Security
   model" section) and is deliberately **not** in `connect-src`.

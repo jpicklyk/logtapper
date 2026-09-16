@@ -5,7 +5,7 @@
  *
  * 1. This struct previously had no `rename_all = "camelCase"`, unlike every
  *    other IPC struct, so the wire was `auto_update` / `last_checked` while
- *    `src-next/bridge/types.ts::Source` was hand-written against
+ *    `src-shared/bridge/types.ts::Source` was hand-written against
  *    `autoUpdate` / `lastChecked`. `autoUpdate` silently dropped to `false`
  *    on every `add_source` call (masked by `#[serde(default)]`) and
  *    `lastChecked` never round-tripped back to the UI.
