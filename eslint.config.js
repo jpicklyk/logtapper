@@ -296,7 +296,7 @@ export default tseslint.config(
           // inert. Extend the alternation, by exact file path, to widen it.
           {
             regex:
-              '^@hooks/(?!useLogViewer/multiSessionImport$|workspace/appStatePayload$|workspace/reconcileWorkspaceList$|workspace/restorePlan$|workspace/artifactPairing$|workspace/startupFile$|pipelineChainStorage$).*',
+              '^@hooks/(?!useLogViewer/multiSessionImport$|workspace/appStatePayload$|workspace/reconcileWorkspaceList$|workspace/restorePlan$|workspace/artifactPairing$|workspace/startupFile$|workspace/restoreTrust$|pipelineChainStorage$).*',
             message:
               'Only the framework-free files on the @hooks allow-list are shared with src-solid/ — the rest of src-next/hooks/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
           },

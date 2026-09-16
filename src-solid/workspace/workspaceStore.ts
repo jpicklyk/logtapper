@@ -48,6 +48,7 @@ import { buildAppStatePayload } from '@hooks/workspace/appStatePayload';
 import { reconcileWorkspaceList } from '@hooks/workspace/reconcileWorkspaceList';
 import { consumeStartupFile } from '@hooks/workspace/startupFile';
 import { planExplicitOpen, planStartupRestore } from '@hooks/workspace/restorePlan';
+import { normalizePath } from '@hooks/workspace/restoreTrust';
 import type { RestorePlan, StoredTab } from '@hooks/workspace/restorePlan';
 import type { LoadWorkspaceSessionData } from '@bridge/types';
 // Region widths are keyed per workspace in localStorage by `shell/Splitter`;
@@ -165,17 +166,6 @@ export interface WorkspaceStore {
   delete(id: string, options?: { deleteFile?: boolean; force?: boolean }): Promise<void>;
 
   dispose(): void;
-}
-
-/**
- * Same comparison `@hooks/workspace/restorePlan` applies internally through
- * `restoreTrust.normalizePath` — separator- and case-insensitive, which is what
- * a Windows path reached two different ways needs. Copied rather than imported
- * because `restoreTrust` is not on the `@hooks` allow-list in `eslint.config.js`
- * (that file belongs to another package; see this task's implementation notes).
- */
-function samePath(a: string, b: string): boolean {
-  return a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase();
 }
 
 function readMirror(storage: Pick<Storage, 'getItem'>): WorkspaceMirror {
@@ -500,7 +490,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
         // has no second consumer, so the path is prepended to the mirror's
         // loads here (first, so it lands as the leading tab).
         const plan = planStartupRestore({ sessions: [], storedTabs, tabPaths, hasLocalLayout: true });
-        const loads = plan.loads.some((l) => samePath(l.path, startupPath))
+        const loads = plan.loads.some((l) => normalizePath(l.path) === normalizePath(startupPath))
           ? plan.loads
           : [{ path: startupPath, dataIndex: null }, ...plan.loads];
         // The `.ltw` manifest is deliberately not replayed — but its layout
