@@ -1,8 +1,8 @@
 //! Content-Security-Policy config pin.
 //!
 //! Parses `tauri.conf.json` (the config source of truth, not the overlays —
-//! `tauri.solid.conf.json` and `scripts/bench/*.bench.conf.json` only override
-//! `build`, so `app.security` always comes from this file; see the
+//! `tauri.ci.conf.json` and `scripts/bench/*.bench.conf.json` only override
+//! `build`/`bundle`, so `app.security` always comes from this file; see the
 //! `overlays_do_not_override_security` test below) and asserts both the
 //! production `csp` and the dev-only `devCsp` carry the required directives
 //! and never regress to a dangerous wildcard or `'unsafe-eval'`.
@@ -171,17 +171,17 @@ fn dev_csp_has_required_directives_plus_vite_hmr_and_no_forbidden_sources() {
     );
 }
 
-/// `tauri.solid.conf.json` and the bench configs must only override `build` —
+/// The CI overlay and the bench config must only override `build`/`bundle` —
 /// if either ever grows an `app` key, it would silently replace (not merge
 /// with) `app.security` and drop the whole CSP. This pins the assumption the
 /// dev/prod CSP tests above rely on: there is exactly one `app.security` to
-/// keep in sync.
+/// keep in sync. (The Solid and React overlays this test used to read are
+/// gone: Solid is the base config since the 2026-09-16 cutover.)
 #[test]
 fn overlays_do_not_override_security() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let overlays = [
-        manifest_dir.join("tauri.solid.conf.json"),
-        manifest_dir.join("../scripts/bench/react.bench.conf.json"),
+        manifest_dir.join("tauri.ci.conf.json"),
         manifest_dir.join("../scripts/bench/solid.bench.conf.json"),
     ];
 

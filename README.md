@@ -33,7 +33,7 @@ Download the latest release for your platform from [GitHub Releases](https://git
 - Hand-rolled virtualized viewer (`src-solid/viewer/`) over a shared fetch scheduler and line cache (handles millions of lines)
 - [CodeMirror 6](https://codemirror.net/) for the editable scratch pad / text editor and analysis bodies
 - Three-layer design tokens (`src-solid/styles/tokens.css`): dark, light and high-contrast bases, user themes on top
-- [mitt](https://github.com/developit/mitt) typed event bus, CSS Modules for scoped component styles
+- Plain Solid stores composed once in `App.tsx`, CSS Modules for scoped component styles
 - Tauri dialog and window-state plugins
 
 ## Getting Started

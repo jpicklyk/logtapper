@@ -151,7 +151,7 @@ When designing features, check these project-specific constraints:
 > **Affected modules:**
 > - `src-tauri/src/core/logcat_parser.rs` — regex change + new tests
 > - `src-tauri/src/commands/processors.rs` — sort matched lines (related fix)
-> - `src-next/components/StateTimeline/StateTimeline.tsx` — date display (related fix)
+> - `src-solid/devicestate/TimelineStrip.tsx` — date display (related fix)
 
 ---
 
