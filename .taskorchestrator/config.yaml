@@ -18,14 +18,14 @@ work_item_schemas:
         role: queue
         required: true
         description: "Approach, alternatives considered, affected modules."
-        guidance: "Consult .claude/skills/spec-framework/ for the full guide. Describe the proposed approach and which layers it touches (Rust backend, frontend modules, MCP bridge). List 2+ real alternatives with specific trade-offs explaining why each was rejected. Identify affected files and check cross-cutting concerns (concurrency, StrictMode, frontend isolation, pre-filter)."
+        guidance: "Consult .claude/skills/spec-framework/ for the full guide. Describe the proposed approach and which layers it touches (Rust backend, frontend modules, MCP bridge). List 2+ real alternatives with specific trade-offs explaining why each was rejected. Identify affected files and check cross-cutting concerns (concurrency, StrictMode, frontend isolation, pre-filter). Any external API, method, trait, crate or npm package named in this note must be verified to exist in the version this project actually uses — grep the vendored source under ~/.cargo/registry/src or node_modules, or the lockfile — and the note must say where it was verified. Do not infer an API's existence from documentation, a sibling package's typical stack, or a transitive dependency's reputation."
         skill: "spec-framework"
 
       - key: implementation-notes
         role: work
         required: true
         description: "Decisions, deviations from design, surprises."
-        guidance: "Document key decisions made during implementation that weren't in the design. Note any deviations from the plan and why. Record surprises, wrong turns, and reusable patterns discovered. This is not a git log — explain the why, not the what."
+        guidance: "Document key decisions made during implementation that weren't in the design. Note any deviations from the plan and why. Record surprises, wrong turns, and reusable patterns discovered. This is not a git log — explain the why, not the what. Target 500 tokens (~2,000 chars). Lead with the decisions and deviations; one line per finding, not a walkthrough. Verbatim artifacts — full test output, diffs, per-finding evidence — belong in a file passed as bodyFromFile, not inline. If the note must run long, say why in its first line."
 
       - key: test-results
         role: work
@@ -39,11 +39,23 @@ work_item_schemas:
         description: "Session context for retrospective."
         guidance: "Record outcome, files changed, deviations from plan, friction encountered, and test results. This feeds /session-retrospective — focus on what future sessions need to know."
 
+      - key: delegation-metadata
+        role: work
+        required: true
+        description: "Per-dispatch model, isolation, rationale and outcome."
+        guidance: "One entry per dispatch on this item, implementation AND review, in order: model, isolation (inline/worktree), why that model was chosen, outcome, and approximate tokens / tool uses / wall clock. A secondary, re-run or feature-level review dispatch counts as its own entry."
+
+      - key: live-smoke
+        role: work
+        required: true
+        description: "CDP-driven smoke on a production build before merge."
+        guidance: "Drive the built app (not the dev server) over CDP and walk the user-visible path each acceptance criterion claims. Record what was exercised, what passed, and anything observed but out of scope. If a smoke was deliberately skipped, say why here - the note is required, a skip is not."
+
       - key: review-checklist
         role: review
         required: true
         description: "Structured review — plan alignment, test quality, simplification."
-        guidance: "Run the review-quality framework. Verify all acceptance criteria from the requirements note are met in code. Check test substance against the test strategy — flag tautological assertions, mock-only tests, or missing edge cases. Two negative examples to flag: (a) a test asserting a narrow helper does not call something it structurally cannot call; (b) a test that reimplements the unit-under-test's own logic against a mock instead of exercising the real component. Run /simplify on changed files and document findings. Verdict: pass, fail (with blocking issues list), or pass-with-observations."
+        guidance: "Run the review-quality framework. Verify all acceptance criteria from the requirements note are met in code. Check test substance against the test strategy — flag tautological assertions, mock-only tests, or missing edge cases. Two negative examples to flag: (a) a test asserting a narrow helper does not call something it structurally cannot call; (b) a test that reimplements the unit-under-test's own logic against a mock instead of exercising the real component. Run /simplify on changed files and document findings. Verdict: pass, fail (with blocking issues list), or pass-with-observations. Target 500 tokens (~2,000 chars). Lead with the decisions and deviations; one line per finding, not a walkthrough. Verbatim artifacts — full test output, diffs, per-finding evidence — belong in a file passed as bodyFromFile, not inline. If the note must run long, say why in its first line."
 
   feature-task:
     lifecycle: auto
@@ -58,7 +70,7 @@ work_item_schemas:
         role: work
         required: true
         description: "Context handoff — deviations, surprises, decisions affecting dependent work."
-        guidance: "Document decisions not in the task scope. Focus on what downstream agents or the next session needs to know."
+        guidance: "Document decisions not in the task scope. Focus on what downstream agents or the next session needs to know. Target 500 tokens (~2,000 chars). Lead with the decisions and deviations; one line per finding, not a walkthrough. Verbatim artifacts — full test output, diffs, per-finding evidence — belong in a file passed as bodyFromFile, not inline. If the note must run long, say why in its first line."
 
       - key: session-tracking
         role: work
@@ -85,7 +97,7 @@ work_item_schemas:
         role: queue
         required: true
         description: "Why it happens — file, line, and condition."
-        guidance: "Identify the specific file and function. Explain the condition that triggers it. Reference CLAUDE.md gotchas if applicable (Rhai scripting, pre-filter, LineContext Arc<str>, etc.). Map the interaction surface: list every code path that reads or writes the affected state (effects, callbacks, reset/cleanup paths, external callers with different parameter combinations). The fix must account for all of them, not just the direct call path."
+        guidance: "Identify the specific file and function. Explain the condition that triggers it. Reference CLAUDE.md gotchas if applicable (Rhai scripting, pre-filter, LineContext Arc<str>, etc.). Map the interaction surface: list every code path that reads or writes the affected state (effects, callbacks, reset/cleanup paths, external callers with different parameter combinations). The fix must account for all of them, not just the direct call path. Any external API, method, trait, crate or npm package named in this note must be verified to exist in the version this project actually uses — grep the vendored source under ~/.cargo/registry/src or node_modules, or the lockfile — and the note must say where it was verified. Do not infer an API's existence from documentation, a sibling package's typical stack, or a transitive dependency's reputation."
 
       - key: fix-summary
         role: work
@@ -105,11 +117,17 @@ work_item_schemas:
         description: "Session context for retrospective."
         guidance: "Record outcome, files changed, deviations from plan, friction encountered, and test results. This feeds /session-retrospective -- focus on what future sessions need to know."
 
+      - key: live-smoke
+        role: work
+        required: true
+        description: "CDP-driven smoke on a production build before merge."
+        guidance: "Drive the built app (not the dev server) over CDP and walk the user-visible path each acceptance criterion claims. Record what was exercised, what passed, and anything observed but out of scope. If a smoke was deliberately skipped, say why here - the note is required, a skip is not."
+
       - key: review-summary
         role: review
         required: true
         description: "Review the fix — root cause addressed, regression coverage, no side effects."
-        guidance: "Run the review-quality framework. Verify the fix addresses the root cause identified in the root-cause note, not just the symptom. Check that test-verification covers the exact failure scenario from reproduction-steps. Look for unintended side effects in adjacent code paths. Run /simplify on changed files. Verdict: pass, fail (with blocking issues list), or pass-with-observations."
+        guidance: "Run the review-quality framework. Verify the fix addresses the root cause identified in the root-cause note, not just the symptom. Check that test-verification covers the exact failure scenario from reproduction-steps. Look for unintended side effects in adjacent code paths. Run /simplify on changed files. Verdict: pass, fail (with blocking issues list), or pass-with-observations. Target 500 tokens (~2,000 chars). Lead with the decisions and deviations; one line per finding, not a walkthrough. Verbatim artifacts — full test output, diffs, per-finding evidence — belong in a file passed as bodyFromFile, not inline. If the note must run long, say why in its first line."
 
   container:
     lifecycle: permanent
