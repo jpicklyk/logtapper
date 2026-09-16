@@ -2,48 +2,21 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Frontend Isolation Principles (MANDATORY)
+## Frontend
 
-These rules govern ALL frontend work. Every new component, hook, or context change must follow them. Violating these principles is how "fixing one thing breaks another."
+The shipped frontend is the Solid app in `src-solid/`. Its architecture, module map and
+rules (stores composed in `App.tsx`, the shell's surface map, cancel-safe `listen()`,
+per-session state keyed by session id, barrel imports across modules, static styling in
+CSS modules with runtime values through custom properties) are in `src-solid/CLAUDE.md` —
+**read it before changing code there.**
 
-### 1. Split context by change frequency — never use a single monolithic context
-Group context values by how often they change. High-frequency state (streaming batches at ~50ms) must not share a context with low-frequency state (session metadata, stable callbacks). A change in one context must not re-render consumers of another.
+`src-next/` is the legacy React app. It is read-only and scheduled for removal; the
+framework-free modules the Solid app still imports from it (`bridge/`, `viewport/`,
+`cache/CacheManager`, `events/`, `filter/`, `bench/`, and a per-file allow-list under
+`hooks/` and `components/`) are moving to `src-shared/` — see `plans/solid-cutover.md`.
+Until then the aliases in `solid.aliases.ts` are the only sanctioned way across that
+boundary, and `eslint.config.js` Block 4 enforces the allow-list.
 
-### 2. Memoize all context values
-Every context provider value must be wrapped in `useMemo` with correct dependencies. A bare object literal `{ foo, bar }` in a provider creates a new reference on every render, defeating React's bailout.
-
-### 3. Use `React.memo` on component boundaries
-Any component that receives props from a context-consuming parent must be wrapped in `React.memo`. This prevents parent re-renders from cascading into children whose props haven't changed. Especially critical for leaf components like `LogViewer`, `ProcessorDashboard`, `SearchBar`.
-
-### 4. Selector hooks over raw context access
-Components must not call a broad context hook and destructure. Instead, provide small focused hooks (`useSelectedLine()`, `useIsStreaming()`) that read from the appropriate narrow context. This makes dependencies explicit and greppable.
-
-### 5. Colocate state with consumers
-State that only one component subtree needs must stay local to that subtree — do not hoist to a global context. `useBookmarks`, `useAnalysis`, and `useWatchList` are good examples of this. Only promote to context when multiple unrelated subtrees need the same state.
-
-### 6. No cross-hook orchestration in render components
-Hooks must not depend on each other's internal state through effects in `App.tsx`. Use a typed event bus or explicit orchestration layer so hooks react to events independently (e.g., `pipeline:completed` → tracker refreshes itself) rather than App.tsx watching one hook and calling another. The event catalog is `src-next/events/events.ts`.
-
-**Bus events must be targeted, not broadcast.** When a bus event is intended for a specific consumer (e.g., a particular pane or session), the event payload must carry an identifier (`paneId`, `sessionId`) and the consumer must match on it. Never broadcast to all subscribers and rely on each checking a ref or prop to decide whether to act — that pattern is fragile under concurrent rendering and rapid state changes (the ref can be stale by the time the event fires).
-
-### 7. Stable callback references
-Action callbacks (`closeSession`, `runPipeline`, `openFileDialog`, …) must be `useCallback` with stable deps and placed in a dedicated context that never changes. Consumers of these callbacks should never re-render due to unrelated state changes. Actions are named for the verb they perform — no `on` prefix; that prefix is reserved for component props.
-
-### 8. State mutations flow through the action surface for their scope
-Mutations are organized into layered action surfaces. Components call the appropriate layer — never bypass it to mutate state directly via domain hooks or dispatch.
-
-| Layer | Scope | Action surface | Dirty tracking |
-|---|---|---|---|
-| **Workspace** | What the workspace contains (sessions, pipeline chain, processors) | `ActionsContext` — `WorkspaceMutationActions` | Automatic via `trackMutations()` |
-| **Session** | Artifacts within one session (bookmarks, analyses, watches) | `SessionActionsContext` per pane (`useSessionBookmarkActions`, `useSessionAnalysisActions`, `useSessionWatchActions`) | `bus.emit('workspace:mutated')` centralized in provider |
-| **View** | Transient UI state (search, scroll, focus, filter) | `ActionsContext` — `ViewActions` | Not tracked |
-
-`src-next/context/CLAUDE.md` has the wiring: how `MUTATION_ACTION_KEYS` / `trackMutations()` / `HookWiring` enforce workspace dirty tracking, and how to add a mutation at either layer.
-
-### 9. Barrel exports control public API — never import internal modules directly
-Every module directory (`cache/`, `viewport/`, `hooks/`) must have an `index.ts` barrel that defines its public API. Components and hooks outside a module must import from the barrel only, never from internal files. The barrel exports narrow interfaces and hooks — not implementation classes. Internal files import from each other directly within the same module. Test files may import internals for white-box testing.
-
-All frontend code lives in `src-next/`. The legacy `src/` directory has been removed.
 
 ## Implementation Plans
 
@@ -89,12 +62,17 @@ Any change to a processor YAML — including metadata-only changes like `source_
 ## Commands
 
 ```bash
-# Full app in dev mode (starts Vite + Rust backend together)
+# Full app in dev mode (Solid UI: Vite on :1421 + Rust backend together)
 npx tauri dev
 
-# Frontend only
-npm run build          # TypeScript check + Vite bundle
-npx vite               # Vite dev server standalone
+# Frontend only (Solid)
+npm run build          # TypeScript check + Vite bundle -> dist-solid/
+npm run dev            # Vite dev server standalone
+npm test               # Solid vitest suite
+
+# Legacy React app, until src-next/ is removed
+npm run tauri:react    # tauri dev with the React overlay
+npm run test:react
 
 # Rust backend (run from project root, not src-tauri/)
 cargo test --manifest-path src-tauri/Cargo.toml          # all tests

@@ -28,15 +28,12 @@ Download the latest release for your platform from [GitHub Releases](https://git
 - PII anonymizer with pluggable detectors
 - Axum HTTP bridge for MCP integration (`127.0.0.1:40404`)
 
-**Frontend (React 19 / TypeScript)**
+**Frontend (Solid 1.9 / TypeScript)**
 - [Vite 8](https://vite.dev/) for bundling and dev server
-- [@tanstack/react-virtual](https://tanstack.com/virtual) for virtualized log viewing (handles millions of lines)
-- [CodeMirror 6](https://codemirror.net/) for the editable scratch pad / text editor
-- [Recharts](https://recharts.org/) for processor dashboard charts
-- [@dnd-kit](https://dndkit.com/) for drag-and-drop tab management and processor chain ordering
-- [lucide-react](https://lucide.dev/) icons, [clsx](https://github.com/lukeed/clsx) for class composition
-- [mitt](https://github.com/developit/mitt) typed event bus for cross-hook coordination
-- CSS Modules for scoped component styles
+- Hand-rolled virtualized viewer (`src-solid/viewer/`) over a shared fetch scheduler and line cache (handles millions of lines)
+- [CodeMirror 6](https://codemirror.net/) for the editable scratch pad / text editor and analysis bodies
+- Three-layer design tokens (`src-solid/styles/tokens.css`): dark, light and high-contrast bases, user themes on top
+- [mitt](https://github.com/developit/mitt) typed event bus, CSS Modules for scoped component styles
 - Tauri dialog and window-state plugins
 
 ## Getting Started
@@ -111,7 +108,8 @@ tool list, and troubleshooting.
 
 ```
 src-tauri/          Rust backend (Tauri commands, parsers, pipeline engine, MCP bridge)
-src-next/           Frontend source (React components, hooks, cache layer)
+src-solid/          Frontend source (Solid UI: shell, viewer, stores, surfaces)
+src-next/           Legacy React frontend — read-only, being retired (framework-free modules move to src-shared/)
 mcp-server/         MCP server (Node.js, stdio transport)
 marketplace/        Processor marketplace (YAML definitions + pack manifests)
 docs/               Documentation

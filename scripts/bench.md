@@ -1,5 +1,9 @@
 # Benchmark gate — run procedure (plan §C)
 
+> Historical note (2026-09-16): the Solid UI is now the shipped default (`npx tauri dev`,
+> `npm run build`, `npm test` all mean Solid). The React side of this comparison is reachable
+> through `npm run tauri:react` / `npm run build:react` until `src-next/` is removed.
+
 The gate compares the React viewer (`src-next/viewport/ReadOnlyViewer.tsx`) and the Solid
 viewer (`src-solid/viewer/LogViewer.tsx`) with **one shared harness**,
 `src-next/bench/harness.ts`, installed by both. Every command below is run from the repo
@@ -94,7 +98,7 @@ permitted to run `tauri`/cargo. If `devUrl: null` fails to clear the inherited v
 the fallback below and note which method produced the numbers.
 
 **Fallback — Vite dev servers (use only if the overlays above fail).** Start
-`npm run dev` (React, :1420) and `npm run dev:solid` (Solid, :1421) and point Tauri at them
+`npm run dev:react` (React, :1420) and `npm run dev` (Solid, :1421) and point Tauri at them
 with an overlay whose `devUrl` carries the query directly, e.g.
 `{"build":{"devUrl":"http://localhost:1420/?bench=1","beforeDevCommand":""}}`. HMR stays
 on (Vite has no `--no-hmr` flag and `server.hmr` lives in configs P5 does not own); it adds

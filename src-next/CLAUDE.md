@@ -1,6 +1,10 @@
-# src-next/ — Frontend
+# src-next/ — Legacy React frontend (read-only)
 
-All frontend code lives here. The legacy `src/` directory has been removed. Each subdirectory has its own `CLAUDE.md`; the rules below apply across the whole frontend.
+> **Legacy.** The shipped frontend is `src-solid/`. This tree is kept only until its
+> framework-free modules move to `src-shared/` (see `plans/solid-cutover.md`); do not add
+> features here. Run it with `npm run tauri:react`.
+
+All React frontend code lives here. The legacy `src/` directory has been removed. Each subdirectory has its own `CLAUDE.md`; the rules below apply across the whole frontend.
 
 The mandatory isolation principles (context splitting, memoization, selector hooks, action surfaces, barrel exports) are in the root `CLAUDE.md` — read those first.
 
