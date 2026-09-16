@@ -127,8 +127,13 @@
   opacity: 0.55;
 }
 
+/* C4 finding D2: this used to reuse --text-dimmed, a foreground/text token —
+   in light it rendered as a visibly heavier, darker left bar than the plain
+   --border fallback every other (unaccented) card already uses, reading as
+   an alarm rather than "this row is pinned". --border matches that existing
+   neutral weight instead. */
 .cardPinned {
-  border-left-color: var(--text-dimmed);
+  border-left-color: var(--border);
 }
 
 .cardRow {
@@ -137,8 +142,23 @@
   gap: 6px;
 }
 
+/* C4 finding D2: this is a <button> (AnalyzerCard.tsx, opens the detail
+   drawer) with no reset — the UA button stylesheet supplied its own border,
+   background and padding, which in light's colour-scheme renders as a
+   visibly boxed control sitting inside the card, reading as a text input.
+   Dark's UA button chrome sits close enough to the card's own dark surface
+   that the same default went unnoticed. Reset it like every other button in
+   this file (.iconBtn, .chip) instead of only styling the text. */
 .cardName {
+  border: none;
+  background: transparent;
+  margin: 0;
+  padding: 0;
+  font: inherit;
   font-weight: 600;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;

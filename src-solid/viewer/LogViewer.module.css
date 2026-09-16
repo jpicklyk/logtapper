@@ -63,8 +63,11 @@
   color: var(--text, #b8c4ce);
 }
 
+/* C4 finding V2: was a raw rgba(136, 152, 170, .04) tuned for the dark
+   fallback only. color-mix keeps the same "wash of the current foreground at
+   low opacity" effect in every theme instead of a value fixed to one of them. */
 .row:hover {
-  background: rgba(136, 152, 170, 0.04);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
 }
 
 .lineNum {

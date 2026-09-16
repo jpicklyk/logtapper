@@ -149,3 +149,94 @@ describe('BASE_THEME_TOKENS matches styles/tokens.css', () => {
     }
   }
 });
+
+/**
+ * C4 finding D1: `--text-dimmed` (uninitialised device-state fields, empty-state
+ * copy, etc.) is not in REQUIRED_FOREGROUND_TOKENS above because the dark family
+ * intentionally keeps it below AA (a deliberately faint token, unchanged by this
+ * fix — see tokens.css block B). Light and light-hc are pinned here instead: at
+ * --p-gray-300 both used to resolve to the same 3.04:1-on-white value, which was
+ * both below AA and made the HC variant no more legible than the non-HC one.
+ */
+describe('--text-dimmed (light family, C4 finding D1)', () => {
+  const css = readFileSync(TOKENS_CSS_PATH, 'utf8');
+  const blocks = parseBlocks(css);
+  const light = buildThemeVars(blocks, 'light');
+  const lightHc = buildThemeVars(blocks, 'light-hc');
+
+  for (const [theme, vars] of [
+    ['light', light],
+    ['light-hc', lightHc],
+  ] as const) {
+    for (const surfaceToken of SURFACE_TOKENS) {
+      it(`${theme} --text-dimmed keeps AA (>= ${AA_NORMAL_TEXT}:1) against ${surfaceToken}`, () => {
+        const fg = resolveValue(vars.get('--text-dimmed') as string, vars);
+        const bg = resolveValue(vars.get(surfaceToken) as string, vars);
+        const ratio = contrastRatio(fg, bg);
+        expect(
+          ratio,
+          `${theme} --text-dimmed (${fg}) vs ${surfaceToken} (${bg}) = ${ratio.toFixed(2)}:1, below AA`,
+        ).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+      });
+    }
+  }
+
+  it('light-hc is materially darker (higher contrast) than light on --surface', () => {
+    const lightFg = resolveValue(light.get('--text-dimmed') as string, light);
+    const lightBg = resolveValue(light.get('--surface') as string, light);
+    const hcFg = resolveValue(lightHc.get('--text-dimmed') as string, lightHc);
+    const hcBg = resolveValue(lightHc.get('--surface') as string, lightHc);
+    const lightRatio = contrastRatio(lightFg, lightBg);
+    const hcRatio = contrastRatio(hcFg, hcBg);
+    expect(hcRatio, `light-hc --text-dimmed (${hcRatio.toFixed(2)}:1) should exceed light's (${lightRatio.toFixed(2)}:1)`).toBeGreaterThan(
+      lightRatio,
+    );
+  });
+});
+
+/**
+ * C4 finding D3: light-hc read as visually almost identical to light. The
+ * dark-hc block redeclares every one of these keys with a value that differs
+ * from dark's — that's what "high contrast" means for this token. This pins
+ * the same expectation for light-hc against light so the two families can't
+ * drift apart again (a token added to dark-hc's differentiation set but never
+ * mirrored into light-hc would fail this immediately).
+ */
+describe('high-contrast variants actually differ from their base theme (C4 finding D3)', () => {
+  const css = readFileSync(TOKENS_CSS_PATH, 'utf8');
+  const blocks = parseBlocks(css);
+
+  const HC_DIFFERENTIATION_TOKENS = [
+    '--border',
+    '--border-subtle',
+    '--text',
+    '--text-subtle',
+    '--text-muted',
+    '--accent',
+    '--danger',
+    '--success',
+    '--warning',
+    '--selection',
+    '--focus-ring',
+    '--level-verbose',
+    '--level-debug',
+  ] as const;
+
+  const PAIRS = [
+    ['dark', 'dark-hc'],
+    ['light', 'light-hc'],
+  ] as const;
+
+  for (const [base, hc] of PAIRS) {
+    const baseVars = buildThemeVars(blocks, base);
+    const hcVars = buildThemeVars(blocks, hc);
+
+    for (const token of HC_DIFFERENTIATION_TOKENS) {
+      it(`${hc} ${token} differs from ${base}`, () => {
+        const baseValue = resolveValue(baseVars.get(token) as string, baseVars);
+        const hcValue = resolveValue(hcVars.get(token) as string, hcVars);
+        expect(hcValue, `${hc} ${token} (${hcValue}) is identical to ${base} (${baseValue})`).not.toBe(baseValue);
+      });
+    }
+  }
+});

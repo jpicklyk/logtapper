@@ -145,6 +145,15 @@
   /* ── Fonts (theme-independent) ── */
   --font-ui: 'Geist', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+  --font-size-sm: 12px;
+
+  /* ── Spacing scale (theme-independent). Declared once two consumers
+     (App.module.css) surfaced as `var(--p-space-N, <fallback>)` with no
+     backing declaration anywhere — the fallback masked it, but grep-based
+     drift detection (C4 finding V1) flagged both as undeclared. Values match
+     the fallbacks exactly, so this is additive: no rendered size changes. ── */
+  --p-space-1: 0.25rem;
+  --p-space-2: 0.5rem;
 
   /* ── Viewer user settings — written on <html> at runtime by the theme
      controller (a user preference, not a theme value). Defaults below. ── */
@@ -265,7 +274,12 @@
   --surface-raised: var(--p-gray-100);
   --surface-overlay: var(--p-gray-150);
   --surface-input: var(--p-gray-50);
-  --text-dimmed: var(--p-gray-300);
+  /* --text-dimmed is NOT shared here (contrast with the dark family, above) —
+     C4 finding D1: at --p-gray-300 (3.04:1 on white) it read as near-invisible
+     for real text (uninitialised device-state fields, empty-state copy), and
+     because this token was identical for light and light-hc, the HC variant
+     inherited the same failure it exists to fix. It is declared per-exact-theme
+     in block C below instead, like text/text-subtle/text-muted. */
 
   --match: rgba(154, 103, 0, 0.28);
   --pii: rgba(212, 47, 52, 0.18);
@@ -331,6 +345,8 @@
   --text-subtle: var(--p-gray-450);
   --text: var(--p-gray-600);
   --text-on-accent: var(--p-white);
+  /* AA-tuned from #8b95a1 (--p-gray-300, 3.04:1 on white) — see D1 note above. */
+  --text-dimmed: var(--p-gray-350);
 
   --accent: var(--p-blue-650);
   --accent-base: var(--p-blue-700);
@@ -407,6 +423,9 @@
   --text-subtle: var(--p-gray-550);
   --text: var(--p-black);
   --text-on-accent: var(--p-white);
+  /* Materially darker than light's --text-dimmed (7.56:1 vs 5.63:1 on white) —
+     see D1 note above; without this the HC variant defeated its own purpose. */
+  --text-dimmed: var(--p-gray-450);
 
   --accent: var(--p-blue-800);
   --accent-base: #073d7c;
