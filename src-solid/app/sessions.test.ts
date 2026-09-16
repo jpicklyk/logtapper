@@ -61,6 +61,20 @@ const commands = vi.hoisted(() => ({
     }),
   ),
   setFocusedSession: vi.fn(() => Promise.resolve()),
+  getSessionMetadata: vi.fn(() =>
+    Promise.resolve({
+      sessionId: '',
+      sourceName: '',
+      sourceType: 'Logcat',
+      totalLines: 0,
+      fileSize: 0,
+      isLive: false,
+      isIndexing: false,
+      firstTimestamp: 1_111,
+      lastTimestamp: 2_222,
+      logLevelDistribution: {},
+    }),
+  ),
 }));
 
 vi.mock('@bridge/commands', () => commands);
@@ -277,6 +291,27 @@ describe('createSessionStore', () => {
     expect(store.byId('a')?.totalLines).toBe(9_001);
     expect(store.byId('a')?.isIndexing).toBe(false);
     expect(store.byId('a')?.dataSource.totalLines).toBe(9_001);
+  });
+
+  it('re-reads the time range from session metadata once indexing completes', async () => {
+    const { store } = harness;
+    store.add(load('a', { isIndexing: true, firstTimestamp: null, lastTimestamp: null }));
+    expect(store.byId('a')?.load.firstTimestamp).toBeNull();
+
+    bridge.handlers.complete?.({ sessionId: 'a', totalLines: 9_001 });
+
+    expect(commands.getSessionMetadata).toHaveBeenCalledWith('a');
+    await vi.waitFor(() => expect(store.byId('a')?.load.firstTimestamp).toBe(1_111));
+    expect(store.byId('a')?.load.lastTimestamp).toBe(2_222);
+  });
+
+  it('does not ask for metadata when index completion names a session it does not hold', () => {
+    const { store } = harness;
+    store.add(load('a'));
+
+    bridge.handlers.complete?.({ sessionId: 'gone', totalLines: 5 });
+
+    expect(commands.getSessionMetadata).not.toHaveBeenCalled();
   });
 
   it('ignores index progress for a session it does not hold', () => {

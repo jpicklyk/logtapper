@@ -22,7 +22,7 @@ import { batch, createEffect, createMemo, createRoot, createSignal, on, untrack 
 import type { Accessor } from 'solid-js';
 import { createStore, produce } from 'solid-js/store';
 import type { UnlistenFn } from '@tauri-apps/api/event';
-import { getLines, setFocusedSession } from '@bridge/commands';
+import { getLines, getSessionMetadata, setFocusedSession } from '@bridge/commands';
 import {
   onBridgeSessionClosed,
   onBridgeSessionOpened,
@@ -379,9 +379,30 @@ export function createSessionStore(deps: SessionStoreDeps): SessionStore {
         if (!disposed) updateTotal(sessionId, indexedLines, true);
       }),
     );
+    // The `LoadResult` a large file was opened with can carry null timestamps
+    // (the index had not reached a timestamped line yet), and nothing pushes
+    // later values. React re-reads them from `get_session_metadata` once
+    // indexing completes (`useFileInfo.ts`); mirror that so the session-info
+    // popover's time range fills in instead of staying blank for big files.
+    const refreshTimestamps = (sessionId: string): void => {
+      void getSessionMetadata(sessionId)
+        .then((meta) => {
+          // Untracked on purpose: a promise callback is no reactive scope, and
+          // the entry may have been closed while the IPC was in flight.
+          if (disposed || !untrack(() => entries[sessionId])) return;
+          batch(() => {
+            setEntries(sessionId, 'load', 'firstTimestamp', meta.firstTimestamp);
+            setEntries(sessionId, 'load', 'lastTimestamp', meta.lastTimestamp);
+          });
+        })
+        .catch(() => undefined);
+    };
+
     track(
       onFileIndexComplete(({ sessionId, totalLines }) => {
-        if (!disposed) updateTotal(sessionId, totalLines, false);
+        if (disposed) return;
+        updateTotal(sessionId, totalLines, false);
+        if (entries[sessionId]) refreshTimestamps(sessionId);
       }),
     );
 
