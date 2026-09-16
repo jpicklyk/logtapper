@@ -99,6 +99,14 @@ export interface WatchesStore {
   active(sessionId: string): WatchInfo[];
   /** `list(sessionId)` filtered to `active === false`. */
   cancelled(sessionId: string): WatchInfo[];
+  /** The watch ids of {@link active}, in the same order. Panels iterate these
+   *  rather than the `WatchInfo[]` so a `watch-match` count update does not
+   *  replace the row's identity — see `WatchesPanel.tsx`. */
+  activeIds(sessionId: string): string[];
+  /** The watch ids of {@link cancelled}, in the same order. */
+  cancelledIds(sessionId: string): string[];
+  /** One watch by id, or `undefined` once it is gone. */
+  byId(sessionId: string, watchId: string): WatchInfo | undefined;
   loading(sessionId: string): boolean;
   create(sessionId: string, criteria: FilterCriteria): Promise<WatchInfo>;
   /** Cancel is terminal — see this module's doc comment, point 1. */
@@ -158,6 +166,24 @@ export function createWatchesStore(deps: WatchesStoreDeps): WatchesStore {
       }
       return state;
     };
+
+    // Prune per-session state for sessions that no longer exist (review
+    // C-L5). Both `states` and `fetchedIds` grew for the app's lifetime
+    // before this; `fetchedIds` in particular meant a closed-and-reopened
+    // session id kept its stale (and now unreachable) list instead of
+    // re-fetching. Same discipline as `analyzerStore`'s and
+    // `deviceStateStore`'s `sessions.order()` sweeps.
+    createEffect(() => {
+      const ids = new Set(sessions.order());
+      for (const key of [...states.keys()]) {
+        if (ids.has(key)) continue;
+        states.delete(key);
+        fetchedIds.delete(key);
+      }
+      for (const key of [...fetchedIds]) {
+        if (!ids.has(key)) fetchedIds.delete(key);
+      }
+    });
 
     // Fetch once per session id, the first time it is focused — mirrors
     // `bookmarksStore.ts`'s fetch effect exactly.
@@ -227,6 +253,10 @@ export function createWatchesStore(deps: WatchesStoreDeps): WatchesStore {
     const loading = (sessionId: string): boolean => stateFor(sessionId).loading();
     const active = (sessionId: string): WatchInfo[] => list(sessionId).filter((w) => w.active);
     const cancelled = (sessionId: string): WatchInfo[] => list(sessionId).filter((w) => !w.active);
+    const activeIds = (sessionId: string): string[] => active(sessionId).map((w) => w.watchId);
+    const cancelledIds = (sessionId: string): string[] => cancelled(sessionId).map((w) => w.watchId);
+    const byId = (sessionId: string, watchId: string): WatchInfo | undefined =>
+      list(sessionId).find((w) => w.watchId === watchId);
 
     const create = (sessionId: string, criteria: FilterCriteria): Promise<WatchInfo> =>
       commands.createWatch(sessionId, criteria).then((watch) => {
@@ -252,6 +282,6 @@ export function createWatchesStore(deps: WatchesStoreDeps): WatchesStore {
       disposeRoot();
     };
 
-    return { list, active, cancelled, loading, create, cancel, dispose };
+    return { list, active, cancelled, activeIds, cancelledIds, byId, loading, create, cancel, dispose };
   });
 }

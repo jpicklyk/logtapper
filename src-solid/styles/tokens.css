@@ -199,6 +199,38 @@
   --radius-md: var(--p-radius-md);
   --radius-xl: var(--p-radius-xl);
   --z-drag: var(--p-z-drag);
+
+  /* ── Semantic aliases for the remaining primitive scales (review B-L5,
+     D2-L1). The header rule above says components consume semantic tokens
+     only, but the radius/z/duration scales had no semantic names beyond
+     `--radius-md`/`--radius-xl`/`--z-drag`, so every other stylesheet had no
+     choice but to reach for `--p-*`. Adding the names is additive — no
+     existing token is renamed and no primitive changes value — and lets the
+     owning packages migrate their `var(--p-*)` uses file by file.
+
+     `--radius-full` in particular is not cosmetic: five stylesheets already
+     consume it, and `analyzers/analyzers.module.css:226` and
+     `query/QueryBar.module.css:129` consume it *without* a fallback, so
+     until now those two rendered square. ── */
+  --radius-none: var(--p-radius-none);
+  --radius-xs: var(--p-radius-xs);
+  --radius-sm: var(--p-radius-sm);
+  --radius-lg: var(--p-radius-lg);
+  --radius-full: var(--p-radius-full);
+  --z-overlay: var(--p-z-overlay);
+  --z-dropdown: var(--p-z-dropdown);
+  --z-modal: var(--p-z-modal);
+  --duration-fast: var(--p-duration-fast);
+  --duration-normal: var(--p-duration-normal);
+
+  /* ── Scrim: the dimming wash behind a drawer or modal (review B-L4,
+     D1-L5). Both hardcodes it replaces are black-alpha in every theme
+     (`shell/shell.module.css`'s drawer backdrop at 0.35,
+     `packs/packs.module.css`'s modal backdrop at 0.45), so one
+     theme-independent value serves both; the drawer darkens marginally when
+     `shell/` adopts it. Declared here rather than per-theme for the same
+     reason `--shadow`'s alpha is black in both families. ── */
+  --scrim: rgba(0, 0, 0, 0.45);
 }
 
 /* ══ B. Family-shared tokens (identical between a theme and its -hc variant) ══ */

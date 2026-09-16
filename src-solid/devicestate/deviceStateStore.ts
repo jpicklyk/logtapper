@@ -495,7 +495,19 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
         const live = isLiveSession(sessionId);
         if (disposed) return;
 
-        if (state.debounceTimer !== undefined) {
+        // `controller.cursor()` is a single global signal, so this effect
+        // re-runs for *every* session that has state whenever any pane's
+        // cursor moves. A move in another session must not cancel this
+        // session's pending fetch (review C-M3): bail out before touching the
+        // debounce timer. The `live` / `!trackerId` branches below still need
+        // their clears, so only the "nothing about this session changed" case
+        // returns here.
+        if (cursor && cursor.sessionId !== sessionId && !live && trackerId) return;
+
+        // Past this point the run either schedules a new fetch or clears the
+        // signals, so any fetch already scheduled is superseded.
+        const abandonedFetch = state.debounceTimer !== undefined;
+        if (abandonedFetch) {
           clearTimeout(state.debounceTimer);
           state.debounceTimer = undefined;
         }
@@ -512,7 +524,13 @@ export function createDeviceStateStore(deps: DeviceStateStoreDeps): DeviceStateS
           state.displayedTrackerId = null;
           return;
         }
-        if (!cursor || cursor.sessionId !== sessionId) return;
+        if (!cursor || cursor.sessionId !== sessionId) {
+          // Nothing left to resolve the `snapshotLoading` the previous run
+          // set — without this the panel shows "Loading…" until the user
+          // moves the cursor inside this session again (C-M3).
+          if (abandonedFetch) state.setSnapshotLoading(false);
+          return;
+        }
 
         const line = cursor.line;
         const meta = analyzers.trackers(sessionId).find((t) => t.id === trackerId);

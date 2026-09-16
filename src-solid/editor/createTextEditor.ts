@@ -48,7 +48,11 @@ export interface CreateTextEditorOptions {
 export interface TextEditorHandle {
   readonly view: EditorView;
   getValue(): string;
-  /** Replace the document. Also marks it saved unless `markSaved: false`. */
+  /** Replace the document. Also marks it saved unless `markSaved: false`.
+   *  A `next` equal to the current document is a no-op in *both* respects —
+   *  it neither dispatches nor touches the saved baseline — so a controlled
+   *  caller echoing its own content back cannot silently clear `isDirty()`
+   *  (review B-M8). Use {@link markSaved} to re-baseline deliberately. */
   setValue(next: string, options?: { markSaved?: boolean }): void;
   isDirty(): boolean;
   /** Treat the current document as the on-disk content — call after a write. */
@@ -170,14 +174,22 @@ export function createTextEditor(options: CreateTextEditorOptions): TextEditorHa
     view,
     getValue: () => current,
     setValue(next, setOptions) {
-      if (next !== current) {
-        view.dispatch({
-          changes: { from: 0, to: view.state.doc.length, insert: next },
-        });
-        // The update listener has already run synchronously and set `current`,
-        // but assign anyway so a no-op dispatch cannot leave it stale.
-        current = next;
+      if (next === current) {
+        // The document did not change, so nothing about its saved-state did
+        // either (review B-M8). This is the *echo* case: a controlled caller
+        // routes every keystroke out through `onChange` and back in as a new
+        // `content` prop, and re-baselining `saved` here made `isDirty()`
+        // permanently false for every such caller — the handle reported a
+        // dirty buffer as clean. `markSaved()` is the explicit way to
+        // re-baseline without a doc change.
+        return;
       }
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: next },
+      });
+      // The update listener has already run synchronously and set `current`,
+      // but assign anyway so a no-op dispatch cannot leave it stale.
+      current = next;
       if (setOptions?.markSaved !== false) saved = next;
     },
     isDirty: () => current !== saved,

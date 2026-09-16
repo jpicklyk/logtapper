@@ -291,6 +291,13 @@
   touch-action: none;
 }
 
+/* The track is a keyboard-operable `role="slider"` (review C-L7), so it needs
+   the same visible focus affordance as the toggle above it. */
+.timelineSvg:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -1px;
+}
+
 .timelineBaseline {
   stroke: var(--border);
   stroke-width: 1;

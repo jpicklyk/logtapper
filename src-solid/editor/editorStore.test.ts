@@ -191,7 +191,8 @@ describe('createEditorStore', () => {
 
       const outcome = await store.close(id, confirm);
 
-      expect(outcome).toBe('saved');
+      // 'closed', not 'saved': nothing was written (review B-L11).
+      expect(outcome).toBe('closed');
       expect(confirm).not.toHaveBeenCalled();
       expect(store.tabs()).toHaveLength(0);
     });
@@ -324,6 +325,86 @@ describe('createEditorStore', () => {
 
       expect(store.tabs()).toHaveLength(1);
       expect(store.activeId()).toBe(id);
+    });
+
+    // ── W2 handoff: a dirty doc used to be dropped here with no trace ─────
+    it('writes a dirty, path-backed doc back to its file before tearing it down', async () => {
+      const workspace = makeWorkspace([], 'ws-1');
+      const commands = makeCommands('on disk');
+      const onWorkspaceTeardown = vi.fn();
+      const store = createEditorStore({ workspace: workspace.port, commands, onWorkspaceTeardown });
+      await Promise.resolve();
+      const id = await store.open('/notes.md');
+      store.setContent(id, 'edited but not saved');
+      commands.writeTextFile.mockClear();
+
+      workspace.setActiveId('ws-2');
+      await Promise.resolve();
+
+      expect(commands.writeTextFile).toHaveBeenCalledWith('/notes.md', 'edited but not saved');
+      expect(onWorkspaceTeardown).toHaveBeenCalledWith({
+        saved: [expect.objectContaining({ filePath: '/notes.md' })],
+        unsaved: [],
+      });
+      expect(store.tabs()).toHaveLength(0);
+    });
+
+    it('reports a dirty untitled doc as unsaved rather than writing it somewhere', async () => {
+      const workspace = makeWorkspace([], 'ws-1');
+      const commands = makeCommands();
+      const onWorkspaceTeardown = vi.fn();
+      const store = createEditorStore({ workspace: workspace.port, commands, onWorkspaceTeardown });
+      await Promise.resolve();
+      const id = store.newDoc();
+      store.setContent(id, 'scratch notes');
+
+      workspace.setActiveId('ws-2');
+      await Promise.resolve();
+
+      expect(commands.writeTextFile).not.toHaveBeenCalled();
+      expect(onWorkspaceTeardown).toHaveBeenCalledWith({
+        saved: [],
+        unsaved: [expect.objectContaining({ filePath: null, content: 'scratch notes' })],
+      });
+    });
+
+    it('does not write or report anything when every open doc is clean', async () => {
+      const workspace = makeWorkspace([], 'ws-1');
+      const commands = makeCommands('on disk');
+      const onWorkspaceTeardown = vi.fn();
+      const store = createEditorStore({ workspace: workspace.port, commands, onWorkspaceTeardown });
+      await Promise.resolve();
+      await store.open('/notes.md');
+      commands.writeTextFile.mockClear();
+
+      workspace.setActiveId('ws-2');
+      await Promise.resolve();
+
+      expect(commands.writeTextFile).not.toHaveBeenCalled();
+      expect(onWorkspaceTeardown).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── B-L10 ───────────────────────────────────────────────────────────────
+  describe('open', () => {
+    it('focuses the tab already open at a path that differs only in case or separators', async () => {
+      const { store, commands } = makeStore();
+      const first = await store.open('C:\\logs\\notes.md');
+      expect(commands.readTextFile).toHaveBeenCalledTimes(1);
+
+      const second = await store.open('c:/logs/Notes.md');
+
+      // One tab, one read — not two tabs racing to overwrite one file.
+      expect(second).toBe(first);
+      expect(store.tabs()).toHaveLength(1);
+      expect(commands.readTextFile).toHaveBeenCalledTimes(1);
+    });
+
+    it('still opens a genuinely different path as its own tab', async () => {
+      const { store } = makeStore();
+      await store.open('C:\\logs\\notes.md');
+      await store.open('C:\\logs\\other.md');
+      expect(store.tabs()).toHaveLength(2);
     });
   });
 });
