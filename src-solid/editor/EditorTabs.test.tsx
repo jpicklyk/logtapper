@@ -92,6 +92,20 @@ describe('EditorTabs', () => {
     expect(saveSpy).toHaveBeenCalledWith(id);
   });
 
+  it('leaves Ctrl+Shift+S alone even with a document open (that combo is the workspace save)', () => {
+    const store = createEditorStore({ workspace: makeWorkspace() });
+    const id = store.newDoc();
+    store.setContent(id, 'x');
+    render(() => <EditorTabs store={store} />);
+    const saveSpy = vi.spyOn(store, 'save');
+
+    const event = new KeyboardEvent('keydown', { key: 's', ctrlKey: true, shiftKey: true, cancelable: true });
+    window.dispatchEvent(event);
+
+    expect(saveSpy).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
   it('does nothing on Ctrl+S when no document is open', () => {
     const store = createEditorStore({ workspace: makeWorkspace() });
     render(() => <EditorTabs store={store} />);

@@ -54,8 +54,10 @@ export function EditorTabs(props: EditorTabsProps) {
     }
   };
 
+  // Plain Ctrl/Cmd+S only. Ctrl+Shift+S is the workspace save, owned by
+  // `app/shortcuts.ts`; without the shift check one keypress saved both.
   const onKeyDown = (event: KeyboardEvent): void => {
-    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 's') return;
+    if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.key.toLowerCase() !== 's') return;
     const id = props.store.activeId();
     if (!id) return;
     event.preventDefault();
