@@ -4,15 +4,16 @@ import { solidAliases } from "./solid.aliases";
 
 const host = process.env.TAURI_DEV_HOST;
 
-// Parallel Solid frontend. Disjoint root from vite.config.ts so
-// @vitejs/plugin-react and vite-plugin-solid never see the same .tsx.
+// The frontend build. `root` is src-solid/ (its own index.html is the entry);
+// the shared framework-free modules are reached through the aliases, which are
+// absolute, so they resolve from outside the root.
 export default defineConfig({
   root: "src-solid",
   plugins: [solid()],
   resolve: {
     // Two entry points (app + tests) must share one solid-js instance.
     dedupe: ["solid-js"],
-    // Single source of truth, shared with vitest.solid.config.ts.
+    // Single source of truth, shared with vitest.config.ts.
     alias: solidAliases,
   },
   // Not inherited from the root config — a custom `root` gets its own.

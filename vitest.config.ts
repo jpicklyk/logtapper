@@ -3,13 +3,16 @@ import solid from "vite-plugin-solid";
 import { solidAliases } from "./solid.aliases";
 
 export default defineConfig({
-  // `hot: false` — solid-refresh injects a /@solid-refresh import that Vitest's
-  // module runner cannot resolve; HMR is meaningless in a test run anyway.
+  // A separate config from vite.config.ts rather than a `test` block in it:
+  // this one needs `solid({ hot: false })` — solid-refresh injects a
+  // /@solid-refresh import that Vitest's module runner cannot resolve, and HMR
+  // is meaningless in a test run anyway — and it must not inherit
+  // `root: "src-solid"`, since src-shared/ carries tests too.
   plugins: [solid({ hot: false })],
   resolve: {
     conditions: ["development", "browser"],
     dedupe: ["solid-js"],
-    // Single source of truth, shared with vite.solid.config.ts.
+    // Single source of truth, shared with vite.config.ts.
     alias: solidAliases,
   },
   test: {

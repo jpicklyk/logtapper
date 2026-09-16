@@ -4,11 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --config vite.solid.config.ts",
-    "build": "tsc -p tsconfig.solid.json --noEmit && vite build --config vite.solid.config.ts",
-    "test": "vitest run --config vitest.solid.config.ts",
-    "test:watch": "vitest --config vitest.solid.config.ts",
-    "preview": "vite preview --config vite.solid.config.ts",
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "preview": "vite preview",
     "dev:solid": "npm run dev",
     "build:solid": "npm run build",
     "test:solid": "npm run test",
@@ -19,7 +19,7 @@
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
     "lint:all": "npm run lint && npm run lint:rust && npm run check:types",
     "gen:types": "cargo test --manifest-path src-tauri/Cargo.toml --test export_bindings",
-    "check:types": "npm run gen:types && git diff --exit-code -- src-shared/bridge/generated && tsc -p tsconfig.solid.json --noEmit",
+    "check:types": "npm run gen:types && git diff --exit-code -- src-shared/bridge/generated && tsc --noEmit",
     "build:mcpb": "npm --prefix mcp-server run build:mcpb"
   },
   "dependencies": {

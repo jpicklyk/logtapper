@@ -20,7 +20,7 @@ import { solidAliasPaths, solidAliases, solidBarrelAliases, solidRepoRoot } from
 const repoRoot = solidRepoRoot;
 
 function readTsconfigPaths(): Record<string, string[]> {
-  const raw = readFileSync(resolve(repoRoot, 'tsconfig.solid.json'), 'utf8');
+  const raw = readFileSync(resolve(repoRoot, 'tsconfig.json'), 'utf8');
   // tsconfig is JSONC; only line comments are used in this file.
   const stripped = raw
     .split('\n')

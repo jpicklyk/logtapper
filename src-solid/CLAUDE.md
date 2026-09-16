@@ -93,7 +93,7 @@ build). Build and test with the root scripts: `npm run dev`, `npm run build`, `n
 
 ## Testing
 
-`npm test` → `vitest.solid.config.ts` (jsdom, `@solidjs/testing-library`). Stores are tested
+`npm test` → `vitest.config.ts` (jsdom, `@solidjs/testing-library`). Stores are tested
 against injected fake commands/listeners; components are mounted for real against mocked
 bridge boundaries — a test that re-implements the unit's logic against a mock, or asserts a
 helper cannot call something it structurally cannot call, is rejected in review. Unit

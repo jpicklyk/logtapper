@@ -28,7 +28,7 @@ Verified empirically on this checkout:
 | `NODE_ENV=development npx vite build --mode development` | `true` | **present** |
 
 (`grep -c BENCH_RESULT dist/assets/*.js` → `0`, `0`, `1`.) Solid has no `DEV` guard, so its
-hook survives a plain `npm run build:solid`.
+hook survives a plain `npm run build`.
 
 **Consequence: a straight production-vs-production gate is impossible without changing the
 guard.** Both frontends are therefore built in *development mode* for the comparison run,
@@ -53,23 +53,23 @@ node scripts/gen-logcat.mjs --lines 1000000 --out bench/logcat-1m.log
 
 The same file is the viewer fixture (opened from disk) and the fake-adb replay source.
 
-## 2. Build both frontends
+## 2. Build the frontend
 
 ```powershell
 $env:NODE_ENV = "development"
-npx vite build --mode development                              # -> dist/
-npx vite build --mode development --config vite.solid.config.ts # -> dist-solid/
+npx vite build --mode development   # -> dist-solid/
 Remove-Item Env:NODE_ENV
 ```
 
-Sanity-check both bundles carry the harness before launching anything:
+(The React side was built the same way from its own config, into `dist/`.)
+
+Sanity-check the bundle carries the harness before launching anything:
 
 ```powershell
-Select-String -Path dist\assets\*.js       -Pattern BENCH_RESULT -SimpleMatch -Quiet
 Select-String -Path dist-solid\assets\*.js -Pattern BENCH_RESULT -SimpleMatch -Quiet
 ```
 
-Both must print `True`. If the React one prints `False`, `NODE_ENV` did not reach the build.
+It must print `True`. A `False` means `NODE_ENV` did not reach the build.
 
 Also build Solid's **true production** bundle for the §5 absolute-threshold pass:
 

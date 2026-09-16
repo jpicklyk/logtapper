@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist-solid",
     "devUrl": "http://localhost:1421",
-    "beforeDevCommand": "npm run build:mcpb && npm run dev:solid",
-    "beforeBuildCommand": "npm run build:solid && npm run build:mcpb"
+    "beforeDevCommand": "npm run build:mcpb && npm run dev",
+    "beforeBuildCommand": "npm run build && npm run build:mcpb"
   },
   "app": {
     "windows": [
