@@ -1,7 +1,9 @@
 /** @jsxImportSource solid-js */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
+import { createSignal } from 'solid-js';
 import { AppShell } from './AppShell';
+import type { SessionKind } from './mode';
 
 // The shell now renders `WindowControls`, which calls `getCurrentWindow()` from
 // `@tauri-apps/api/window` — that throws outside a Tauri webview, so stub it.
@@ -29,6 +31,12 @@ function setViewportWidth(width: number) {
 }
 
 afterEach(() => setViewportWidth(originalWidth));
+
+/** jsdom's `createTier` fallback listens for `resize`, so announce the change. */
+function resizeTo(width: number) {
+  setViewportWidth(width);
+  fireEvent(window, new Event('resize'));
+}
 
 function regionsOf(container: Element): string[] {
   return [...container.querySelectorAll('[data-region]')].map(
@@ -166,5 +174,172 @@ describe('AppShell', () => {
     expect(navigator?.querySelector('[data-surface="stream-controls"]')).toBeTruthy();
     expect(navigator?.querySelector('[data-surface="sections"]')).toBeNull();
     expect(container.querySelector('[data-surface="analyses"]')).toBeNull();
+  });
+});
+
+// ── The open drawer is revalidated against tier and mode (review B-H3) ─────
+
+describe('AppShell — an open drawer never outlives its placement', () => {
+  it('closes a drawer whose surface has been promoted to its own column', () => {
+    setViewportWidth(1280);
+    const { container } = render(() => (
+      <AppShell
+        workspaceId="ws"
+        sessionKind="file"
+        slots={{ viewer: () => <div />, analyzers: () => <div data-testid="analyzers-body" /> }}
+      />
+    ));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Analyzers' }));
+    expect(container.querySelector('aside[aria-label="Analyzers"]')).toBeTruthy();
+
+    // Past 1600px `analyzers` is `R('details')`, so the region loop mounts it.
+    // The drawer kept rendering it too: two panels, two sets of effects, two
+    // copies of every DOM id inside them, and 380px stolen from the viewer.
+    resizeTo(2000);
+
+    expect(container.querySelector('aside[aria-label="Analyzers"]')).toBeNull();
+    expect(container.querySelectorAll('[data-surface="analyzers"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-testid="analyzers-body"]')).toHaveLength(1);
+    const shell = container.querySelector('[data-tier]') as HTMLElement;
+    expect(shell.style.getPropertyValue('--shell-columns')).not.toContain('--shell-drawer-w');
+  });
+
+  it('closes a live-only drawer when the capture stops', () => {
+    setViewportWidth(1280);
+    const [kind, setKind] = createSignal<SessionKind>('live');
+    const { container } = render(() => (
+      <AppShell workspaceId="ws" sessionKind={kind()} slots={{ viewer: () => <div /> }} />
+    ));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Watches' }));
+    expect(container.querySelector('aside[aria-label="Watches"]')).toBeTruthy();
+
+    // Stopping the stream flips the mode; `watches` does not exist in
+    // post-mortem, so its rail glyph goes — and with it any way to close a
+    // drawer that used to stay open rendering a live-only surface.
+    setKind('file');
+
+    expect(container.querySelector('[data-mode="postmortem"]')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Watches' })).toBeNull();
+    expect(container.querySelector('aside[aria-label="Watches"]')).toBeNull();
+  });
+
+  it('does not spring the drawer back open when the window narrows again', () => {
+    setViewportWidth(1280);
+    const { container } = render(() => (
+      <AppShell workspaceId="ws" sessionKind="file" slots={{ viewer: () => <div /> }} />
+    ));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Analyzers' }));
+    resizeTo(2000);
+    resizeTo(1280);
+
+    expect(container.querySelector('aside[aria-label="Analyzers"]')).toBeNull();
+  });
+});
+
+// ── The overlay drawer is a modal sheet (review B-M6) ──────────────────────
+
+describe('AppShell — overlay drawer dialog semantics', () => {
+  it('announces itself as a modal dialog and takes focus, then gives it back', () => {
+    setViewportWidth(1280);
+    const { container } = render(() => (
+      <AppShell workspaceId="ws" sessionKind="file" slots={{ viewer: () => <div /> }} />
+    ));
+
+    const rail = screen.getByRole('button', { name: 'Analyzers' });
+    rail.focus();
+    fireEvent.click(rail);
+
+    const drawer = container.querySelector('aside[aria-label="Analyzers"]') as HTMLElement;
+    expect(drawer.getAttribute('role')).toBe('dialog');
+    expect(drawer.getAttribute('aria-modal')).toBe('true');
+    // Focus moved inside — Tab used to continue straight into the log viewer
+    // behind the sheet.
+    expect(drawer.contains(document.activeElement)).toBe(true);
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    // ...and came back to the rail button, not to `document.body`.
+    expect(document.activeElement).toBe(rail);
+  });
+
+  it('contains Tab inside the sheet', () => {
+    setViewportWidth(1280);
+    const { container } = render(() => (
+      <AppShell workspaceId="ws" sessionKind="file" slots={{ viewer: () => <div /> }} />
+    ));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Analyzers' }));
+    const drawer = container.querySelector('aside[aria-label="Analyzers"]') as HTMLElement;
+    const focusables = [...drawer.querySelectorAll<HTMLElement>('button')];
+    const last = focusables[focusables.length - 1];
+
+    last.focus();
+    fireEvent.keyDown(last, { key: 'Tab' });
+    expect(drawer.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(focusables[0]);
+
+    fireEvent.keyDown(focusables[0], { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(last);
+  });
+
+  it('is not a dialog when it is a pushed column', () => {
+    setViewportWidth(2000);
+    const { container } = render(() => (
+      <AppShell workspaceId="ws" sessionKind="file" slots={{ viewer: () => <div /> }} />
+    ));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    const drawer = container.querySelector('aside[aria-label="Settings"]') as HTMLElement;
+
+    expect(drawer.getAttribute('data-placement')).toBe('push');
+    expect(drawer.getAttribute('role')).toBeNull();
+    expect(drawer.getAttribute('aria-modal')).toBeNull();
+  });
+});
+
+// ── The splitter is not inside the scrolling box (review B-M4) ─────────────
+
+describe('AppShell — resize handle placement', () => {
+  it('renders the splitter as a sibling of the scroll container', () => {
+    setViewportWidth(2600);
+    const { container } = render(() => (
+      <AppShell
+        workspaceId="ws"
+        sessionKind="file"
+        slots={{ viewer: () => <div /> }}
+        regionSlots={{ details: () => <div data-testid="editor-tab" /> }}
+      />
+    ));
+
+    const region = container.querySelector('[data-region="details"]') as HTMLElement;
+    const splitter = region.querySelector('[role="separator"]') as HTMLElement;
+
+    // Direct child of the (non-scrolling) grid item: an absolutely positioned
+    // child of the *scrolling* box scrolled out of reach once the column's
+    // panels overflowed, and the column could no longer be resized.
+    expect(splitter.parentElement).toBe(region);
+    const panel = region.querySelector('[data-surface]') as HTMLElement;
+    expect(panel.parentElement).not.toBe(region);
+    expect(region.contains(panel.parentElement)).toBe(true);
+    expect(panel.parentElement?.contains(splitter)).toBe(false);
+  });
+
+  it('no longer ships the mode/tier debug text in the status bar', () => {
+    setViewportWidth(2600);
+    const { container } = render(() => (
+      <AppShell
+        workspaceId="ws"
+        sessionKind="file"
+        statusBar={<span>ready</span>}
+        slots={{ viewer: () => <div /> }}
+      />
+    ));
+
+    const footer = container.querySelector('footer') as HTMLElement;
+    expect(footer.textContent).toBe('ready');
+    expect(footer.textContent).not.toMatch(/postmortem|ultrawide|wide/);
   });
 });

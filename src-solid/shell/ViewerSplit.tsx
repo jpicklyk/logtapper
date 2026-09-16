@@ -1,7 +1,8 @@
 /** @jsxImportSource solid-js */
-import { For, Show } from 'solid-js';
-import type { JSX } from 'solid-js';
+import { For, Show, onCleanup } from 'solid-js';
+import type { Accessor, JSX } from 'solid-js';
 import { createTier } from './tier';
+import type { Tier } from './tier';
 import { isSplitTier } from './splitView';
 import type { SplitView } from './splitView';
 import styles from './viewerSplit.module.css';
@@ -16,6 +17,11 @@ export interface ViewerSplitSessionOption {
 
 export interface ViewerSplitProps {
   split: SplitView;
+  /**
+   * The app's single tier subscription — see `AppShellProps.tier` (review
+   * B-L6). Optional so a standalone mount still works.
+   */
+  tier?: Accessor<Tier>;
   /** Sessions selectable for the secondary pane — `App.tsx` excludes whatever
    *  the primary pane is showing, so the same session can never be picked in
    *  both (each pane's cursor/query state is keyed by session, not by pane). */
@@ -46,12 +52,29 @@ export function ViewerSplit(props: ViewerSplitProps) {
   // `split.active()` itself stays whatever the workspace persisted — this
   // only decides whether that state renders as two panes *right now* — so
   // narrowing the window back to standard/compact never loses the choice.
-  const tier = createTier();
+  // eslint-disable-next-line solid/reactivity -- constant for this component's lifetime, by design
+  const tier = props.tier ?? createTier();
   const effectivelySplit = () => props.split.active() && isSplitTier(tier());
+
+  /**
+   * Tears down the in-flight divider drag, if any.
+   *
+   * Set while dragging, cleared on pointerup/cancel — and called from
+   * `onCleanup`, so a drag interrupted by an unmount (closing the split, a
+   * workspace switch) does not leave three `window` listeners alive until the
+   * next pointer release, writing a ratio into a disposed store. Re-entry
+   * (a second `pointerdown` before the first `pointerup` — two pointers, or a
+   * button chord) tears the first drag down instead of stacking onto it.
+   * `Splitter.tsx` has the same guard; review B-L7.
+   */
+  let endDrag: (() => void) | null = null;
+  onCleanup(() => endDrag?.());
 
   const dragDivider = (event: PointerEvent): void => {
     if (event.button !== 0) return;
     event.preventDefault();
+    endDrag?.();
+
     const startX = event.clientX;
     const startRatio = props.split.ratio();
 
@@ -61,10 +84,12 @@ export function ViewerSplit(props: ViewerSplitProps) {
       props.split.setRatio(startRatio + (moveEvent.clientX - startX) / width);
     };
     const onUp = (): void => {
+      endDrag = null;
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onUp);
     };
+    endDrag = onUp;
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);

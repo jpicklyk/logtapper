@@ -41,6 +41,27 @@ vi.mock('./packs', async (importOriginal) => {
     },
   };
 });
+// Review A-M8: `hydrate().then(startupRestore)` used to run in the render body
+// with no rejection handler, so a restore that failed past `hydrate`'s own
+// `getAppState` catch became an unhandled rejection the user never saw. The
+// store is wrapped (not replaced) so every other test in this file keeps the
+// real one; only a test that sets `hydrateError` gets a rejecting `hydrate`.
+const workspaceHooks = vi.hoisted(() => ({ hydrateError: null as Error | null }));
+vi.mock('./workspace', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('./workspace')>();
+  return {
+    ...mod,
+    createWorkspaceStore: (deps: Parameters<typeof mod.createWorkspaceStore>[0]) => {
+      const store = mod.createWorkspaceStore(deps);
+      const original = store.hydrate;
+      store.hydrate = () =>
+        workspaceHooks.hydrateError
+          ? Promise.reject(workspaceHooks.hydrateError)
+          : original.call(store);
+      return store;
+    },
+  };
+});
 // The shell now renders `WindowControls`, which calls `getCurrentWindow()` from
 // `@tauri-apps/api/window` — that throws outside a Tauri webview, so stub it.
 // Every method returns a resolved promise; `isMaximized` reports false so the
@@ -517,5 +538,40 @@ describe('App', () => {
 
     expect(refreshSpies.refreshCatalog).toHaveBeenCalledTimes(1);
     expect(refreshSpies.refreshInstalled).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── Startup side effects live in onMount, with a catch (review A-M8) ───────
+
+describe('App — a failing workspace restore is reported, not swallowed', () => {
+  afterEach(() => {
+    workspaceHooks.hydrateError = null;
+  });
+
+  it('puts the failure on the status line instead of raising an unhandled rejection', async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (event: PromiseRejectionEvent): void => {
+      event.preventDefault();
+      rejections.push(event.reason);
+    };
+    window.addEventListener('unhandledrejection', onRejection);
+    try {
+      workspaceHooks.hydrateError = new Error('app-state.json is corrupt');
+      render(() => <App />);
+
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain('Workspace restore failed');
+      expect(alert.textContent).toContain('app-state.json is corrupt');
+      await Promise.resolve();
+      expect(rejections).toEqual([]);
+    } finally {
+      window.removeEventListener('unhandledrejection', onRejection);
+    }
+  });
+
+  it('shows nothing on the status line when the restore succeeds', async () => {
+    render(() => <App />);
+    await waitFor(() => expect(screen.getByTestId('workspace-first-run')).toBeTruthy());
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });

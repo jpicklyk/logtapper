@@ -8,6 +8,8 @@
  */
 import { createSignal } from 'solid-js';
 import type { Accessor } from 'solid-js';
+import { createGenerationGuard } from '../reactive';
+import type { GenerationGuard } from '../reactive';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { closeSession, getLines, loadLogFile } from '@bridge/commands';
 import type { LoadResult } from '@bridge/types';
@@ -17,6 +19,7 @@ import type { LoadResult } from '@bridge/types';
 import { planExtraSessionImport } from '@hooks/useLogViewer/multiSessionImport';
 import type { ImportedSession } from '@hooks/useLogViewer/multiSessionImport';
 import type { ViewerController } from '../viewer';
+import { resetSessionView } from './sessions';
 import type { SessionStore } from './sessions';
 
 /** The single pane 2b renders. The planner is pane-aware; multi-pane is post-2b. */
@@ -108,24 +111,46 @@ export function createAppActions(deps: AppActionsDeps): AppActions {
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal('');
 
-  let tabSeq = 0;
-  const makeTabId = (): string => `solid-tab-${++tabSeq}`;
+  /**
+   * How many opens are in flight.
+   *
+   * `busy` used to be a bare boolean each call set and cleared, so two
+   * concurrent opens (a restore opening several files, a double-click) made
+   * the first one's `finally` report "done" while the second was still
+   * running — the Open button re-enabled mid-restore (review A-M10). A
+   * refcount is the same signal for the single-open case and correct for the
+   * concurrent one.
+   */
+  let openDepth = 0;
 
   /**
-   * Forget a session's rendered index space and highlight overrides.
+   * Per-session generation for the post-open index probe.
    *
-   * Backend session ids are deterministic per path, so closing a file and
-   * reopening it lands on the *same* id — and would inherit whatever filter,
-   * section scope, search set or highlight map the previous open left on the
-   * controller. Cleared on both edges (open and close) because a session can
-   * also leave through an agent's close, which this surface never sees.
+   * `probeTotal` is awaited *after* the session is registered, and under
+   * `waitForIndex` the loop runs for up to {@link INDEX_PROBE_TIMEOUT_MS}.
+   * Backend session ids are deterministic per path, so a close + reopen of the
+   * same file inside that window lands on the same id and the late
+   * `updateTotal` would overwrite the fresh session's `isIndexing` with the
+   * previous open's total (review A-M10). Each open captures its guard
+   * *object* and token up front and checks both before writing.
+   *
+   * Entries are bumped, never deleted — a token captured before a close must
+   * keep comparing false afterwards, which it could not do if the guard were
+   * removed and a reopen started a fresh counter at the same number. One small
+   * object per distinct path opened in this process is a bounded cost.
    */
-  const resetView = (sessionId: string): void => {
-    for (const key of ['section', 'filter', 'search', 'matched'] as const) {
-      controller.setLineSet(sessionId, key, null);
+  const probeGuards = new Map<string, GenerationGuard>();
+  const probeGuardFor = (sessionId: string): GenerationGuard => {
+    let guard = probeGuards.get(sessionId);
+    if (!guard) {
+      guard = createGenerationGuard();
+      probeGuards.set(sessionId, guard);
     }
-    controller.setHighlights(sessionId, null);
+    return guard;
   };
+
+  let tabSeq = 0;
+  const makeTabId = (): string => `solid-tab-${++tabSeq}`;
 
   const probeTotal = async (sessionId: string): Promise<number> => {
     const head = await getLines({
@@ -141,7 +166,11 @@ export function createAppActions(deps: AppActionsDeps): AppActions {
   };
 
   const openPath = async (path: string, options: OpenPathOptions = {}): Promise<string> => {
-    setError('');
+    // Only the open that *starts* a batch clears the error line. A second
+    // concurrent open clearing it would erase a failure the first one has
+    // already reported and the user has not seen yet (review A-M10).
+    if (openDepth === 0) setError('');
+    openDepth += 1;
     setBusy(true);
     try {
       const results = await loadLogFile(path);
@@ -149,6 +178,13 @@ export function createAppActions(deps: AppActionsDeps): AppActions {
       if (!primary) throw new Error(`No sessions were loaded from ${path}`);
 
       const loadsById = new Map(results.map((load) => [load.sessionId, load]));
+      // Captured before the first await that follows a registration: any
+      // earlier open of this same id is superseded as of here.
+      const probeGuard = probeGuardFor(primary.sessionId);
+      const probeToken = probeGuard.bump();
+
+      // `store.add` is what resets this session's view state, for the bridge's
+      // open edge as well as this one — see `sessions.ts`'s `resetSessionView`.
       store.add(primary);
       store.setFocused(primary.sessionId);
 
@@ -171,28 +207,33 @@ export function createAppActions(deps: AppActionsDeps): AppActions {
         }
       }
 
-      for (const load of results) resetView(load.sessionId);
-
       // The backend keeps indexing after `load_log_file` resolves, so the
       // authoritative total is a probe, not `LoadResult.totalLines`.
       let total = await probeTotal(primary.sessionId);
       if (options.waitForIndex) {
         const deadline = Date.now() + INDEX_PROBE_TIMEOUT_MS;
         let previous = -1;
-        while (Date.now() < deadline && !(total > 0 && total === previous)) {
+        while (
+          probeGuard.isCurrent(probeToken) &&
+          Date.now() < deadline &&
+          !(total > 0 && total === previous)
+        ) {
           previous = total;
           await new Promise((resolve) => setTimeout(resolve, INDEX_PROBE_MS));
           total = await probeTotal(primary.sessionId);
         }
       }
-      store.updateTotal(primary.sessionId, total, false);
+      // A newer open (or reopen) of this id owns the session now; writing this
+      // probe's total would reset its `isIndexing` to a stale value.
+      if (probeGuard.isCurrent(probeToken)) store.updateTotal(primary.sessionId, total, false);
 
       return primary.sessionId;
     } catch (e) {
       setError(String(e));
       throw e;
     } finally {
-      setBusy(false);
+      openDepth -= 1;
+      if (openDepth === 0) setBusy(false);
     }
   };
 
@@ -207,6 +248,10 @@ export function createAppActions(deps: AppActionsDeps): AppActions {
     // `session-closed` for UI-initiated closes too, and that echo must not be
     // read as an agent closing the session.
     store.markPendingClose(sessionId);
+    // Supersede any probe still running against this id, so a `waitForIndex`
+    // loop started before the close cannot write a total back into the session
+    // a later reopen puts at the same id.
+    probeGuardFor(sessionId).bump();
     try {
       // The backend's `close_session` already cancels a running stream task as
       // part of tearing down session state, so skipping this would not leak
@@ -222,10 +267,18 @@ export function createAppActions(deps: AppActionsDeps): AppActions {
       // No echo will come for a failed close: release the claim so a later
       // foreign `session-closed` for this id is not swallowed.
       store.releasePendingClose(sessionId);
+      // The tab still goes away in `finally` (the data source is disposed and
+      // the view cache released, so keeping it would render nothing), but the
+      // *backend* session is still open — holding its mmap and file lock, and
+      // still listed by `GET /mcp/sessions`. That divergence used to be
+      // completely silent: the one caller, `App.tsx`'s `closeTab`, swallows
+      // the rejection (review A-M11). Say so on the same error line every
+      // other failure uses; the user can reopen and retry.
+      setError(`Failed to close session: ${String(e)}`);
       throw e;
     } finally {
       store.remove(sessionId);
-      resetView(sessionId);
+      resetSessionView(controller, sessionId);
     }
   };
 

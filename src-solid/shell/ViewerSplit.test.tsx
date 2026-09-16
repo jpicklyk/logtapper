@@ -175,3 +175,68 @@ describe('ViewerSplit — tier gating (S1: split is wide/ultra-wide only)', () =
     expect(screen.getByTestId('secondary-content')).toBeTruthy();
   });
 });
+
+// ── The divider drag is cancel-safe (review B-L7) ─────────────────────────
+
+describe('ViewerSplit — divider drag lifecycle', () => {
+  function mountWithWidth(split: SplitView) {
+    const result = mount(split);
+    Object.defineProperty(result.container.querySelector('[data-split]')!, 'clientWidth', {
+      configurable: true,
+      value: 1000,
+    });
+    return result;
+  }
+
+  it('stops listening when the component unmounts mid-drag', () => {
+    const split = createSplitView();
+    split.split('s1');
+    const setRatio = vi.spyOn(split, 'setRatio');
+    mountWithWidth(split);
+
+    screen.getByRole('separator').dispatchEvent(pointer('pointerdown', 500));
+    window.dispatchEvent(pointer('pointermove', 600));
+    expect(setRatio).toHaveBeenCalledWith(0.6);
+
+    // No pointerup: the split is closed (or the workspace switched) while the
+    // button is still down. The three `window` listeners used to outlive the
+    // component until the next pointer release, writing into a disposed store.
+    cleanup();
+    setRatio.mockClear();
+    window.dispatchEvent(pointer('pointermove', 900));
+
+    expect(setRatio).not.toHaveBeenCalled();
+  });
+
+  it('a second pointerdown replaces the first drag instead of stacking onto it', () => {
+    const split = createSplitView();
+    split.split('s1');
+    mountWithWidth(split);
+    const handle = screen.getByRole('separator');
+
+    handle.dispatchEvent(pointer('pointerdown', 500));
+    handle.dispatchEvent(pointer('pointerdown', 200));
+
+    const setRatio = vi.spyOn(split, 'setRatio');
+    window.dispatchEvent(pointer('pointermove', 300));
+
+    // One drag in effect, anchored at the second pointerdown — not two moves
+    // from two anchors fighting over the same signal.
+    expect(setRatio).toHaveBeenCalledTimes(1);
+    expect(setRatio).toHaveBeenCalledWith(0.6);
+    window.dispatchEvent(pointer('pointerup', 300));
+  });
+
+  it('releases its listeners on pointercancel', () => {
+    const split = createSplitView();
+    split.split('s1');
+    mountWithWidth(split);
+
+    screen.getByRole('separator').dispatchEvent(pointer('pointerdown', 500));
+    window.dispatchEvent(pointer('pointercancel', 500));
+
+    const setRatio = vi.spyOn(split, 'setRatio');
+    window.dispatchEvent(pointer('pointermove', 900));
+    expect(setRatio).not.toHaveBeenCalled();
+  });
+});

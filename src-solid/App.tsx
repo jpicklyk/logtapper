@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { Show, createEffect, createMemo, createSignal, on, onCleanup } from 'solid-js';
+import { Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from 'solid-js';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { onCatalogUpdate } from '@bridge/events';
 import {
@@ -142,10 +142,11 @@ export function App(props: AppProps) {
   // (shell/) is the split's chrome; wiring below is only which session/pane
   // goes where.
   const splitView = createSplitView();
-  // A second, lightweight `createTier()` subscription (same pattern as
-  // `AppShell`'s own) — only to gate the "Split view" control below; wiring
-  // tier out of `AppShell` for one boolean would be a bigger change than the
-  // decision it drives (see this task's implementation-notes).
+  // The app's ONE tier subscription (review B-L6). `createTier()` registers
+  // three `matchMedia` listeners and mirrors the result onto
+  // `<html data-tier>`; `AppShell` and `ViewerSplit` used to create their own
+  // as well, so three ran and two wrote the same attribute. Both now take it
+  // as a prop. It is read here directly to gate the "Split view" control.
   const tier = createTier();
 
   // A session closing — from this UI or a foreign (agent) close, neither of
@@ -223,7 +224,6 @@ export function App(props: AppProps) {
     },
   });
   onCleanup(() => workspace.dispose());
-  void workspace.hydrate().then(() => workspace.startupRestore());
 
   // Editor tabs (W9) — scratch/file documents opened alongside sessions, with
   // dirty tracking and Save/Save As. Restore is pull-based: this store reads
@@ -406,7 +406,21 @@ export function App(props: AppProps) {
     return entry ? renderedLineCountFor(entry) : 0;
   };
 
-  if (isBenchMode()) installBenchApp({ actions, stream: liveStream });
+  // Both of these are side effects, so they belong in `onMount`, not in the
+  // render body (project rule; review A-M8). `hydrate()` only catches its
+  // first `getAppState` — every later await, and all of `startupRestore`
+  // (`consumeStartupFile`, `applyRestore`), could reject into nothing, so a
+  // workspace that fails to restore used to surface as an unhandled rejection
+  // the user never saw. It goes on the same error line every other failure
+  // uses; `workspace.warnings()` still carries the per-file detail.
+  onMount(() => {
+    void workspace
+      .hydrate()
+      .then(() => workspace.startupRestore())
+      .catch((e: unknown) => actions.reportError(`Workspace restore failed: ${String(e)}`));
+
+    if (isBenchMode()) installBenchApp({ actions, stream: liveStream });
+  });
 
   const newDocument = (): void => {
     editorStore.newDoc();
@@ -517,6 +531,7 @@ export function App(props: AppProps) {
       <AppShell
         workspaceId={workspace.activeId() ?? WORKSPACE_ID}
         sessionKind={store.focused()?.kind ?? null}
+        tier={tier}
         // Land on workspace home when the app opens with nothing loaded, so A1's
         // attach-a-device and open-a-capture actions are the first thing seen
         // rather than sitting behind a rail glyph. Read once by the shell, so a
@@ -565,6 +580,7 @@ export function App(props: AppProps) {
           viewer: () => (
             <ViewerSplit
               split={splitView}
+              tier={tier}
               // The same session can never be picked for both panes — cursor,
               // query and view-mode state are keyed by session id on the
               // controller, not by pane, so showing one session in two panes

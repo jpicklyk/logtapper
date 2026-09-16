@@ -18,7 +18,7 @@
  * (W0a's `ViewerController` owns those; the data source reads them through the
  * controller on every fetch, so a mode or filter change never rebuilds it).
  */
-import { batch, createEffect, createMemo, createRoot, createSignal, on } from 'solid-js';
+import { batch, createEffect, createMemo, createRoot, createSignal, on, untrack } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import { createStore, produce } from 'solid-js/store';
 import type { UnlistenFn } from '@tauri-apps/api/event';
@@ -120,6 +120,43 @@ export function viewIdFor(sessionId: string): string {
   return `solid-session:${sessionId}`;
 }
 
+/** The line-set keys {@link resetSessionView} clears. `matched` is W4a's
+ *  analyzer "show matched lines" set; the other three are section scope,
+ *  the filter result and the search result. */
+const VIEW_LINE_SET_KEYS = ['section', 'filter', 'search', 'matched'] as const;
+
+/**
+ * Forget a session's rendered index space and highlight overrides.
+ *
+ * Backend session ids are deterministic per path, so closing a file and
+ * reopening it lands on the *same* id — and would otherwise inherit whatever
+ * filter, section scope, search set or highlight map the previous open left on
+ * the controller, including `buildSource`'s `…:filtered` sourceId.
+ *
+ * Lives here, and is called from {@link SessionStore.add}, because the open
+ * edge has two entrances: `app/actions.ts`'s `openPath` and the bridge's
+ * `session-opened` event (an agent's `POST /mcp/open_file`). Only the first
+ * used to reset, so an agent open → filter → agent close → agent reopen came
+ * back already filtered to the previous open's match set (review A-M2).
+ * `actions.ts` still calls it on the close edge.
+ *
+ * Writes only what is actually set. `setLineSet`/`setHighlights` each `bump()`
+ * the session's revision, and a bump is what throws away the viewport cache
+ * the viewer has warmed (the defect D2-H1 fixed in `sectionsStore`) — so
+ * clearing four already-null line sets on every open would reintroduce that
+ * cost for no reason. Reads are untracked: a caller inside a reactive scope
+ * must not end up subscribed to the session's line sets.
+ */
+export function resetSessionView(controller: ViewerController, sessionId: string): void {
+  untrack(() => {
+    // `lineNumbers` is `undefined` exactly when every line set is null.
+    if (controller.lineNumbers(sessionId) !== undefined) {
+      for (const key of VIEW_LINE_SET_KEYS) controller.setLineSet(sessionId, key, null);
+    }
+    if (controller.highlights(sessionId) !== null) controller.setHighlights(sessionId, null);
+  });
+}
+
 function kindOf(load: LoadResult): SessionEntryKind {
   return load.isStreaming ? 'live' : 'file';
 }
@@ -184,6 +221,11 @@ export function createSessionStore(deps: SessionStoreDeps): SessionStore {
       const existing = entries[load.sessionId];
       if (existing) return existing;
 
+      // Open edge, for BOTH entrances (UI and bridge) — see `resetSessionView`.
+      // Before `buildSource`, so the first fetch cannot capture a stale
+      // `sourceId` from the previous open of this same deterministic id.
+      resetSessionView(controller, load.sessionId);
+
       const entry: SessionEntry = {
         load,
         totalLines: load.totalLines,
@@ -209,6 +251,12 @@ export function createSessionStore(deps: SessionStoreDeps): SessionStore {
 
       entry.dataSource.dispose();
       cacheManager.releaseView(viewIdFor(sessionId));
+      // The controller keeps a `SessionState` per session — the three/four
+      // line-set `number[]`s (one entry per matched line on a large file) and
+      // the highlight `Map` — plus a `sessionScrollPositions` entry. Nothing
+      // used to delete either, so an agent's open/close loop over many logs
+      // retained all of it for the app's lifetime (review A-M1).
+      controller.forgetSession(sessionId);
 
       const previousOrder = order();
       const index = previousOrder.indexOf(sessionId);
@@ -278,6 +326,28 @@ export function createSessionStore(deps: SessionStoreDeps): SessionStore {
       ),
     );
 
+    // Cache budget mirror. `CacheManager.allocateView` hands out `'focused'`
+    // only while it has no focused view — i.e. to the *first* session ever
+    // opened — and every later one gets `'visible'`, so without this the first
+    // file keeps 60% of the budget for the app's lifetime while the session
+    // the user is actually reading thrashes its LRU (review A-M3). React pairs
+    // every viewer with `useCacheFocus(viewId)`; this is that pairing, once,
+    // at the store instead of per component.
+    //
+    // `setFocus` is single-valued, so the *primary* pane (this signal) is what
+    // it follows. S1's secondary pane deliberately keeps its `'visible'`
+    // allocation: it is the reference pane, it is usually scrolled to one
+    // place, and letting it win the budget by being mounted later would
+    // invert exactly the priority this fixes. `ViewerSplit`'s picker moving a
+    // session into the primary pane (tab focus) is what promotes it.
+    // Not deferred: the first `add()` sets focus synchronously, and that view
+    // must be the focused one from its first fetch.
+    createEffect(
+      on(focusedId, (id) => {
+        if (id !== null && entries[id]) cacheManager.setFocus(viewIdFor(id));
+      }),
+    );
+
     const dispose = (): void => {
       if (disposed) return;
       disposed = true;
@@ -286,6 +356,7 @@ export function createSessionStore(deps: SessionStoreDeps): SessionStore {
       for (const id of order()) {
         entries[id]?.dataSource.dispose();
         cacheManager.releaseView(viewIdFor(id));
+        controller.forgetSession(id);
       }
       pendingClose.clear();
       batch(() => {

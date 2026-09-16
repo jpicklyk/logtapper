@@ -47,7 +47,24 @@
   border-color: var(--border);
 }
 
-.tab:focus-visible {
+/* The `role="tab"` itself (review B-L9): a bare button that fills the wrapper,
+   so every visual — padding, border, active background — stays on `.tab`. */
+.tabButton {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tabButton:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }

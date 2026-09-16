@@ -298,3 +298,95 @@ describe('focus', () => {
     expect(store.focusedId()).toBe('b');
   });
 });
+
+// ── Concurrency: two opens at once, and a probe that outlives its session ──
+
+describe('openPath — concurrent calls (review A-M10)', () => {
+  it('stays busy until the last open settles', async () => {
+    const gates: Array<(value: LoadResult[]) => void> = [];
+    commands.loadLogFile.mockImplementation(
+      () => new Promise<LoadResult[]>((resolve) => gates.push(resolve)),
+    );
+    commands.getLines.mockResolvedValue(page(10));
+
+    const first = actions.openPath('C:/logs/a.log');
+    const second = actions.openPath('C:/logs/b.log');
+    expect(actions.busy()).toBe(true);
+
+    gates[0]([load('a')]);
+    await first;
+    // The first open's `finally` used to clear the flag outright, so the Open
+    // button re-enabled while a restore was still opening files.
+    expect(actions.busy()).toBe(true);
+
+    gates[1]([load('b')]);
+    await second;
+    expect(actions.busy()).toBe(false);
+  });
+
+  it('a later open does not erase a failure the earlier one already reported', async () => {
+    const gates: Array<{
+      resolve: (value: LoadResult[]) => void;
+      reject: (reason: Error) => void;
+    }> = [];
+    commands.loadLogFile.mockImplementation(
+      () => new Promise<LoadResult[]>((resolve, reject) => gates.push({ resolve, reject })),
+    );
+    commands.getLines.mockResolvedValue(page(10));
+
+    const first = actions.openPath('C:/logs/a.log');
+    const second = actions.openPath('C:/logs/b.log');
+
+    gates[0].reject(new Error('unreadable'));
+    await expect(first).rejects.toThrow('unreadable');
+    expect(actions.error()).toContain('unreadable');
+
+    gates[1].resolve([load('b')]);
+    await second;
+    // `setError('')` at the top of the second open would have wiped this
+    // before the user ever saw it.
+    expect(actions.error()).toContain('unreadable');
+  });
+
+  it('a probe left over from a previous open does not overwrite the reopened session', async () => {
+    vi.useFakeTimers();
+    commands.loadLogFile.mockResolvedValue([load('same')]);
+    // The first (waitForIndex) open never stabilises: 10, 20, 30, …
+    let total = 0;
+    commands.getLines.mockImplementation(() => {
+      total += 10;
+      return Promise.resolve(page(total));
+    });
+
+    const stale = actions.openPath('C:/logs/same.log', { waitForIndex: true });
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    // Close and reopen the same deterministic id while that loop is running.
+    await actions.close('same');
+    commands.getLines.mockResolvedValue(page(999));
+    await actions.openPath('C:/logs/same.log');
+    expect(store.byId('same')?.totalLines).toBe(999);
+
+    // Let the superseded loop notice it is no longer current and finish.
+    await vi.advanceTimersByTimeAsync(5_000);
+    await stale;
+
+    expect(store.byId('same')?.totalLines).toBe(999);
+    expect(store.byId('same')?.isIndexing).toBe(false);
+  });
+});
+
+describe('close — a backend refusal is visible (review A-M11)', () => {
+  it('reports the failure on the error line while still dropping the tab', async () => {
+    commands.loadLogFile.mockResolvedValue([load('only')]);
+    await actions.openPath('C:/logs/a.log');
+    commands.closeSession.mockRejectedValue(new Error('session is busy'));
+
+    await expect(actions.close('only')).rejects.toThrow('session is busy');
+
+    // The backend session is still open (mmap, file lock, `GET /mcp/sessions`)
+    // but the tab is gone — that divergence used to be entirely silent.
+    expect(actions.error()).toContain('session is busy');
+    expect(store.order()).toEqual([]);
+  });
+});

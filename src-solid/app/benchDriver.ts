@@ -60,9 +60,14 @@ export function installBenchApp(deps: BenchDriverDeps): BenchApp {
     stopStream: () => stream.stop(),
   };
 
-  (window as unknown as { __benchApp?: BenchApp }).__benchApp = benchApp;
+  const global = window as unknown as { __benchApp?: BenchApp };
+  global.__benchApp = benchApp;
   onCleanup(() => {
-    delete (window as unknown as { __benchApp?: BenchApp }).__benchApp;
+    // Only clear the global if it is still *ours*. An unconditional delete
+    // would clobber a newer install's object whenever two overlap — a
+    // StrictMode-style double mount, or a bench run that re-mounts `App`
+    // before the previous owner's root has torn down (review A-L8).
+    if (global.__benchApp === benchApp) delete global.__benchApp;
   });
 
   return benchApp;

@@ -1,20 +1,25 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LogTapper (Solid)</title>
+    <!-- Synchronous theme bootstrap — prevents FOUC on cold start, so it runs
+         in <head>, before the body exists and before anything paints. It is
+         also what sets `data-theme` on <html>: the attribute used to be
+         hardcoded to "dark" here, which only guaranteed that a light-theme
+         user's first painted frame was the wrong one (review A-L4).
+         Externalized (rather than inline) so it is covered by
+         `script-src 'self'` with no CSP exception; see
+         src-solid/public/theme-bootstrap.js and src-tauri/src/CLAUDE.md's CSP
+         section. Reads the same 'logtapper-theme' key as
+         src-solid/theme/applyTheme.ts's createThemeController (and
+         src-next/context/ThemeContext.tsx's STORAGE_KEY), so both UIs resolve
+         to the same theme. -->
+    <script src="/theme-bootstrap.js"></script>
   </head>
   <body>
     <div id="root"></div>
-    <!-- Synchronous theme bootstrap — prevents FOUC on cold start. Externalized
-         (rather than inline) so it is covered by `script-src 'self'` with no
-         CSP exception; see src-solid/public/theme-bootstrap.js and
-         src-tauri/src/CLAUDE.md's CSP section. Reads the same
-         'logtapper-theme' key as src-solid/theme/applyTheme.ts's
-         createThemeController (and src-next/context/ThemeContext.tsx's
-         STORAGE_KEY), so both UIs resolve to the same theme. -->
-    <script src="/theme-bootstrap.js"></script>
     <script type="module" src="/main.tsx"></script>
   </body>
 </html>

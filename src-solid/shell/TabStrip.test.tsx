@@ -44,14 +44,57 @@ describe('TabStrip', () => {
     mount();
     const rendered = screen.getAllByRole('tab');
 
-    expect(rendered.map((el) => el.textContent)).toEqual([
-      'alpha.log×',
-      'bravo.log×',
-      'notes.md●×',
-    ]);
+    expect(rendered.map((el) => el.textContent)).toEqual(['alpha.log', 'bravo.log', 'notes.md●']);
     expect(rendered[0].getAttribute('aria-selected')).toBe('true');
     expect(rendered[1].getAttribute('aria-selected')).toBe('false');
     expect(rendered[2].getAttribute('data-kind')).toBe('editor');
+  });
+
+  // Review B-L9: a `role="tab"` may not contain another interactive element,
+  // and only the active tab may be in the Tab order.
+  it('keeps the close button out of the tab and rovs the tab order', () => {
+    mount();
+    const tabs = screen.getAllByRole('tab');
+
+    for (const tab of tabs) expect(tab.querySelector('button')).toBeNull();
+    expect(tabs.map((el) => el.getAttribute('tabindex'))).toEqual(['0', '-1', '-1']);
+    // The tablist owns tabs only — the close buttons sit beside them in a
+    // presentational wrapper.
+    const strip = document.querySelector('[role="tablist"]') as HTMLElement;
+    expect(strip.querySelectorAll(':scope > [role="tab"]')).toHaveLength(0);
+    expect(strip.querySelectorAll('[role="presentation"] > [role="tab"]')).toHaveLength(3);
+  });
+
+  it('moves between tabs with the arrow keys, wrapping, and jumps with Home/End', () => {
+    const { onSelect } = mount();
+
+    fireEvent.keyDown(tabEl('a'), { key: 'ArrowRight' });
+    expect(onSelect).toHaveBeenLastCalledWith('b');
+    expect(document.activeElement).toBe(tabEl('b'));
+
+    fireEvent.keyDown(tabEl('a'), { key: 'ArrowLeft' });
+    expect(onSelect).toHaveBeenLastCalledWith('notes');
+
+    fireEvent.keyDown(tabEl('notes'), { key: 'Home' });
+    expect(onSelect).toHaveBeenLastCalledWith('a');
+
+    fireEvent.keyDown(tabEl('a'), { key: 'End' });
+    expect(onSelect).toHaveBeenLastCalledWith('notes');
+  });
+
+  it('closes the focused tab on Delete, and leaves a pinned one alone', () => {
+    const { onClose } = mount({
+      tabs: [
+        { key: 'a', label: 'alpha.log', kind: 'session', closable: true },
+        { key: 'pinned', label: 'pinned.log', kind: 'session', closable: false },
+      ],
+    });
+
+    fireEvent.keyDown(tabEl('pinned'), { key: 'Delete' });
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(tabEl('a'), { key: 'Delete' });
+    expect(onClose).toHaveBeenCalledWith('a');
   });
 
   it('selects on click', () => {
