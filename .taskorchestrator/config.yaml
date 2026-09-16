@@ -43,7 +43,7 @@ work_item_schemas:
         role: review
         required: true
         description: "Structured review — plan alignment, test quality, simplification."
-        guidance: "Run the review-quality framework. Verify all acceptance criteria from the requirements note are met in code. Check test substance against the test strategy — flag tautological assertions, mock-only tests, or missing edge cases. Run /simplify on changed files and document findings. Verdict: pass, fail (with blocking issues list), or pass-with-observations."
+        guidance: "Run the review-quality framework. Verify all acceptance criteria from the requirements note are met in code. Check test substance against the test strategy — flag tautological assertions, mock-only tests, or missing edge cases. Two negative examples to flag: (a) a test asserting a narrow helper does not call something it structurally cannot call; (b) a test that reimplements the unit-under-test's own logic against a mock instead of exercising the real component. Run /simplify on changed files and document findings. Verdict: pass, fail (with blocking issues list), or pass-with-observations."
 
   feature-task:
     lifecycle: auto
@@ -70,7 +70,7 @@ work_item_schemas:
         role: review
         required: true
         description: "Task-level quality gate — scope alignment and test coverage."
-        guidance: "Verify scope alignment, test coverage, no unintended side effects. No /simplify here — that happens at the parent feature level."
+        guidance: "Verify scope alignment, test coverage, no unintended side effects. Two negative examples to flag: (a) a test asserting a narrow helper does not call something it structurally cannot call; (b) a test that reimplements the unit-under-test's own logic against a mock instead of exercising the real component. No /simplify here — that happens at the parent feature level."
 
   bug-fix:
     lifecycle: auto
@@ -119,3 +119,42 @@ work_item_schemas:
         required: false
         description: "Optional high-level description of what this container organizes."
         guidance: "Brief description of the container's purpose and scope. Not required — containers exist to group work items, not to carry implementation detail."
+
+  # Matched by the `improvement-proposal` tag (project-scoped proposals live
+  # under this root). Declared so those items resolve here rather than to the
+  # `default` schema below, whose work-phase notes they never carry.
+  improvement-proposal:
+    lifecycle: auto
+    notes:
+      - key: proposal
+        role: queue
+        required: false
+        description: "The proposed change, its scope (global or project), and the trend that graduated it."
+
+      - key: adoption-decision
+        role: work
+        required: true
+        description: "accepted / rejected / deferred, with rationale and where the change was applied or tracked."
+
+      - key: outcome-verification
+        role: review
+        required: true
+        description: "Filled by a later retrospective: did the applied change demonstrably help?"
+
+  # Every item with no matching type or tag schema (tech-debt, reference,
+  # ad-hoc). No review phase; the two work notes are what a future session
+  # cannot derive from git.
+  default:
+    lifecycle: auto
+    notes:
+      - key: implementation-notes
+        role: work
+        required: true
+        description: "Decisions, deviations, surprises — what a future session cannot derive from git."
+        guidance: "Applies to every item without a matching type or tag schema. Keep it to what the next session needs: why, not what."
+
+      - key: session-tracking
+        role: work
+        required: true
+        description: "Session context for retrospective."
+        guidance: "Record outcome, files changed, deviations from plan, friction encountered, and test results. This feeds /session-retrospective."
