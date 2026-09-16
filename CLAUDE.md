@@ -88,7 +88,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 
 Tauri 2.x desktop app. All IPC goes through typed `invoke()` calls and Tauri events — the frontend has no direct filesystem or network access. See `design_docs/log-viewer-architecture.md` for the full design spec.
 
-`src-next/`, `src-tauri/src/`, and every module directory under them have their own `CLAUDE.md` covering architecture, public API, and gotchas. These load on demand when you work under that directory — **read the relevant one before changing code there.** Backend-wide Rust gotchas are in `src-tauri/src/CLAUDE.md`; frontend-wide React StrictMode rules are in `src-next/CLAUDE.md`.
+`src-solid/`, `src-tauri/src/`, and the module directories under `src-tauri/src/` have their own `CLAUDE.md` covering architecture, public API, and gotchas. These load on demand when you work under that directory — **read the relevant one before changing code there.** Backend-wide Rust gotchas are in `src-tauri/src/CLAUDE.md`; the Solid frontend's rules are in `src-solid/CLAUDE.md`; the legacy React tree's are in `src-next/CLAUDE.md` (read-only).
 
 ## Security model: data tiers and external exposure
 

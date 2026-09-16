@@ -608,6 +608,30 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       pushEnvelope();
     };
 
+    /**
+     * Install a fresh, unsaved workspace as the active one: list, active id,
+     * app-state, mirror, and the backend envelope. The one definition of what
+     * "a new workspace" means — `newWorkspace` (after its teardown) and the
+     * orphan-session adoption paths share it, so the sequence cannot drift.
+     *
+     * A fresh workspace loads no `.ltw`, so nothing else clears the layout
+     * blob the previous workspace was opened with — the first autosave would
+     * otherwise stamp that workspace's React pane tree and tab selections into
+     * this one's file. And it has no `.ltw`/auto-save path yet, so the backend
+     * envelope is pushed here: the first backend-owned mutation (an agent
+     * adding a bookmark before the user ever saves) then has something to
+     * flush.
+     */
+    const installFreshWorkspace = (): void => {
+      const fresh = createEmptyWorkspace();
+      setList((prev) => [...prev, fresh]);
+      setActiveId(fresh.id);
+      lastLayoutBlob = null;
+      persistAppState();
+      persistMirror();
+      pushEnvelope();
+    };
+
     const newWorkspace = async (): Promise<void> => {
       if (!(await flushForTransition())) return;
       // Same teardown-before-switch bracket as `switchWorkspace`: arm the
@@ -615,37 +639,16 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       // flight can't write the outgoing workspace's shell into the new one.
       await beginWorkspaceSwitch().catch(() => undefined);
       await closeAllSessions();
-      const fresh = createEmptyWorkspace();
-      setList((prev) => [...prev, fresh]);
-      setActiveId(fresh.id);
-      // A fresh workspace loads no `.ltw`, so nothing else clears the blob the
-      // previous workspace was opened with — and the first autosave here would
-      // otherwise stamp that workspace's React pane tree and tab selections
-      // into this one's file.
-      lastLayoutBlob = null;
-      persistAppState();
-      persistMirror();
-      // The fresh workspace is active now with no `.ltw`/auto-save path yet —
-      // cache its envelope so the first backend-owned mutation (e.g. an agent
-      // adding a bookmark before the user ever saves) has something to flush.
-      pushEnvelope();
+      installFreshWorkspace();
     };
 
     /**
      * Give sessions that have no workspace a fresh default one and make it
-     * active. The `newWorkspace` bookkeeping minus the teardown: nothing is
-     * closed, because the whole point is to keep what is open. Callers decide
-     * whether a session is actually orphaned; this only creates the home.
+     * active — `installFreshWorkspace` without any teardown, because the whole
+     * point is to keep what is open. Callers decide whether a session is
+     * actually orphaned; this only creates the home.
      */
-    const adoptOrphanSessions = (): void => {
-      const fresh = createEmptyWorkspace();
-      setList((prev) => [...prev, fresh]);
-      setActiveId(fresh.id);
-      lastLayoutBlob = null;
-      persistAppState();
-      persistMirror();
-      pushEnvelope();
-    };
+    const adoptOrphanSessions = installFreshWorkspace;
 
     const rename = async (id: string, name: string): Promise<void> => {
       const entry = await renameWorkspace({ workspaceId: id, newName: name });

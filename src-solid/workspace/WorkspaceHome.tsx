@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { For, Show, createMemo, createSignal } from 'solid-js';
+import { For, Show, children, createMemo, createSignal } from 'solid-js';
 import type { JSX } from 'solid-js';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import type { WorkspaceIdentity } from '@bridge/workspaceTypes';
@@ -92,6 +92,11 @@ export interface WorkspaceHomeProps {
  * live.
  */
 export function WorkspaceHome(props: WorkspaceHomeProps): JSX.Element {
+  // A JSX-element prop compiles to a bare getter; reading it in `<Show when>`
+  // and again as the child built the slot component twice per mount (feature
+  // review). `children()` resolves it once and memoizes.
+  const bookmarksSlot = children(() => props.bookmarks);
+  const analysesSlot = children(() => props.analyses);
   const [view, setView] = createSignal<ViewMode>(readViewPref());
   const [renamingId, setRenamingId] = createSignal<string | null>(null);
   const [renameValue, setRenameValue] = createSignal('');
@@ -430,16 +435,16 @@ export function WorkspaceHome(props: WorkspaceHomeProps): JSX.Element {
         </Show>
       </section>
 
-      <Show when={props.bookmarks}>
+      <Show when={bookmarksSlot()}>
         <section class={styles.section} data-testid="workspace-bookmarks">
-          {props.bookmarks}
+          {bookmarksSlot()}
         </section>
       </Show>
 
-      <Show when={props.analyses}>
+      <Show when={analysesSlot()}>
         <section class={styles.section} data-testid="workspace-analyses">
           <h3 class={styles.sectionLabel}>Analyses</h3>
-          {props.analyses}
+          {analysesSlot()}
         </section>
       </Show>
     </div>
