@@ -4,6 +4,7 @@ import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog';
 import { BASE_THEMES } from '../theme';
 import type { Density, ThemeController, ThemeMode } from '../theme';
 import type { SettingsStore } from './settingsStore';
+import { McpAgentSetup } from './McpAgentSetup';
 import styles from './settings.module.css';
 const THEME_MODES: readonly ThemeMode[] = ['system', ...BASE_THEMES];
 const DENSITIES: readonly Density[] = ['comfortable', 'compact'];
@@ -62,6 +63,7 @@ export function GeneralTab(props: GeneralTabProps) {
       </Show>
       <div class={styles.section}>
         <div class={styles.sectionTitle}>MCP Integration</div>
+        <McpAgentSetup store={props.store} />
         <div class={styles.row}>
           <div class={styles.label}>
             <span>HTTP Bridge</span>

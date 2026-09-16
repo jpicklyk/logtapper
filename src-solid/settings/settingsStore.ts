@@ -5,14 +5,15 @@ import { createRoot, createSignal, untrack } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import * as cmds from '@bridge/commands';
 import type {
-  AnonymizerConfig, AnonymizerTestResult, FileAssocEntry, McpOpenAllowlist, McpStatus, Source, ThemeSummary, UserTheme,
+  AnonymizerConfig, AnonymizerTestResult, FileAssocEntry, McpBundleInfo, McpOpenAllowlist, McpStatus, Source, ThemeSummary, UserTheme,
 } from '@bridge/types';
 import { validateUserTheme } from '../theme';
 export type SettingsCommands = Pick<typeof cmds,
   | 'getAnonymizerConfig' | 'setAnonymizerConfig' | 'testAnonymizer' | 'getPiiMappings' | 'getFileAssociationStatus'
   | 'setFileAssociation' | 'openDefaultAppsSettings' | 'getMcpOpenAllowlist' | 'setMcpOpenAllowlist' | 'setAgentRawAccess'
   | 'startMcpBridge' | 'stopMcpBridge' | 'listThemes' | 'readTheme' | 'writeTheme' | 'deleteTheme' | 'readTextFile'
-  | 'writeTextFile' | 'listSources' | 'addSource' | 'removeSource'>;
+  | 'writeTextFile' | 'listSources' | 'addSource' | 'removeSource'
+  | 'getMcpSidecarPath' | 'getMcpBundlePath' | 'openMcpBundle' | 'saveMcpBundle'>;
 export interface SettingsStoreDeps {
   /** A2's bridge-status accessor (`presenceStore.status`) — read-only here. */
   mcpStatus: Accessor<McpStatus | null>;
@@ -65,6 +66,17 @@ export interface SettingsStore {
   importThemeFromFile(path: string, slug: string): Promise<UserTheme>;
   exportThemeToFile(path: string, theme: UserTheme): Promise<void>;
   sources: Accessor<Source[]>; refreshSources(): void; addSource(source: Source): Promise<void>; removeSource(name: string): Promise<void>;
+  /** MCP agent setup (C1): sidecar path (`null` in a source checkout) and bundle info
+   *  (`null` when the build ships no `.mcpb`), resolved together with `Promise.allSettled`
+   *  so one command rejecting does not blank the other's answer. `mcpAgentResolved` gates
+   *  the whole block's first paint — same "render nothing until settled" contract as the
+   *  React component it ports. */
+  mcpSidecarPath: Accessor<string | null>; mcpBundleInfo: Accessor<McpBundleInfo | null>;
+  mcpAgentResolved: Accessor<boolean>; refreshMcpAgentSetup(): void;
+  /** Both route their rejection through `error()` via `mutate` — the caller (a UI
+   *  action handler) only needs a success continuation; the failure is already
+   *  rendered by `SettingsPanel`'s error banner. */
+  installMcpBundle(): Promise<void>; saveMcpBundle(dest: string): Promise<void>;
   /** Verbatim message from the last rejected command; `null` once dismissed or
    *  once a fresh mutation starts. `SettingsPanel` renders it. */
   error: Accessor<string | null>; clearError(): void; dispose(): void;
@@ -91,6 +103,9 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
     const [piiMappings, setPiiMappings] = createSignal<Record<string, string>>({});
     const [themes, setThemes] = createSignal<ThemeSummary[]>([]);
     const [sources, setSources] = createSignal<Source[]>([]);
+    const [mcpSidecarPath, setMcpSidecarPath] = createSignal<string | null>(null);
+    const [mcpBundleInfo, setMcpBundleInfo] = createSignal<McpBundleInfo | null>(null);
+    const [mcpAgentResolved, setMcpAgentResolved] = createSignal(false);
     const [error, setError] = createSignal<string | null>(null);
     const [mcpBridgeEnabled, setMcpBridgeEnabledSignal] = createSignal(readSharedSettings(storage).mcpBridgeEnabled === true);
     let disposed = false;
@@ -191,6 +206,22 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
     const refreshSources = (): void => load(c.listSources, setSources, []);
     const addSourceFn = (source: Source): Promise<void> => mutate(c.addSource(source)).then(() => refreshSources());
     const removeSourceFn = (name: string): Promise<void> => mutate(c.removeSource(name)).then(() => refreshSources());
+    // MCP agent setup (C1)
+    /** Fires both reads together and marks the block resolved regardless of either
+     *  outcome — a rejected `getMcpSidecarPath` (or vice versa) must not block the
+     *  other from ever painting. Neither read goes through `load()`/`fail()`: a
+     *  missing sidecar or bundle in a source checkout is the normal, silent case
+     *  (rendered as the "no bundled server" hint), not an error worth the banner. */
+    const refreshMcpAgentSetup = (): void => {
+      Promise.allSettled([c.getMcpSidecarPath(), c.getMcpBundlePath()]).then(([sidecar, bundle]) => {
+        if (disposed) return;
+        if (sidecar.status === 'fulfilled') setMcpSidecarPath(sidecar.value);
+        if (bundle.status === 'fulfilled') setMcpBundleInfo(bundle.value);
+        setMcpAgentResolved(true);
+      });
+    };
+    const installMcpBundle = (): Promise<void> => mutate(c.openMcpBundle());
+    const saveMcpBundleFn = (dest: string): Promise<void> => mutate(c.saveMcpBundle(dest));
     const dispose = (): void => { disposed = true; disposeRoot(); };
     return {
       mcpStatus, mcpBridgePending, setMcpBridgeEnabled, mcpBridgeEnabled, agentRawAccessPending, setAgentRawAccess,
@@ -201,6 +232,8 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
       themes, refreshThemes, readTheme: c.readTheme, saveTheme, deleteTheme: deleteThemeFn,
       importThemeFromFile, exportThemeToFile,
       sources, refreshSources, addSource: addSourceFn, removeSource: removeSourceFn,
+      mcpSidecarPath, mcpBundleInfo, mcpAgentResolved, refreshMcpAgentSetup,
+      installMcpBundle, saveMcpBundle: saveMcpBundleFn,
       error, clearError, dispose,
     };
   });

@@ -212,3 +212,67 @@ describe('settingsStore bridge preference (D1-M5)', () => {
     store.dispose();
   });
 });
+
+describe('settingsStore MCP agent setup (C1)', () => {
+  it('resolves both reads together when both succeed', async () => {
+    const getMcpSidecarPath = vi.fn(() => Promise.resolve('/opt/logtapper-mcp'));
+    const getMcpBundlePath = vi.fn(() => Promise.resolve({ path: '/opt/logtapper.mcpb', installable: true }));
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { getMcpSidecarPath, getMcpBundlePath }, storage: memoryStorage() });
+    store.refreshMcpAgentSetup();
+    await vi.waitFor(() => expect(store.mcpAgentResolved()).toBe(true));
+    expect(store.mcpSidecarPath()).toBe('/opt/logtapper-mcp');
+    expect(store.mcpBundleInfo()).toEqual({ path: '/opt/logtapper.mcpb', installable: true });
+    expect(store.error()).toBeNull();
+    store.dispose();
+  });
+
+  it('a rejected bundle read still resolves the sidecar leg and marks the block resolved (Promise.allSettled)', async () => {
+    const getMcpSidecarPath = vi.fn(() => Promise.resolve('/opt/logtapper-mcp'));
+    const getMcpBundlePath = vi.fn(() => Promise.reject(new Error('no bundle in this build')));
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { getMcpSidecarPath, getMcpBundlePath }, storage: memoryStorage() });
+    store.refreshMcpAgentSetup();
+    await vi.waitFor(() => expect(store.mcpAgentResolved()).toBe(true));
+    expect(store.mcpSidecarPath()).toBe('/opt/logtapper-mcp');
+    expect(store.mcpBundleInfo()).toBeNull();
+    // Neither leg's rejection is a user-facing error: a source checkout with no
+    // bundled resources is the expected case, rendered as a hint, not a banner.
+    expect(store.error()).toBeNull();
+    store.dispose();
+  });
+
+  it('a rejected sidecar read still resolves the bundle leg and marks the block resolved', async () => {
+    const getMcpSidecarPath = vi.fn(() => Promise.reject(new Error('no sidecar in dev build')));
+    const getMcpBundlePath = vi.fn(() => Promise.resolve({ path: '/opt/logtapper.mcpb', installable: false }));
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { getMcpSidecarPath, getMcpBundlePath }, storage: memoryStorage() });
+    store.refreshMcpAgentSetup();
+    await vi.waitFor(() => expect(store.mcpAgentResolved()).toBe(true));
+    expect(store.mcpSidecarPath()).toBeNull();
+    expect(store.mcpBundleInfo()).toEqual({ path: '/opt/logtapper.mcpb', installable: false });
+    expect(store.error()).toBeNull();
+    store.dispose();
+  });
+
+  it('installMcpBundle rejection is recorded in the shared error channel', async () => {
+    const openMcpBundle = vi.fn(() => Promise.reject(new Error('no handler registered')));
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { openMcpBundle }, storage: memoryStorage() });
+    await expect(store.installMcpBundle()).rejects.toThrow('no handler registered');
+    expect(store.error()).toBe('Error: no handler registered');
+    store.dispose();
+  });
+
+  it('installMcpBundle success leaves the error channel untouched', async () => {
+    const openMcpBundle = vi.fn(() => Promise.resolve());
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { openMcpBundle }, storage: memoryStorage() });
+    await expect(store.installMcpBundle()).resolves.toBeUndefined();
+    expect(store.error()).toBeNull();
+    store.dispose();
+  });
+
+  it('saveMcpBundle rejection is recorded in the shared error channel', async () => {
+    const saveMcpBundle = vi.fn(() => Promise.reject(new Error('disk full')));
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { saveMcpBundle }, storage: memoryStorage() });
+    await expect(store.saveMcpBundle('/tmp/out.mcpb')).rejects.toThrow('disk full');
+    expect(store.error()).toBe('Error: disk full');
+    store.dispose();
+  });
+});

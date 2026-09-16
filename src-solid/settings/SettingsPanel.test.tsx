@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
 import type {
-  AnonymizerConfig, AnonymizerTestResult, FileAssocEntry, McpStatus, Source, ThemeSummary, UserTheme,
+  AnonymizerConfig, AnonymizerTestResult, FileAssocEntry, McpBundleInfo, McpStatus, Source, ThemeSummary, UserTheme,
 } from '@bridge/types';
 import type { AppliedUserTheme, Density, ThemeController, ThemeMode } from '../theme';
 import { SettingsPanel } from './SettingsPanel';
@@ -33,6 +33,9 @@ function fakeStore(): SettingsStore {
     importThemeFromFile: vi.fn(() => Promise.resolve({ name: '', base: 'dark', tokens: {} } as UserTheme)),
     exportThemeToFile: vi.fn(noop),
     sources: () => [] as Source[], refreshSources: vi.fn(), addSource: vi.fn(noop), removeSource: vi.fn(noop),
+    mcpSidecarPath: () => null as string | null, mcpBundleInfo: () => null as McpBundleInfo | null,
+    mcpAgentResolved: () => true, refreshMcpAgentSetup: vi.fn(),
+    installMcpBundle: vi.fn(noop), saveMcpBundle: vi.fn(noop),
     error: () => null, clearError: vi.fn(), dispose: vi.fn(),
   } as unknown as SettingsStore;
 }
