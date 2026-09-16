@@ -25,6 +25,7 @@ const loadWorkspaceV4Mock = vi.fn<(p: string) => Promise<LoadWorkspaceV4Result>>
 const saveWorkspaceV4Mock = vi.fn<(o: Record<string, unknown>) => Promise<void>>();
 const autoSaveWorkspaceMock = vi.fn<(o: Record<string, unknown>) => Promise<string>>();
 const beginSwitchMock = vi.fn<() => Promise<void>>();
+const syncWorkspaceEnvelopeMock = vi.fn<(o: Record<string, unknown>) => Promise<void>>();
 const renameMock = vi.fn<(r: unknown) => Promise<WorkspaceEntry>>();
 const deleteMock = vi.fn<(r: unknown) => Promise<void>>();
 const restoreSessionMock = vi.fn<(o: unknown) => Promise<void>>();
@@ -37,6 +38,7 @@ vi.mock('@bridge/commands', () => ({
   saveWorkspaceV4: (o: Record<string, unknown>) => saveWorkspaceV4Mock(o),
   autoSaveWorkspace: (o: Record<string, unknown>) => autoSaveWorkspaceMock(o),
   beginWorkspaceSwitch: () => beginSwitchMock(),
+  syncWorkspaceEnvelope: (o: Record<string, unknown>) => syncWorkspaceEnvelopeMock(o),
   renameWorkspace: (r: unknown) => renameMock(r),
   deleteWorkspace: (r: unknown) => deleteMock(r),
   restoreWorkspaceSession: (o: unknown) => restoreSessionMock(o),
@@ -175,6 +177,7 @@ beforeEach(() => {
   saveWorkspaceV4Mock.mockResolvedValue();
   autoSaveWorkspaceMock.mockResolvedValue('C:/appdata/workspaces/ws-1.ltw');
   beginSwitchMock.mockResolvedValue();
+  syncWorkspaceEnvelopeMock.mockResolvedValue(undefined);
   restoreSessionMock.mockResolvedValue();
   startupFileMock.mockResolvedValue(null);
   loadWorkspaceV4Mock.mockResolvedValue(ltw());
@@ -859,6 +862,129 @@ describe('startupRestore', () => {
     await store.startupRestore();
     expect(fakes.opened).toEqual([]);
     expect(loadWorkspaceV4Mock).not.toHaveBeenCalled();
+  });
+});
+
+// ── backend envelope cache ───────────────────────────────────────────────────
+//
+// Repro for the "chain/bookmark edits don't autosave until a first explicit
+// workspace save" bug: `autosave.rs::flush` skips until something calls
+// `cache_envelope`, and this store previously reached it only through
+// `saveWorkspace()` — which `autoSave()` only runs once the workspace is
+// dirty. A backend-owned mutation (an agent's chain commit or bookmark add)
+// never dirties the Solid store, so it had nothing to flush into until the
+// user explicitly saved once. `pushEnvelope()` closes that gap.
+
+describe('backend envelope cache (pushEnvelope)', () => {
+  it('caches the envelope after an explicit open, with the exact field set saveWorkspace would send', async () => {
+    loadWorkspaceV4Mock.mockResolvedValue(ltw({ workspaceId: 'ws-b', workspaceName: 'battery' }));
+    const tabs = [{ label: 'n', content: '', viewMode: 'editor' as const, wordWrap: false, filePath: null }];
+    const store = build(makeFakes(), {
+      getEditorTabs: () => tabs,
+      getPipelineChain: () => ({ chain: ['__pii_anonymizer'], disabledIds: ['x'] }),
+    });
+    await store.hydrate();
+
+    await store.openWorkspace('C:/ws/b.ltw');
+
+    expect(syncWorkspaceEnvelopeMock).toHaveBeenCalledTimes(1);
+    expect(syncWorkspaceEnvelopeMock).toHaveBeenCalledWith({
+      workspaceId: 'ws-b',
+      workspaceName: 'battery',
+      ltwPath: 'C:/ws/b.ltw',
+      editorTabs: tabs,
+      layout: {
+        solid: {
+          v: 1, columns: {}, collapsed: [], tabs: [], activeTab: null,
+          split: { active: false, secondarySessionId: null, ratio: 0.5 },
+        },
+      },
+      pipelineChain: ['__pii_anonymizer'],
+      disabledChainIds: ['x'],
+    });
+  });
+
+  it('caches the envelope for a fresh "new workspace", keyed on its own fresh id', async () => {
+    const store = build(makeFakes());
+    await store.hydrate();
+    syncWorkspaceEnvelopeMock.mockClear();
+
+    await store.newWorkspace();
+
+    expect(syncWorkspaceEnvelopeMock).toHaveBeenCalledTimes(1);
+    const options = syncWorkspaceEnvelopeMock.mock.calls[0]![0] as Record<string, unknown>;
+    expect(options.workspaceId).toBe(store.activeId());
+    expect(options.ltwPath).toBeNull();
+  });
+
+  it('caches the envelope after a trusted startup restore', async () => {
+    getAppStateMock.mockResolvedValue(appState([entry('a', { ltwPath: 'C:/a.ltw' })], 'a'));
+    loadWorkspaceV4Mock.mockResolvedValue(ltw({
+      sessions: [manifestSession('from-manifest.log')], sessionData: [emptySessionData()],
+    }));
+    const store = build(makeFakes());
+    await store.hydrate();
+
+    await store.startupRestore();
+
+    expect(syncWorkspaceEnvelopeMock).toHaveBeenCalledTimes(1);
+    expect((syncWorkspaceEnvelopeMock.mock.calls[0]![0] as Record<string, unknown>).workspaceId).toBe('a');
+  });
+
+  it('caches the envelope even at startup with no restore candidate at all', async () => {
+    getAppStateMock.mockResolvedValue(appState([entry('a')], 'a'));
+    const store = build(makeFakes());
+    await store.hydrate();
+
+    await store.startupRestore();
+
+    // No .ltw to read, but the workspace is active — a bookmark added before
+    // any explicit save must still have somewhere to flush into.
+    expect(syncWorkspaceEnvelopeMock).toHaveBeenCalledTimes(1);
+    expect((syncWorkspaceEnvelopeMock.mock.calls[0]![0] as Record<string, unknown>).workspaceId).toBe('a');
+  });
+
+  it('caches the envelope when switching into a workspace that has no .ltw yet', async () => {
+    getAppStateMock.mockResolvedValue(
+      appState([entry('a', { ltwPath: 'C:/a.ltw' }), entry('b')], 'a'),
+    );
+    const store = build(makeFakes());
+    await store.hydrate();
+
+    await store.switchWorkspace('b');
+
+    expect(syncWorkspaceEnvelopeMock).toHaveBeenCalledTimes(1);
+    const options = syncWorkspaceEnvelopeMock.mock.calls[0]![0] as Record<string, unknown>;
+    expect(options.workspaceId).toBe('b');
+    expect(options.ltwPath).toBeNull();
+  });
+
+  it('is not called until the switch has fully settled, not while sessions are torn down or replayed', async () => {
+    getAppStateMock.mockResolvedValue(
+      appState([entry('a', { ltwPath: 'C:/a.ltw' }), entry('b', { ltwPath: 'C:/b.ltw' })], 'a'),
+    );
+    loadWorkspaceV4Mock.mockResolvedValue(ltw({
+      sessions: [manifestSession('b1.log')], sessionData: [emptySessionData()],
+    }));
+    const order: string[] = [];
+    beginSwitchMock.mockImplementation(() => { order.push('begin-switch'); return Promise.resolve(); });
+    syncWorkspaceEnvelopeMock.mockImplementation(() => { order.push('push-envelope'); return Promise.resolve(undefined); });
+    const fakes = makeFakes();
+    const realClose = fakes.actions.close;
+    fakes.actions.close = (id) => { order.push('close'); return realClose(id); };
+    const realOpen = fakes.actions.openPath;
+    fakes.actions.openPath = (p) => { order.push(`open:${p}`); return realOpen(p); };
+    const store = build(fakes);
+    await store.hydrate();
+    await fakes.actions.openPath('a1.log');
+    order.length = 0; // drop the setup-time open above
+
+    await store.switchWorkspace('b');
+
+    // The push lands strictly after the outgoing session is closed and the
+    // incoming one replayed — never in the window the backend's own
+    // switch-suppression exists to protect.
+    expect(order).toEqual(['begin-switch', 'close', 'open:b1.log', 'push-envelope']);
   });
 });
 

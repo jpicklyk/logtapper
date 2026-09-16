@@ -35,6 +35,7 @@ import {
   renameWorkspace,
   saveAppState,
   saveWorkspaceV4,
+  syncWorkspaceEnvelope,
 } from '@bridge/commands';
 import {
   onWorkspaceAutoSaved,
@@ -338,6 +339,50 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       );
     };
 
+    /**
+     * Refresh the backend's cached `WorkspaceEnvelope` — a bare
+     * `sync_workspace_envelope` call, no file write. Backend-owned mutations
+     * (chain commits, bookmarks, analyses — `services::chain::commit` and
+     * friends) debounce-flush through that cache (`autosave.rs::flush`), which
+     * skips with "no workspace envelope cached yet" until something calls
+     * `cache_envelope`. This store previously only reached `cache_envelope`
+     * via an explicit `saveWorkspace()` — armed by `autoSave()`, which only
+     * fires once the workspace is `dirty` — so a workspace that was opened,
+     * restored, or switched into but never explicitly saved left the backend
+     * uncached: the first agent-driven chain/bookmark edit had nothing to
+     * flush and was lost on restart. React avoids this by pushing an envelope
+     * right after every open/restore/switch (`pushWorkspaceEnvelope` in
+     * `useWorkspace.ts` / `useStartupRestore.ts`); this mirrors that.
+     *
+     * Builds the same field set `saveWorkspace`'s `common` payload builds,
+     * including read-modify-writing `lastLayoutBlob` the same way, so a later
+     * real save merges from the same baseline this push reported rather than
+     * from a stale one.
+     *
+     * No-op with no active workspace, or while a restore/switch/teardown is
+     * in flight (`restoreDepth > 0`): the backend's switch-suppression window
+     * exists precisely to stop a flush from observing a mid-teardown session
+     * set, and a push here would only race that guard for no benefit — every
+     * call site below fires after its restore/teardown has already settled.
+     */
+    const pushEnvelope = (): void => {
+      if (restoreDepth > 0) return;
+      const ws = active();
+      if (!ws) return;
+      const chain = getChain();
+      const layout = writeSolidLayout(lastLayoutBlob, currentLayout());
+      lastLayoutBlob = layout;
+      void syncWorkspaceEnvelope({
+        workspaceId: ws.id,
+        workspaceName: ws.name,
+        ltwPath: ws.filePath,
+        editorTabs: getEditorTabs(),
+        layout,
+        pipelineChain: chain.chain,
+        disabledChainIds: chain.disabledIds,
+      }).catch((e: unknown) => console.warn('[workspaceStore] Failed to sync workspace envelope:', e));
+    };
+
     const markMutated = (): void => {
       if (restoreDepth > 0) return;
       const id = activeId();
@@ -457,6 +502,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       }
       setActiveId(id);
       await applyRestore(planExplicitOpen(result.sessions), result.sessionData, result.layout, result.editorTabs);
+      pushEnvelope();
       persistAppState();
     };
 
@@ -501,6 +547,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
         const blobSource = await loadBlobOnly(ws);
         if (disposed) return;
         await applyRestore({ ...plan, loads }, [], blobSource, []);
+        pushEnvelope();
         return;
       }
       const candidate = ws.filePath ?? ws.autoSavePath ?? null;
@@ -520,6 +567,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
         result?.layout ?? null,
         result?.editorTabs ?? [],
       );
+      pushEnvelope();
     };
 
     // ── switch / rename / delete ────────────────────────────────────────────
@@ -545,6 +593,10 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
         // layout keys into this one's `.ltw`.
         lastLayoutBlob = null;
         persistMirror();
+        // The target is active now (never saved before, so no `.ltw`/auto-save
+        // path) — cache its envelope so a backend-owned mutation has something
+        // to flush before this frontend ever calls `saveWorkspace` itself.
+        pushEnvelope();
         return;
       }
       // A failed load propagates: the target is already active (matching the
@@ -553,6 +605,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       const result = await loadWorkspaceV4(candidate);
       if (disposed) return;
       await applyRestore(planExplicitOpen(result.sessions), result.sessionData, result.layout, result.editorTabs);
+      pushEnvelope();
     };
 
     const newWorkspace = async (): Promise<void> => {
@@ -572,6 +625,10 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       lastLayoutBlob = null;
       persistAppState();
       persistMirror();
+      // The fresh workspace is active now with no `.ltw`/auto-save path yet —
+      // cache its envelope so the first backend-owned mutation (e.g. an agent
+      // adding a bookmark before the user ever saves) has something to flush.
+      pushEnvelope();
     };
 
     const rename = async (id: string, name: string): Promise<void> => {
