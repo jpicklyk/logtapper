@@ -126,7 +126,7 @@ pub fn workspace_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 ///
 /// - **The only generator this codebase has ever shipped**: `workspace_id`
 ///   comes from `crypto.randomUUID()` on the frontend
-///   (`src-next/bridge/workspaceTypes.ts::createEmptyWorkspace`) — a
+///   (`src-shared/bridge/workspaceTypes.ts::createEmptyWorkspace`) — a
 ///   lowercase, hyphenated UUID string, e.g.
 ///   `3fa85f64-5717-4562-b3fc-2c963f66afa6` (8-4-4-4-12 hex groups).
 /// - **A legacy bare-hex id observed in real user app-data directories**

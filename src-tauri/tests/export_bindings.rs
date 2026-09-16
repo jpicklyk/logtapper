@@ -8,7 +8,7 @@
 //!
 //! `ts-rs` writes one `.ts` file per exported type into the directory named by
 //! `TS_RS_EXPORT_DIR` (set in the repository-root `.cargo/config.toml` to
-//! `src-next/bridge/generated`). This test is the ONLY export trigger — no type
+//! `src-shared/bridge/generated`). This test is the ONLY export trigger — no type
 //! carries `#[ts(export)]`, so nothing is written by an unrelated `cargo test`.
 //!
 //! Each entry in [`ROOT_TYPES`] is a *root*: a type that crosses the IPC boundary
@@ -258,7 +258,7 @@ fn export_dir() -> PathBuf {
         // vendored build): resolve relative to the manifest.
         Err(_) => PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
-            .join("src-next/bridge/generated"),
+            .join("src-shared/bridge/generated"),
     }
 }
 

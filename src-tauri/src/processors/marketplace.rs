@@ -19,7 +19,7 @@ fn default_git_ref() -> String {
 ///
 /// 1. This struct previously had no `rename_all = "camelCase"`, unlike every
 ///    other IPC struct, so the wire was `auto_update` / `last_checked` while
-///    `src-next/bridge/types.ts::Source` was hand-written against
+///    `src-shared/bridge/types.ts::Source` was hand-written against
 ///    `autoUpdate` / `lastChecked`. `autoUpdate` silently dropped to `false`
 ///    on every `add_source` call (masked by `#[serde(default)]`) and
 ///    `lastChecked` never round-tripped back to the UI.
@@ -51,7 +51,7 @@ pub struct Source {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "lowercase")]
-// Renamed for the TS surface only: `src-next/bridge/types.ts` already exports a
+// Renamed for the TS surface only: `src-shared/bridge/types.ts` already exports a
 // `SourceType` — the *log* source union mirroring `core::session::SourceType`.
 // Two unrelated types cannot share a name in the generated barrel.
 #[ts(rename = "MarketplaceSourceType")]

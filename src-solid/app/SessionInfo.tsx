@@ -3,14 +3,13 @@ import { For, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-j
 import type { JSX } from 'solid-js';
 import type { DumpstateMetadata, SourceType } from '@bridge/types';
 import { isBugreportLike } from '@bridge/types';
-import { buildReopenOptions, REOPEN_SOURCE_TYPES } from '@fileinfo/reopenOptions';
-import type { ReopenOption } from '@fileinfo/reopenOptions';
-import { formatDuration, formatTimestamp } from '@fileinfo/formatters';
+import { buildReopenOptions, formatDuration, formatTimestamp, REOPEN_SOURCE_TYPES } from '@fileinfo';
+import type { ReopenOption } from '@fileinfo';
 import type { SessionEntry } from './sessions';
 import styles from './sessionInfo.module.css';
 
 /**
- * Mirrors `src-next/utils.ts`'s `formatFileSize` exactly (same thresholds,
+ * Mirrors the React `utils.ts`'s `formatFileSize` exactly (same thresholds,
  * same output). That file is React-only territory reached by no shared
  * alias, and adding a cross-boundary alias for one four-line pure function
  * would cost more (a new `@`-alias, an ESLint allow-list entry, an
@@ -52,7 +51,7 @@ export interface SessionInfoProps {
  * opens a popover with the full file identity, stats, and — for a
  * file-backed, non-streaming, non-`.lts` session — a "reopen as…" control.
  *
- * Mirrors `src-next/components/FileInfoPanel/{FileInfoPanel,FileInfoPane}.tsx`
+ * Mirrors the React `components/FileInfoPanel/{FileInfoPanel,FileInfoPane}.tsx`
  * (React's left-pane "File Info" tab): same fields, same reopen semantics
  * ("REPLACE, not close-then-open" — see `SessionInfoPopover`'s doc comment),
  * surfaced as a status-bar popover instead of a permanent pane, since this

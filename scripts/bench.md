@@ -1,12 +1,15 @@
 # Benchmark gate — run procedure (plan §C)
 
-> Historical note (2026-09-16): the Solid UI is now the shipped default (`npx tauri dev`,
-> `npm run build`, `npm test` all mean Solid). The React side of this comparison is reachable
-> through `npm run tauri:react` / `npm run build:react` until `src-next/` is removed.
+> Historical note (2026-09-16): this is the procedure that decided the cutover, kept as the
+> record of how the numbers were produced. **The React half is no longer runnable** — the
+> React tree, its Vite config, its `*:react` scripts and `scripts/bench/react.bench.conf.json`
+> were removed once the gate passed. Everything about the Solid half still runs, and the
+> harness is unchanged, so this doubles as the recipe for benchmarking the Solid viewer
+> against itself across a change. References to the React side below are historical.
 
-The gate compares the React viewer (`src-next/viewport/ReadOnlyViewer.tsx`) and the Solid
-viewer (`src-solid/viewer/LogViewer.tsx`) with **one shared harness**,
-`src-next/bench/harness.ts`, installed by both. Every command below is run from the repo
+The gate compared the React viewer (`viewport/ReadOnlyViewer.tsx` in the retired React
+tree) and the Solid viewer (`src-solid/viewer/LogViewer.tsx`) with **one shared harness**,
+`src-shared/bench/harness.ts`, installed by both. Every command below is run from the repo
 root in **PowerShell** (never prefix with `cd`).
 
 The orchestrator runs this and writes the decision. No agent decides the gate.
@@ -25,7 +28,7 @@ Verified empirically on this checkout:
 | `NODE_ENV=development npx vite build --mode development` | `true` | **present** |
 
 (`grep -c BENCH_RESULT dist/assets/*.js` → `0`, `0`, `1`.) Solid has no `DEV` guard, so its
-hook survives a plain `npm run build:solid`.
+hook survives a plain `npm run build`.
 
 **Consequence: a straight production-vs-production gate is impossible without changing the
 guard.** Both frontends are therefore built in *development mode* for the comparison run,
@@ -33,7 +36,7 @@ which keeps the two sides symmetric in build mode. See §6 for the bias this int
 how to read around it — read §6 before interpreting any number.
 
 If the orchestrator prefers a true production-vs-production gate, the one-line change is to
-relax the guard in `src-next/viewport/ReadOnlyViewer.tsx` to
+relax the guard in the React viewer to
 `(import.meta.env.DEV || import.meta.env.VITE_BENCH === '1')` and build with
 `VITE_BENCH=1 npm run build`. That is outside P5's scope (the plan pins the `DEV` guard)
 but is trivially applicable and removes §6 entirely.
@@ -50,23 +53,23 @@ node scripts/gen-logcat.mjs --lines 1000000 --out bench/logcat-1m.log
 
 The same file is the viewer fixture (opened from disk) and the fake-adb replay source.
 
-## 2. Build both frontends
+## 2. Build the frontend
 
 ```powershell
 $env:NODE_ENV = "development"
-npx vite build --mode development                              # -> dist/
-npx vite build --mode development --config vite.solid.config.ts # -> dist-solid/
+npx vite build --mode development   # -> dist-solid/
 Remove-Item Env:NODE_ENV
 ```
 
-Sanity-check both bundles carry the harness before launching anything:
+(The React side was built the same way from its own config, into `dist/`.)
+
+Sanity-check the bundle carries the harness before launching anything:
 
 ```powershell
-Select-String -Path dist\assets\*.js       -Pattern BENCH_RESULT -SimpleMatch -Quiet
 Select-String -Path dist-solid\assets\*.js -Pattern BENCH_RESULT -SimpleMatch -Quiet
 ```
 
-Both must print `True`. If the React one prints `False`, `NODE_ENV` did not reach the build.
+It must print `True`. A `False` means `NODE_ENV` did not reach the build.
 
 Also build Solid's **true production** bundle for the §5 absolute-threshold pass:
 
@@ -85,11 +88,11 @@ Tauri's CLI runs its **own built-in static server** when `build.devUrl` is unset
 server"*). `devUrl` is typed `["string","null"]`, so an overlay can null it out; `--config`
 deep-merges into `src-tauri/tauri.conf.json`.
 
-Two overlays are checked in:
+Two overlays were checked in; the Solid one remains:
 
 ```powershell
-npx tauri dev --config scripts/bench/react.bench.conf.json   # React, from dist/
 npx tauri dev --config scripts/bench/solid.bench.conf.json   # Solid, from dist-solid/
+# (the React overlay stood next to it and was removed with the React tree)
 ```
 
 Each sets `devUrl: null`, `frontendDist` and an empty `beforeDevCommand` so no Vite dev
@@ -98,7 +101,7 @@ permitted to run `tauri`/cargo. If `devUrl: null` fails to clear the inherited v
 the fallback below and note which method produced the numbers.
 
 **Fallback — Vite dev servers (use only if the overlays above fail).** Start
-`npm run dev:react` (React, :1420) and `npm run dev` (Solid, :1421) and point Tauri at them
+the React dev server (:1420, gone) and `npm run dev` (Solid, :1421) and point Tauri at them
 with an overlay whose `devUrl` carries the query directly, e.g.
 `{"build":{"devUrl":"http://localhost:1420/?bench=1","beforeDevCommand":""}}`. HMR stays
 on (Vite has no `--no-hmr` flag and `server.hmr` lives in configs P5 does not own); it adds
@@ -196,11 +199,9 @@ in build mode but not symmetric in cost:
 
 - React's development `react-dom` carries per-render dev-only work the production build
   does not.
-- `src-next/main.tsx` wraps the app in `<React.StrictMode>`, which **double-invokes render
-  bodies and effects in a development build** and is a no-op in production. This is the
-  single largest handicap. To remove it for the bench run, temporarily delete the
-  `<React.StrictMode>` wrapper in `src-next/main.tsx`, rebuild, and **revert the edit
-  afterwards** (local, uncommitted). Record in the results whether StrictMode was on.
+- React's entry point wrapped the app in `<React.StrictMode>`, which **double-invokes
+  render bodies and effects in a development build** and is a no-op in production. This was
+  the single largest handicap; the run recorded whether StrictMode was on.
 - Solid's development build carries far less overhead than React's, so the dev-mode gate
   **flatters Solid**.
 

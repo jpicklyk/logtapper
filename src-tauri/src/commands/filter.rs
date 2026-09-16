@@ -7,9 +7,9 @@
 //! `commands::adapters::TauriProgressSink` emits under the very same
 //! `"filter-progress"` event name with a byte-identical field set (see the
 //! shared name/shape test in `services::events`). This struct is kept purely
-//! so the TS binding `src-next/bridge/events.ts` already imports (`import type
+//! so the TS binding `src-shared/bridge/events.ts` already imports (`import type
 //! { ... FilterProgress ... } from './types'`) keeps resolving without
-//! touching `src-next/`, which is out of scope for this package.
+//! touching the frontend, which is out of scope for this package.
 
 use std::sync::Arc;
 

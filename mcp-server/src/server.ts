@@ -16,7 +16,7 @@
  *
  * Every response type is imported from `bridge-types` — an alias (see
  * `tsconfig.json`'s `paths`/`rootDirs`) onto the ts-rs-generated bindings at
- * `src-next/bridge/generated`, the same types the frontend consumes. All such
+ * `src-shared/bridge/generated`, the same types the frontend consumes. All such
  * imports are `import type`, so they are erased entirely by both `tsc` and
  * Node's `--experimental-strip-types` — no bundler is needed for `npm start`,
  * and the specifier need not resolve at runtime at all.

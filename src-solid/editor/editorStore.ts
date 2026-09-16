@@ -32,7 +32,7 @@ import { readTextFile, writeTextFile } from '@bridge/commands';
 // Reused rather than re-derived: the same separator/case normalisation the
 // workspace restore uses to decide whether two paths name the same file
 // (`workspaceStore.ts:493` is the other caller).
-import { normalizePath } from '@hooks/workspace/restoreTrust';
+import { normalizePath } from '@workspace';
 import type { LtwEditorTab } from '@bridge/types';
 import { basename, SAVE_FILTERS } from './EditorTab';
 import type { EditorPreviewMode } from './EditorTab';

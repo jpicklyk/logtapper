@@ -7,7 +7,7 @@
                                 [data-theme].
    Components must consume semantic/domain tokens only — never --p-* directly.
 
-   Values are lifted from src-next/styles/tokens.css (dark + light) and the
+   Values are lifted from the React app's styles/tokens.css (dark + light) and the
    redesign canvas foundation (design_docs/canvas/_foundation.html); a
    handful were nudged for WCAG AA — see tokens.contrast.test.ts and
    implementation-notes' "AA adjustments" list for exactly which and why.

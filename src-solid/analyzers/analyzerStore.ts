@@ -5,7 +5,7 @@
  * Before W4a there was no Solid equivalent of `PipelineContext.tsx` +
  * `usePipelineCommands`/`usePipelineWiring` — this file is that pair,
  * collapsed into one store because Solid has no render-tree context to split
- * across (the "wiring hook vs. action hook" split in `src-next/hooks/CLAUDE.md`
+ * across (the "wiring hook vs. action hook" split in the React `hooks/CLAUDE.md`
  * exists to stop N mounted copies of an effect; a Solid store already has
  * exactly one instance).
  *
@@ -144,7 +144,7 @@ import type {
 // Framework-free localStorage seed for the default chain, shared with the
 // React app's key names (`logtapper_pipeline_chain` / `_disabled`) — same
 // file the file-level ESLint allow-list on `@hooks` names.
-import { loadChainFromStorage, loadDisabledFromStorage, saveChainToStorage } from '@hooks/pipelineChainStorage';
+import { loadChainFromStorage, loadDisabledFromStorage, saveChainToStorage } from '@pipeline';
 import { coalesceMicrotask, createGenerationGuard } from '../reactive';
 import type { GenerationGuard } from '../reactive';
 

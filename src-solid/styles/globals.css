@@ -1,5 +1,5 @@
 /* ── Global styles (src-solid) ──────────────────────────────────────────
-   Mirrors src-next/styles/globals.css: font-face imports, reset, root
+   Mirrors the React app's styles/globals.css: font-face imports, reset, root
    typography/background from tokens, thin scrollbars. Imported once from
    main.tsx alongside tokens.css.
    ════════════════════════════════════════════════════════════════════── */

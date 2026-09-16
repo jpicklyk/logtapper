@@ -6,10 +6,9 @@
  *
  * Two kinds of export live here:
  *  1. The Solid ports of the four React viewer hooks (this directory).
- *  2. Stable re-exports of the framework-free `src-next/` modules the viewer
+ *  2. Stable re-exports of the framework-free `src-shared/` modules the viewer
  *     reuses unchanged. They are re-exported here so no consumer has to know
- *     the `@viewport/…` / `@cache/…` alias layout, and so the React barrels
- *     (which pull in `.tsx`) are never reachable from Solid.
+ *     the `@viewport/…` / `@cache/…` alias layout.
  *
  * Reactive ownership: `createVirtualBase` and `createCacheBinding` create
  * effects, and `new ScrollControls(...)` does too. All three must be
@@ -49,7 +48,7 @@ export type {
   StreamStartOptions,
 } from './createStreamSession';
 
-// ── Reused unchanged from src-next/ (framework-free) ──────────────────────
+// ── Reused unchanged from src-shared/ (framework-free) ────────────────────
 export { FetchScheduler } from '@viewport/FetchScheduler';
 export type { FetchRange, FetchSchedulerConfig, FetchCallback } from '@viewport/FetchScheduler';
 
@@ -69,10 +68,10 @@ export { buildCopyText, writeClipboard } from '@viewport/copyText';
  * Absolute backend line → index in a sorted line set, by binary search. The
  * viewer is the only place that needs it (`LogViewer` maps at the pane
  * boundary), but it is exported so nothing outside is ever tempted to write a
- * second copy — `src-next/components/LogViewer/scrollMapping.ts` is the one
- * implementation, with its own unit tests.
+ * second copy — `@viewer`'s `scrollMapping` is the one implementation, with its
+ * own unit tests.
  */
-export { absoluteLineToFilteredIndex } from '@logviewer/scrollMapping';
+export { absoluteLineToFilteredIndex } from '@viewer';
 
 export { CacheManager, ViewCacheHandle } from '@cache/CacheManager';
 export type { ViewCache, WritableViewCache, CacheController, ViewPriority } from '@cache/CacheManager';

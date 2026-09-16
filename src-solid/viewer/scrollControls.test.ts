@@ -5,7 +5,7 @@ import type { Accessor } from 'solid-js';
 import { ScrollControls } from './scrollControls';
 import type { DataSource } from '@viewport/DataSource';
 
-// ── Helpers (ported from src-next/viewport/useScrollControls.test.tsx) ───────
+// ── Helpers (ported from the React useScrollControls.test.tsx) ──────────────
 
 /** Mock DataSource whose onAppend callback can be fired on demand. */
 function makeDataSource(totalLines = 1000): {

@@ -5,7 +5,7 @@ import type { HighlightSpan } from '@bridge/generated/HighlightSpan';
 import styles from './LogViewer.module.css';
 
 /**
- * Solid port of `src-next/components/HighlightedText/HighlightedText.tsx`.
+ * Solid port of the React `components/HighlightedText/HighlightedText.tsx`.
  *
  * The React version has no framework-free helper to reuse — the boundary/segment
  * maths lives in the component body — so `segments()` below is that logic lifted

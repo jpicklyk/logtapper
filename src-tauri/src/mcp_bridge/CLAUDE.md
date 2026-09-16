@@ -194,12 +194,12 @@ script — `package.json`'s scripts have no way to detect whether the app is run
 
 ## `TS_RS_EXPORT_DIR` cwd gotcha (worktrees)
 
-`.cargo/config.toml`'s `[env] TS_RS_EXPORT_DIR = { value = "src-next/bridge/generated",
+`.cargo/config.toml`'s `[env] TS_RS_EXPORT_DIR = { value = "src-shared/bridge/generated",
 relative = true }` resolves against the **current working directory of the invoking
 shell**, not `--manifest-path`. Running `cargo test --test export_bindings
 --manifest-path <worktree>/Cargo.toml` from a shell whose cwd is the **main repo root**
 silently writes generated `.ts` files into the **main repo's**
-`src-next/bridge/generated/`, not the worktree's — this has happened more than once during
+`src-shared/bridge/generated/`, not the worktree's — this has happened more than once during
 this migration and was reverted each time. **Always set `$env:TS_RS_EXPORT_DIR` to the
 worktree's own absolute path** before any `cargo test`/`build`/`clippy` invocation whose
 manifest lives in a worktree; an explicitly-set env var wins over the config file's

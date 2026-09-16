@@ -1,6 +1,6 @@
 /**
  * `FilterScan` — the filter-expression scan engine, ported from React's
- * `src-next/hooks/useLogViewer/useFilterScan.ts`.
+ * the React `hooks/useLogViewer/useFilterScan.ts`.
  *
  * Everything load-bearing in the original is carried over verbatim:
  *

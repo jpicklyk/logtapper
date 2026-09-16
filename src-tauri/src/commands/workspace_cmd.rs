@@ -11,7 +11,7 @@
 //! sequence is the most load-bearing user workflow in the app; the option and
 //! result structs moved module (to `services::workspace`) but not shape, and
 //! `ts-rs` names generated files after the type, not its path, so
-//! `src-next/bridge/generated/**` is byte-identical either way.
+//! `src-shared/bridge/generated/**` is byte-identical either way.
 //!
 //! The one intentional behavioural change is that `load_workspace_v4` now
 //! routes through `services::policy::authorize_open`, whose `Ui` branch
@@ -77,7 +77,7 @@ pub async fn begin_workspace_switch(app: AppHandle) -> Result<(), String> {
 /// Deliberately stops at reading: the *restore rules* — which candidate to
 /// trust, how to pair manifest entries with the sessions an open produced,
 /// drift detection, auto-run scheduling — stay in
-/// `src-next/hooks/workspace/*.ts`. The agent-side end-to-end open
+/// `src-shared/workspace/*.ts`. The agent-side end-to-end open
 /// (`services::workspace::load_and_restore`) exists only because an agent has
 /// no frontend to run them.
 #[tauri::command]

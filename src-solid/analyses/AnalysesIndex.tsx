@@ -2,7 +2,7 @@
 import { For, Show, createMemo } from 'solid-js';
 import type { JSX } from 'solid-js';
 import type { AnalysisArtifact } from '@bridge/types';
-import { attributeArtifact } from '@analysisPanel/analysisAttribution';
+import { attributeArtifact } from '@analysis';
 import type { AnalysesStore } from './analysesStore';
 import { relativeTime } from './AnalysesPanel';
 import styles from './analyses.module.css';

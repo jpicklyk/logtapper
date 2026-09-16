@@ -1,7 +1,7 @@
 /** @jsxImportSource solid-js */
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from 'solid-js';
 import type { JSX } from 'solid-js';
-import { formatNumber, groupVars, snakeToTitle } from '@procdash/utils';
+import { formatNumber, groupVars, snakeToTitle } from '@processors';
 import { MATCHED_PREVIEW_CAP } from './analyzerStore';
 import type { AnalyzerStore, MatchedLineDigest } from './analyzerStore';
 import { createOverlayDialog } from './overlayDialog';

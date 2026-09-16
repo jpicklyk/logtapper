@@ -24,18 +24,18 @@
     // collide with the `.ts` one being imported).
     "allowImportingTsExtensions": true,
     "baseUrl": ".",
-    // The generated wire types live outside this package (`src-next/` is the
-    // frontend's tree). `rootDirs` tells the module resolver to treat `src`
+    // The generated wire types live outside this package (`src-shared/` is the
+    // frontend-shared tree). `rootDirs` tells the module resolver to treat `src`
     // and the generated directory as one virtual root; `paths` gives it a
     // short, stable specifier (`bridge-types`) instead of a
-    // `../../src-next/bridge/generated` that would break the moment either
+    // `../../src-shared/bridge/generated` that would break the moment either
     // package moves. Every import through this alias is `import type` —
     // erased entirely by both `tsc` and Node's `--experimental-strip-types`
     // (and by bun's bundler), so it carries no runtime resolution cost.
-    "rootDirs": ["src", "../src-next/bridge/generated"],
+    "rootDirs": ["src", "../src-shared/bridge/generated"],
     "paths": {
-      "bridge-types": ["../src-next/bridge/generated/index.ts"],
-      "bridge-types/*": ["../src-next/bridge/generated/*"]
+      "bridge-types": ["../src-shared/bridge/generated/index.ts"],
+      "bridge-types/*": ["../src-shared/bridge/generated/*"]
     }
   },
   "include": ["src/**/*"]

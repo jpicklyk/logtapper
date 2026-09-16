@@ -26,7 +26,7 @@ pub struct McpStatus {
 
 /// Records which session is currently the focused pane session in the
 /// frontend UI (or `None` when no pane is focused). Pushed by the frontend
-/// whenever focus changes — see `src-next/bridge/commands.ts::setFocusedSession`
+/// whenever focus changes — see `src-shared/bridge/commands.ts::setFocusedSession`
 /// and the focus-sync effect in `context/index.tsx` (`HookWiring`). Exposed
 /// over the MCP bridge via `GET /mcp/sessions` (`focused` field) so an agent
 /// can tell which of several open — possibly same-named — sessions the user

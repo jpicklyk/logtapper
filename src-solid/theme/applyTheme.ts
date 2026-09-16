@@ -14,13 +14,13 @@ export type Density = 'compact' | 'comfortable';
 
 export const BASE_THEMES: readonly ThemeBase[] = ['dark', 'light', 'dark-hc', 'light-hc'];
 
-/** Shared with src-next/context/ThemeContext.tsx's STORAGE_KEY — both UIs
+/** Shared with the React app's ThemeContext STORAGE_KEY — both UIs
  * read/write the same localStorage key so a preference set in one carries
  * to the other (same app-data dir, same browser storage origin only when
  * served from the same Tauri window — this is a best-effort convention,
  * not cross-process sync). */
 export const THEME_STORAGE_KEY = 'logtapper-theme';
-/** Solid-only for now — density has no React/src-next equivalent yet. */
+/** Solid-only — density had no React equivalent. */
 export const DENSITY_STORAGE_KEY = 'logtapper-density';
 /**
  * Slug of the user theme the user chose to *use* (Settings → Themes → Use).

@@ -45,12 +45,15 @@ import {
 import type { LtwEditorTab } from '@bridge/types';
 import type { WorkspaceIdentity } from '@bridge/workspaceTypes';
 import { createEmptyWorkspace } from '@bridge/workspaceTypes';
-import { buildAppStatePayload } from '@hooks/workspace/appStatePayload';
-import { reconcileWorkspaceList } from '@hooks/workspace/reconcileWorkspaceList';
-import { consumeStartupFile } from '@hooks/workspace/startupFile';
-import { planExplicitOpen, planStartupRestore } from '@hooks/workspace/restorePlan';
-import { normalizePath } from '@hooks/workspace/restoreTrust';
-import type { RestorePlan, StoredTab } from '@hooks/workspace/restorePlan';
+import {
+  buildAppStatePayload,
+  consumeStartupFile,
+  normalizePath,
+  planExplicitOpen,
+  planStartupRestore,
+  reconcileWorkspaceList,
+} from '@workspace';
+import type { RestorePlan, StoredTab } from '@workspace';
 import type { LoadWorkspaceSessionData } from '@bridge/types';
 // Region widths are keyed per workspace in localStorage by `shell/Splitter`;
 // deleting a workspace has to take its entry with it, and the key shape is the

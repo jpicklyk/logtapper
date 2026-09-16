@@ -1,10 +1,10 @@
 /* ── Solid LogViewer ─────────────────────────────────────────────────────
-   Ported from src-next/viewport/ReadOnlyViewer.module.css + TextLine.module.css.
+   Ported from the React app's ReadOnlyViewer.module.css + TextLine.module.css.
 
    Every colour, font and metric is a custom property. T1 (the token system) has
    not landed yet and src-solid/index.html loads no stylesheet, so each one
    carries a `var(--x, <fallback>)` whose fallback is the dark value from
-   src-next/styles/tokens.css. Once T1 defines the tokens the fallbacks go
+   the React app's styles/tokens.css. Once T1 defines the tokens the fallbacks go
    unused and the viewer follows whichever theme is active.
 
    Two properties are supplied by the component at runtime rather than set
@@ -160,7 +160,7 @@
 
 /* ── Highlight segments ───────────────────────────────────────────────── */
 /* Module-scoped equivalents of the global .hl-* classes in
-   src-next/styles/highlights.css, which src-solid does not load. */
+   the React app's styles/highlights.css, which src-solid does not load. */
 
 .hlSearch {
   background: var(--hl-search, rgba(210, 153, 34, 0.4));

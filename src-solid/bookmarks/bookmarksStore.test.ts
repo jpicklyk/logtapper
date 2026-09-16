@@ -354,7 +354,7 @@ describe('createBookmarksStore', () => {
 
   describe('exportMarkdown (pure module reuse)', () => {
     it('matches exportBookmarksAsMarkdown\'s own output for the same inputs', async () => {
-      const { exportBookmarksAsMarkdown } = await import('@bookmarkPanel/exportMarkdown');
+      const { exportBookmarksAsMarkdown } = await import('@bookmarks');
       sessionStore.add(load('s1', { sourceName: 'app.log' }));
       const b = bookmark('b1', { lineNumber: 41, label: 'Boot complete' });
       listen.emit(updateEvent('created', b));

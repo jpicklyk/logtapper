@@ -6,7 +6,7 @@ import { DEFAULT_ROW_HEIGHT } from './virtualBase';
 import { createGenerationGuard } from '../reactive';
 
 /**
- * Solid port of `src-next/viewport/useFetchScheduler.ts`.
+ * Solid port of the React `viewport/useFetchScheduler.ts`.
  *
  * Derives the visible line window from scroll geometry, reports it to a
  * `FetchScheduler`, and runs the same two-phase fetch (viewport fill, then

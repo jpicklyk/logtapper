@@ -2,7 +2,7 @@
 
 Every public function in this directory is a `#[tauri::command]` registered in
 `src-tauri/src/lib.rs`. The frontend calls these via `invoke()` in
-`src-next/bridge/commands.ts`. **Adding a command here without registering it in `lib.rs`
+`src-shared/bridge/commands.ts`. **Adding a command here without registering it in `lib.rs`
 silently fails at runtime.**
 
 **All business logic lives in `src-tauri/src/services/` — see `services/CLAUDE.md`.**

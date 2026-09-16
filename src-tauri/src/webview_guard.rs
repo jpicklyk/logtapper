@@ -19,7 +19,7 @@
 //!
 //! This is defence in depth, not the primary mechanism. The renderers intercept
 //! the click first and hand the URL to `tauri-plugin-opener`
-//! (`src-next/bridge/externalLinks.ts`), so reaching a denial here means
+//! (`src-shared/bridge/externalLinks.ts`), so reaching a denial here means
 //! something got past the frontend — hence the `warn!`.
 
 use tauri::Url;

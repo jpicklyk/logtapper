@@ -3,8 +3,8 @@ import { For, Show, createEffect, createMemo, createSignal, on } from 'solid-js'
 import type { JSX } from 'solid-js';
 import type { AnalysisArtifact, AnalysisSeverity } from '@bridge/types';
 import { severityColor } from '@bridge/types';
-import { attributeArtifact } from '@analysisPanel/analysisAttribution';
-import type { ArtifactAttribution } from '@analysisPanel/analysisAttribution';
+import { attributeArtifact } from '@analysis';
+import type { ArtifactAttribution } from '@analysis';
 import { AnalysisReader } from './AnalysisReader';
 import { AnalysisEditor } from './AnalysisEditor';
 import type { AnalysesStore } from './analysesStore';

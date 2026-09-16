@@ -32,7 +32,7 @@ export interface SettingsStoreDeps {
   storage?: Pick<Storage, 'getItem' | 'setItem'>;
 }
 
-/** React's persisted settings blob (`src-next/hooks/useSettings.ts` `STORAGE_KEY`). Solid reads
+/** React's persisted settings blob (its `hooks/useSettings.ts` `STORAGE_KEY`). Solid reads
  *  and writes only `mcpBridgeEnabled` in it, read-modify-write, so the two UIs agree on whether
  *  the bridge auto-starts and neither drops the other's keys. */
 export const SHARED_SETTINGS_KEY = 'logtapper_settings';

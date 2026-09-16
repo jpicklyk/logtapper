@@ -17,7 +17,7 @@ import type { FilterNode } from '@filter/index';
 /**
  * Plain Solid module — ADB streaming session lifecycle.
  *
- * Port of `src-next/hooks/useLogViewer/useStreamSession.ts`'s core batch/stop
+ * Port of the React `hooks/useLogViewer/useStreamSession.ts`'s core batch/stop
  * handling, plus (as of L1) its incremental filter-AST matching. What stays
  * deliberately out of this file — and belongs one layer up — is anything that
  * needs the rest of the app: session-tab registration (`store.add` /

@@ -1,9 +1,8 @@
 /** @jsxImportSource solid-js */
 import { Show, createEffect, createMemo, createSignal, on, untrack } from 'solid-js';
 import type { JSX } from 'solid-js';
-import { formatDuration, formatTimestamp } from '@fileinfo/formatters';
-import { buildSectionTree, filterSections } from '@fileinfo/sectionTree';
-import type { SectionRow } from '@fileinfo/sectionTree';
+import { buildSectionTree, filterSections, formatDuration, formatTimestamp } from '@fileinfo';
+import type { SectionRow } from '@fileinfo';
 import type { SectionsStore } from './sectionsStore';
 import { flattenRows, SectionTree } from './SectionTree';
 import type { FlatRow } from './SectionTree';

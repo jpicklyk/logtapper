@@ -4,7 +4,7 @@ import type { DataSource } from '@viewport/DataSource';
 import type { Ref } from './virtualBase';
 
 /**
- * Solid port of `src-next/viewport/useScrollControls.ts`.
+ * Solid port of the React `viewport/useScrollControls.ts`.
  *
  * Owns tail-mode auto-scroll state, the "N new lines" badge and the streaming
  * `onAppend` subscription. Does NOT scroll the element to the bottom on new

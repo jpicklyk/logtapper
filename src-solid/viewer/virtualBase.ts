@@ -3,7 +3,7 @@ import type { Accessor } from 'solid-js';
 import { sessionScrollPositions } from '@viewport/sessionScrollPositions';
 
 /**
- * Solid port of `src-next/viewport/useVirtualBase.ts`.
+ * Solid port of the React `viewport/useVirtualBase.ts`.
  *
  * Manages the "virtual base" offset that keeps the scroller's height inside the
  * browser's 2^25 px DOM limit for very large files.

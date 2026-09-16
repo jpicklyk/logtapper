@@ -1,40 +1,35 @@
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import solid from "vite-plugin-solid";
+import { solidAliases } from "./solid.aliases";
 
 const host = process.env.TAURI_DEV_HOST;
 
+// The frontend build. `root` is src-solid/ (its own index.html is the entry);
+// the shared framework-free modules are reached through the aliases, which are
+// absolute, so they resolve from outside the root.
 export default defineConfig({
-  plugins: [react()],
-  test: {
-    // Patterns must be depth-agnostic: `.claude/worktrees/*` holds full repo
-    // checkouts, so a root-relative pattern like 'eslint-local-rules/**' matches
-    // only this copy and lets every worktree's tests into the run. Excluding
-    // '.claude/**' keeps collection to the working tree — without it, vitest
-    // also executes each worktree's src-next suite against whatever commit that
-    // worktree is parked on.
-    exclude: [
-      '**/node_modules/**',
-      '**/dist/**',
-      '**/eslint-local-rules/**',
-      '.claude/**',
-      'src-tauri/**',
-      'src-solid/**',
-    ],
+  root: "src-solid",
+  plugins: [solid()],
+  resolve: {
+    // Two entry points (app + tests) must share one solid-js instance.
+    dedupe: ["solid-js"],
+    // Single source of truth, shared with vitest.config.ts.
+    alias: solidAliases,
   },
+  // Not inherited from the root config — a custom `root` gets its own.
   clearScreen: false,
+  envPrefix: ["VITE_", "TAURI_ENV_*"],
   server: {
-    port: 1420,
+    port: 1421,
     strictPort: true,
     host: host || false,
-    hmr: host
-      ? { protocol: "ws", host, port: 1421 }
-      : undefined,
     watch: {
       ignored: ["**/src-tauri/**"],
     },
   },
-  envPrefix: ["VITE_", "TAURI_ENV_*"],
   build: {
+    outDir: "../dist-solid",
+    emptyOutDir: true,
     target:
       process.env.TAURI_ENV_PLATFORM === "windows"
         ? "chrome105"

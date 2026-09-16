@@ -3,7 +3,7 @@ import { Index, Show, batch, createEffect, createMemo, createSignal, on, onClean
 import type { JSX } from 'solid-js';
 import type { DataSource } from '@viewport/DataSource';
 import { buildCopyText, writeClipboard } from '@viewport/copyText';
-import { absoluteLineToFilteredIndex } from '@logviewer/scrollMapping';
+import { absoluteLineToFilteredIndex } from '@viewer';
 import { createCacheBinding } from './cacheBinding';
 import { DEFAULT_PANE_ID } from './controller';
 import type { ViewerController } from './controller';
@@ -141,7 +141,7 @@ export function LogViewer(props: LogViewerProps) {
    * Absolute backend line → rendered row index. `null` when the line set is
    * empty (nothing is renderable, so there is nowhere to go). A line that is not
    * itself in the set resolves to the nearest row at or after it — the binary
-   * search `src-next` already ships and unit-tests.
+   * search `@viewer` ships and unit-tests.
    */
   const toRendered = (absLine: number): number | null => {
     const ln = lineSet();

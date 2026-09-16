@@ -68,7 +68,11 @@ vi.mock('@bridge/events', () => ({
 
 // `consumeStartupFile` memoises its backend read per module instance, so the
 // module registry is reset between tests (below) to keep each test independent.
-vi.mock('@hooks/workspace/startupFile', () => ({
+// Partial mock: the rest of the `@workspace` barrel (the restore planners,
+// `buildAppStatePayload`, `reconcileWorkspaceList`, `normalizePath`) is the
+// real thing — only the backend-reading `consumeStartupFile` is replaced.
+vi.mock('@workspace', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@workspace')>()),
   consumeStartupFile: () => startupFileMock(),
 }));
 

@@ -1,1 +1,0 @@
-export { ToolPane } from './ToolPane';

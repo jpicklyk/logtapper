@@ -3,7 +3,7 @@
  *
  * Components call these; nothing outside this module calls `loadLogFile` /
  * `closeSession` or mutates the session store's membership directly. The store
- * owns *state*, this owns *transitions* — the same split `src-next/context`
+ * owns *state*, this owns *transitions* — the same split the React `context`
  * draws between `SessionContext` and `ActionsContext`.
  */
 import { createSignal } from 'solid-js';
@@ -13,11 +13,11 @@ import type { GenerationGuard } from '../reactive';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { closeSession, getLines, loadLogFile } from '@bridge/commands';
 import type { LoadResult, SourceType } from '@bridge/types';
-// The one src-next reach-through W0b adds: the multi-session `.lts` import
-// planner. Framework-free and already unit-tested on the React side — reused
+// The one shared-module reach-through this file needs: the multi-session
+// `.lts` import planner. Framework-free and already unit-tested — reused
 // verbatim rather than reimplemented, per "search before creating".
-import { planExtraSessionImport } from '@hooks/useLogViewer/multiSessionImport';
-import type { ImportedSession } from '@hooks/useLogViewer/multiSessionImport';
+import { planExtraSessionImport } from '@workspace';
+import type { ImportedSession } from '@workspace';
 import type { ViewerController } from '../viewer';
 import { resetSessionView } from './sessions';
 import type { SessionStore } from './sessions';

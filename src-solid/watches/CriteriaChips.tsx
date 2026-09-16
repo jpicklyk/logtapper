@@ -5,7 +5,7 @@ import type { FilterCriteria, LogLevel } from '@bridge/types';
 import { LEVEL_SHORT } from '@bridge/types';
 import styles from './watches.module.css';
 
-/** Solid port of `src-next/components/WatchesPanel/CriteriaChips.tsx` —
+/** Solid port of the React `components/WatchesPanel/CriteriaChips.tsx` —
  *  read-only rendering of a watch's `FilterCriteria`, unchanged shape. */
 export interface CriteriaChipsProps {
   criteria: FilterCriteria;

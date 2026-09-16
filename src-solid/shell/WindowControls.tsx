@@ -26,7 +26,7 @@ function resolveAppWindow(): ReturnType<typeof getCurrentWindow> | null {
  * caption (measured: client origin sits 1px below the DWM frame top), so
  * Windows draws no usable title bar and the app would otherwise have no way to
  * be minimised, maximised or closed from its own chrome. React solved this the
- * same way in `src-next/components/Header/Header.tsx`; this is that port, not a
+ * same way in the React `components/Header/Header.tsx`; this is that port, not a
  * new design.
  *
  * Talking to `@tauri-apps/api/window` directly is deliberate and allowed: the
