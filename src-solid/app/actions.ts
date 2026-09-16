@@ -12,7 +12,7 @@ import { createGenerationGuard } from '../reactive';
 import type { GenerationGuard } from '../reactive';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { closeSession, getLines, loadLogFile } from '@bridge/commands';
-import type { LoadResult } from '@bridge/types';
+import type { LoadResult, SourceType } from '@bridge/types';
 // The one src-next reach-through W0b adds: the multi-session `.lts` import
 // planner. Framework-free and already unit-tested on the React side — reused
 // verbatim rather than reimplemented, per "search before creating".
@@ -39,6 +39,23 @@ export interface OpenPathOptions {
    * not wait — it watches `file-index-progress` instead.
    */
   waitForIndex?: boolean;
+  /**
+   * Override content detection — correcting a misdetected source type means
+   * reopening the path with the type the user picked, since the line index
+   * was already built with the parser detection chose. Passed straight
+   * through to `loadLogFile`; omit for a normal open.
+   */
+  sourceType?: SourceType;
+  /**
+   * This open REPLACES an already-open session at the same (deterministic)
+   * id rather than registering a new one — the "reopen as…" control's only
+   * caller. Do not close the session first: the backend rescues bookmarks
+   * and analyses from the stale session onto the reopened id, and closing
+   * here would destroy them before that rescue runs (see
+   * `SessionInfo.tsx`'s doc comment). Ignored (falls back to a plain `add`)
+   * if the id turns out not to be open — see `SessionStore.replace`.
+   */
+  replace?: boolean;
 }
 
 export interface AppActionsDeps {
@@ -173,7 +190,13 @@ export function createAppActions(deps: AppActionsDeps): AppActions {
     openDepth += 1;
     setBusy(true);
     try {
-      const results = await loadLogFile(path);
+      // Conditional call, not `loadLogFile(path, options.sourceType)` — a
+      // plain open must call it with exactly one argument (`undefined` as an
+      // explicit second argument is a different recorded call, and the
+      // existing `openFileDialog`/bench call sites assert the one-arg form).
+      const results = options.sourceType
+        ? await loadLogFile(path, options.sourceType)
+        : await loadLogFile(path);
       const primary = results[0];
       if (!primary) throw new Error(`No sessions were loaded from ${path}`);
 
@@ -185,7 +208,14 @@ export function createAppActions(deps: AppActionsDeps): AppActions {
 
       // `store.add` is what resets this session's view state, for the bridge's
       // open edge as well as this one — see `sessions.ts`'s `resetSessionView`.
-      store.add(primary);
+      // A `replace` (reopen-as) targets the SAME deterministic id `add` would
+      // just dedupe against, so it goes through `store.replace` instead —
+      // see that method's doc comment for the reset it performs.
+      if (options.replace) {
+        store.replace(primary);
+      } else {
+        store.add(primary);
+      }
       store.setFocused(primary.sessionId);
 
       // Multi-session `.lts`: replay the shared planner's actions. `register`

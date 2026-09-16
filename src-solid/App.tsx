@@ -9,6 +9,7 @@ import {
   createViewerController,
 } from './viewer';
 import {
+  SessionInfo,
   createAppActions,
   createSessionStore,
   installBenchApp,
@@ -529,10 +530,22 @@ export function App(props: AppProps) {
     <>
       <Show when={store.focused()}>
         {(entry) => (
-          <span class={styles.session} data-testid="status-session">
-            {entry().load.sourceName} — {entry().totalLines.toLocaleString()} lines
-            <Show when={entry().isIndexing}> (indexing…)</Show>
-          </span>
+          <SessionInfo
+            entry={entry()}
+            // Bugreport/dumpstate device fields the sections store already
+            // fetches for the focused session (`sections/sectionsStore.ts`'s
+            // `metadata()`) — no second `getDumpstateMetadata` call here.
+            metadata={sections.metadata()}
+            onReopenAs={(sourceType) => {
+              const path = entry().load.filePath;
+              if (!path) return;
+              // Same tab, same id — see `SessionInfo.tsx`'s doc comment for
+              // why this must not close the session first.
+              void actions
+                .openPath(path, { sourceType, replace: true })
+                .catch((e: unknown) => actions.reportError(String(e)));
+            }}
+          />
         )}
       </Show>
       <Show when={actions.busy()}>

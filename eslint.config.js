@@ -301,12 +301,15 @@ export default tseslint.config(
               'Only the framework-free files on the @hooks allow-list are shared with src-solid/ — the rest of src-next/hooks/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
           },
           // Same pattern as `@hooks`: `@fileinfo` reaches into React territory
-          // (`src-next/components/FileInfoPanel/`), so only the three
-          // framework-free modules W3 reuses are let through.
+          // (`src-next/components/FileInfoPanel/`), so only the framework-free
+          // modules reused from there are let through. `reopenOptions` (C2)
+          // joined the original W3 trio (sectionTree, formatters,
+          // sectionDescriptions) — it's the same kind of pure `SourceType[]` /
+          // option-builder logic, no React import.
           {
-            regex: '^@fileinfo/(?!sectionTree$|formatters$|sectionDescriptions$).*',
+            regex: '^@fileinfo/(?!sectionTree$|formatters$|sectionDescriptions$|reopenOptions$).*',
             message:
-              'Only sectionTree, formatters and sectionDescriptions are shared with src-solid/ — the rest of FileInfoPanel/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
+              'Only sectionTree, formatters, sectionDescriptions and reopenOptions are shared with src-solid/ — the rest of FileInfoPanel/ is React-only. Extend the alternation in eslint.config.js by exact file path.',
           },
           // Same file-level allow-list pattern as `@hooks`, for the one
           // framework-free file under src-next/components/ProcessorDashboard/.

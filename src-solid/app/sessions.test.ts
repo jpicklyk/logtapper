@@ -451,6 +451,93 @@ describe('createSessionStore — the open edge resets view state (review A-M2)',
   });
 });
 
+describe('createSessionStore — replace (C2 reopen-as)', () => {
+  it('rebuilds the entry in place: same id, fresh totalLines/isIndexing/kind, a new dataSource', () => {
+    const { store } = harness;
+    const original = store.add(load('a', { totalLines: 10, isIndexing: false, sourceType: 'Logcat' }));
+    // Captured before the replace: `original` is a live reference into the
+    // store (Solid keeps one stable proxy per still-open key), so reading
+    // `original.dataSource` AFTER the replace would already show the NEW
+    // value — the pre-replace `dataSource` must be snapshotted separately to
+    // prove it was actually swapped out, not merely that the field settled
+    // on some value.
+    const originalDataSource = original.dataSource;
+    const disposeSpy = vi.spyOn(originalDataSource, 'dispose');
+
+    const replaced = store.replace(load('a', { totalLines: 999, isIndexing: true, sourceType: 'Kernel' }));
+
+    expect(disposeSpy).toHaveBeenCalledOnce();
+    expect(replaced.dataSource).not.toBe(originalDataSource);
+    expect(store.byId('a')?.totalLines).toBe(999);
+    expect(store.byId('a')?.isIndexing).toBe(true);
+    expect(store.byId('a')?.load.sourceType).toBe('Kernel');
+    // Same id, so the tab is reused rather than duplicated.
+    expect(store.order()).toEqual(['a']);
+  });
+
+  it('clears the session cache without releasing its view allocation', () => {
+    const { store, cacheManager } = harness;
+    store.add(load('a'));
+    const clearSession = vi.spyOn(cacheManager, 'clearSession');
+    const releaseView = vi.spyOn(cacheManager, 'releaseView');
+
+    store.replace(load('a'));
+
+    expect(clearSession).toHaveBeenCalledWith('a');
+    expect(releaseView).not.toHaveBeenCalled();
+  });
+
+  it('resets controller line sets and highlights, the same sweep the open edge runs', () => {
+    const { store, controller } = harness;
+    store.add(load('a'));
+    controller.setLineSet('a', 'filter', new Set([1, 2]));
+    controller.setHighlights('a', new Map());
+
+    store.replace(load('a'));
+
+    expect(controller.lineNumbers('a')).toBeUndefined();
+    expect(controller.highlights('a')).toBeNull();
+  });
+
+  // A plain, never-filtered session (no section/search/highlight state ever
+  // set — the common case: an ordinary logcat) is exactly the case
+  // `resetSessionView` leaves untouched, since there is nothing to clear.
+  // `replace` must still force the viewer to refetch — see its own doc
+  // comment for why a revision bump is the only thing that actually resets
+  // `viewer/cacheBinding.ts`'s fetch generation and forces the refetch.
+  it('bumps the controller revision even when there was nothing to clear (D2-style stale-viewer gap)', () => {
+    const { store, controller } = harness;
+    store.add(load('a'));
+    expect(controller.revision('a')).toBe(0);
+
+    store.replace(load('a', { sourceType: 'Kernel' }));
+
+    expect(controller.revision('a')).toBeGreaterThan(0);
+  });
+
+  it('falls back to add() when the id is not already open', () => {
+    const { store } = harness;
+    const result = store.replace(load('fresh'));
+
+    expect(store.order()).toEqual(['fresh']);
+    expect(store.byId('fresh')).toBe(result);
+    expect(store.focusedId()).toBe('fresh');
+  });
+
+  it('leaves focus and tab order alone for an already-open, already-focused session', () => {
+    const { store } = harness;
+    store.add(load('a'));
+    store.add(load('b'));
+    store.setFocused('b');
+
+    store.replace(load('b', { totalLines: 55 }));
+
+    expect(store.order()).toEqual(['a', 'b']);
+    expect(store.focusedId()).toBe('b');
+    expect(store.byId('b')?.totalLines).toBe(55);
+  });
+});
+
 describe('createSessionStore — cache budget follows the focused session (review A-M3)', () => {
   it('calls setFocus for the first session and again on every focus change', () => {
     const { store, cacheManager } = harness;
