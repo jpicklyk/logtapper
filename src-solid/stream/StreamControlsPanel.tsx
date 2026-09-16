@@ -62,7 +62,24 @@ export function StreamControlsPanel(props: StreamControlsPanelProps) {
     setStartError(null);
     await props.store.start(deviceId(), { packageFilter: packageFilter().trim() || undefined });
     const s = status();
-    if (s.phase === 'error') setStartError(s.message);
+    if (s.phase === 'error') {
+      setStartError(s.message);
+      return;
+    }
+    // A tick made BEFORE Start had no session to apply to — `toggleAnonymize`
+    // returns early when `targetSessionId()` is null, and neither
+    // `StreamStartOptions` nor `start_adb_stream` carries an anonymize flag,
+    // so the only path is `set_stream_anonymize(sessionId, …)` once a session
+    // exists. Without this the checkbox read "on" while the capture streamed
+    // raw PII: the one place the UI and the backend's redaction state
+    // disagreed (M1).
+    if (s.phase === 'streaming' && anonymize()) {
+      try {
+        await props.store.setAnonymize(s.sessionId, true);
+      } catch (e) {
+        setStartError(String(e));
+      }
+    }
   };
 
   const toggleAnonymize = async (checked: boolean): Promise<void> => {

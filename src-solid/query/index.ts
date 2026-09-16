@@ -12,6 +12,9 @@ export type { FilterScanCommands, FilterScanDeps, FilterScanPhase } from './filt
 export { createQueryStore, toSearchQuery, toCriteria, DEFAULT_QUERY_STATE } from './queryStore';
 export type { QueryMode, QueryState, QueryStore, QueryStoreDeps } from './queryStore';
 
+export { createLiveFilterBindings } from './liveFilterBindings';
+export type { LiveFilterBindings, LiveFilterTarget } from './liveFilterBindings';
+
 export { createSearchRunner } from './search';
 export type {
   SearchPhase,

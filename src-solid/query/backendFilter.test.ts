@@ -67,6 +67,48 @@ describe('buildBackendFilter', () => {
         expected: { pids: [1234], combine: 'and' },
         needsJsPass: false,
       },
+      // ── Same-field AND (M4) ───────────────────────────────────────────────
+      // The backend evaluates a multi-value field as OR (`tags_lower.iter()
+      // .any(…)`, core/filter.rs), so `tag:A tag:B` reaches it as "A or B"
+      // while the expression means "A and B". The criteria stays a superset —
+      // what these rows pin is `needsJsPass: true`, without which the backend
+      // answer was flagged exact and every line tagged A *or* B rendered.
+      {
+        name: 'tag AND tag — union is an OR to the backend, so the JS pass is mandatory',
+        expr: 'tag:Foo tag:Bar',
+        expected: { tags: ['Foo', 'Bar'], combine: 'and' },
+        needsJsPass: true,
+      },
+      {
+        name: 'level AND level — matches nothing, so the JS pass must narrow it',
+        expr: 'level:E level:W',
+        expected: { logLevels: ['Error', 'Warn'], combine: 'and' },
+        needsJsPass: true,
+      },
+      {
+        name: 'pid AND pid — same widening, same mandatory pass',
+        expr: 'pid:1 pid:2',
+        expected: { pids: [1, 2], combine: 'and' },
+        needsJsPass: true,
+      },
+      {
+        name: 'a homogeneous OR folded into an AND for the same field widens it too',
+        expr: 'tag:Foo (tag:Bar | tag:Baz)',
+        expected: { tags: ['Foo', 'Bar', 'Baz'], combine: 'and' },
+        needsJsPass: true,
+      },
+      {
+        name: 'one value per field across an AND stays exact — no widening, no pass',
+        expr: 'tag:Foo pid:7 level:E',
+        expected: { tags: ['Foo'], pids: [7], logLevels: ['Error'], combine: 'and' },
+        needsJsPass: false,
+      },
+      {
+        name: 'same-field OR at the top level is NOT widening — OR is what the backend does',
+        expr: 'tag:Foo | tag:Bar',
+        expected: { tags: ['Foo', 'Bar'], combine: 'or' },
+        needsJsPass: false,
+      },
       {
         name: 'longer textSearch wins the merge (fewer backend false positives)',
         expr: 'ab abcdef',

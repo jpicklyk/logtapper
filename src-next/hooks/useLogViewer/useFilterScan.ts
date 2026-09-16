@@ -46,6 +46,14 @@ export interface FilterScanResult {
 // JS scan of all lines.
 // ---------------------------------------------------------------------------
 
+/**
+ * The backend's own per-request cap on `get_filtered_lines`:
+ * `filter.get_page(offset, count.min(MAX_LINES_PAGE))` with
+ * `MAX_LINES_PAGE = 1_000` (`src-tauri/src/services/filters.rs`). One request
+ * can never satisfy a progress tick reporting more new matches than this.
+ */
+const MAX_FILTERED_PAGE = 1_000;
+
 const BACKEND_LEVEL_MAP: Partial<Record<string, LogLevel>> = {
   V: 'Verbose', VERBOSE: 'Verbose',
   D: 'Debug',   DEBUG: 'Debug',
@@ -357,27 +365,40 @@ export function useFilterScan(cacheManager: CacheController, refs: SharedLogView
           return;
         }
 
-        const newCount = progress.matchedSoFar - lastFetched;
-        if (newCount > 0) {
+        // `services::filters::lines()` caps a page at MAX_LINES_PAGE (1000):
+        // `filter.get_page(offset, count.min(MAX_LINES_PAGE))`. Progress fires
+        // every 50 000 scanned lines, so any filter with a >2% hit rate
+        // reports more new matches per tick than one request can return.
+        // Page in a loop until `lastFetched` catches up, advancing by what
+        // each page ACTUALLY returned — advancing by the asked-for count
+        // silently discarded every match past the first 1000 of each tick.
+        while (lastFetched < progress.matchedSoFar) {
+          const want = Math.min(progress.matchedSoFar - lastFetched, MAX_FILTERED_PAGE);
+          let page: Awaited<ReturnType<typeof getFilteredLines>>;
           try {
-            const page = await getFilteredLines(filterId, lastFetched, newCount);
-            if (listenerDone || filterScanGenRef.current !== gen) return;
-            lastFetched = progress.matchedSoFar;
-
-            // JS second pass: only needed when the backend criteria is a
-            // superset (e.g. backend filtered by level:E but user also
-            // wants tag:Activity — JS confirms the tag).
-            const confirmed = needsJsPass
-              ? page.lines.filter(line => matchesFilter(ast, line, pids))
-              : page.lines;
-
-            if (confirmed.length > 0) {
-              cacheManager.broadcastToSession(sess.sessionId, confirmed);
-              for (const line of confirmed) matches.push(line.lineNum);
-              setSessionFilter(sess.sessionId, { filteredLineNums: [...matches] });
-            }
+            page = await getFilteredLines(filterId, lastFetched, want);
           } catch {
-            // Ignore transient fetch errors; next progress event will retry.
+            // Ignore transient fetch errors; next progress event will retry
+            // from this same offset, since lastFetched has not moved.
+            break;
+          }
+          if (listenerDone || filterScanGenRef.current !== gen) return;
+          // Nothing more available for this offset right now — stop rather
+          // than spin.
+          if (page.lines.length === 0) break;
+          lastFetched += page.lines.length;
+
+          // JS second pass: only needed when the backend criteria is a
+          // superset (e.g. backend filtered by level:E but user also
+          // wants tag:Activity — JS confirms the tag).
+          const confirmed = needsJsPass
+            ? page.lines.filter(line => matchesFilter(ast, line, pids))
+            : page.lines;
+
+          if (confirmed.length > 0) {
+            cacheManager.broadcastToSession(sess.sessionId, confirmed);
+            for (const line of confirmed) matches.push(line.lineNum);
+            setSessionFilter(sess.sessionId, { filteredLineNums: [...matches] });
           }
         }
 

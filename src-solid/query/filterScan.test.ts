@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createEffect, createRoot } from 'solid-js';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import type {
   FilterCreateResult,
@@ -69,6 +70,14 @@ interface FakeCommandOptions {
   totalLines?: number;
   /** Resolve `getFilteredLines` manually so the test controls in-flight overlap. */
   deferPages?: boolean;
+  /**
+   * Cap a page the way the backend does — `filter.get_page(offset,
+   * count.min(MAX_LINES_PAGE))`, `MAX_LINES_PAGE = 1_000`. Without this the
+   * fake answers any `count` in full, which is exactly what hid H1.
+   */
+  pageCap?: number;
+  /** Reject every `getFilteredLines` with this error. */
+  pageRejects?: Error;
 }
 
 function createFakeCommands(opts: FakeCommandOptions = {}) {
@@ -95,11 +104,13 @@ function createFakeCommands(opts: FakeCommandOptions = {}) {
       maxInFlight = Math.max(maxInFlight, inFlight);
       if (opts.deferPages) await new Promise<void>((resolve) => pending.push(resolve));
       inFlight--;
+      if (opts.pageRejects) throw opts.pageRejects;
       const all = opts.backendMatches ?? [];
+      const served = opts.pageCap ? Math.min(count, opts.pageCap) : count;
       return {
         filterId,
         totalMatches: all.length,
-        lines: all.slice(offset, offset + count),
+        lines: all.slice(offset, offset + served),
       } as FilteredLinesResult;
     },
     cancelFilter: async (filterId: string) => { log.push(`cancelFilter(${filterId})`); },
@@ -207,6 +218,77 @@ describe('FilterScan', () => {
       { offset: 6, count: 2 }, { offset: 8, count: 2 },
     ]);
     expect([...scan.lines()!]).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  });
+
+  // H1: the backend caps a page at MAX_LINES_PAGE (1000) while `filter-progress`
+  // fires every 50 000 scanned lines, so any filter with a >2% hit rate reports
+  // more new matches per tick than one request can return. Advancing
+  // `lastFetched` to `matchedSoFar` regardless dropped every match past the
+  // first 1000 of each tick — silently, with `phase 'done'` and a match count
+  // that read 1000 instead of 2500.
+  it('pages past the backend 1000-line cap instead of dropping the remainder', async () => {
+    const matches = Array.from({ length: 2500 }, (_, i) => viewLine(i));
+    const fake = createFakeCommands({ backendMatches: matches, pageCap: 1000, totalLines: 50_000 });
+    const listener = createFakeListen();
+    const scan = make({ commands: fake.commands, listen: listener.listen });
+
+    await scan.setExpression('s1', 'level:E');
+    listener.emit({ filterId: 'f1', matchedSoFar: 2500, done: true });
+    await settle(16);
+
+    expect(scan.matched()).toBe(2500);
+    expect(scan.lines()!.size).toBe(2500);
+    expect(scan.phase()).toBe('done');
+    expect(scan.error()).toBeNull();
+    // Three requests, each asking for at most the cap, tiling without gaps.
+    expect(fake.pageCalls).toEqual([
+      { offset: 0, count: 1000 },
+      { offset: 1000, count: 1000 },
+      { offset: 2000, count: 500 },
+    ]);
+  });
+
+  it('keeps paging across several capped progress ticks, never re-reading a page', async () => {
+    const matches = Array.from({ length: 3000 }, (_, i) => viewLine(i));
+    const fake = createFakeCommands({ backendMatches: matches, pageCap: 1000 });
+    const listener = createFakeListen();
+    const scan = make({ commands: fake.commands, listen: listener.listen });
+
+    await scan.setExpression('s1', 'level:E');
+    listener.emit({ filterId: 'f1', matchedSoFar: 1500 });
+    await settle(16);
+    expect(scan.matched()).toBe(1500);
+
+    listener.emit({ filterId: 'f1', matchedSoFar: 3000, done: true });
+    await settle(16);
+
+    expect(scan.matched()).toBe(3000);
+    expect(fake.pageCalls).toEqual([
+      { offset: 0, count: 1000 },
+      { offset: 1000, count: 500 },
+      { offset: 1500, count: 1000 },
+      { offset: 2500, count: 500 },
+    ]);
+  });
+
+  // L10: every earlier progress event has a later one to retry its fetch; the
+  // final one does not. A swallowed failure there used to report a clean
+  // `done` over a result that is missing matches.
+  it('marks the scan incomplete when the final page fetch fails', async () => {
+    const fake = createFakeCommands({
+      backendMatches: [viewLine(1), viewLine(2)],
+      pageRejects: new Error('bridge closed'),
+    });
+    const listener = createFakeListen();
+    const scan = make({ commands: fake.commands, listen: listener.listen });
+
+    await scan.setExpression('s1', 'level:E');
+    listener.emit({ filterId: 'f1', matchedSoFar: 2, done: true });
+    await settle(16);
+
+    expect(scan.phase()).toBe('done');
+    expect(scan.matched()).toBe(0);
+    expect(scan.error()).toMatch(/Incomplete: 2 of 2 matches/);
   });
 
   it('cancel mid-scan bumps the generation: late events ignored, filter cancelled and closed once', async () => {
@@ -471,6 +553,39 @@ describe('FilterScan', () => {
       expect(new Set(scan.lines())).toEqual(new Set([1, 2, 500]));
       expect(scan.matched()).toBe(3);
       expect(scan.phase()).toBe('done');
+    });
+
+    // M9: `flush()` used to union both accumulators into a brand-new Set on
+    // every call, so a busy capture copied every match ~20×/s. It now appends
+    // in place — which only works if subscribers still see each republish, so
+    // both halves are pinned here.
+    it('appends into one Set in place, and still notifies subscribers on every flush', async () => {
+      const fake = createFakeCommands({ backendMatches: [viewLine(1)] });
+      const listener = createFakeListen();
+      const scan = make({ commands: fake.commands, listen: listener.listen });
+
+      await scan.setExpression('s1', 'level:E');
+
+      const seen: number[] = [];
+      const dispose = createRoot((d) => {
+        createEffect(() => { seen.push(scan.lines()?.size ?? -1); });
+        return d;
+      });
+      await settle();
+
+      scan.appendMatches([500]);
+      await settle();
+      const first = scan.lines();
+      scan.appendMatches([501]);
+      await settle();
+
+      // Same instance, grown in place…
+      expect(scan.lines()).toBe(first);
+      expect([...scan.lines()!]).toEqual([500, 501]);
+      // …and every flush still reached the subscriber (the `equals: false`
+      // contract: reference stable, contents not).
+      expect(seen).toEqual([-1, 1, 2]);
+      dispose();
     });
 
     it('is a no-op with no active filter: idle, after a parse error, and after a backend rejection', async () => {

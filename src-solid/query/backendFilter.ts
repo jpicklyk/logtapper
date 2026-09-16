@@ -82,15 +82,38 @@ function fromLeaf(field: string, value: string): BackendFilter | null {
   }
 }
 
-/** Merge source criteria fields into target (union semantics per field). */
-function merge(target: FilterCriteria, source: FilterCriteria): void {
-  if (source.logLevels) target.logLevels = [...(target.logLevels ?? []), ...source.logLevels];
-  if (source.pids)      target.pids      = [...(target.pids      ?? []), ...source.pids];
-  if (source.tags)      target.tags      = [...(target.tags      ?? []), ...source.tags];
+/**
+ * Merge source criteria fields into target (union semantics per field).
+ *
+ * Returns true when a field that already held a value gained another one —
+ * i.e. the merge *widened* that field. The backend evaluates a multi-value
+ * field as OR (`tags_lower.iter().any(…)`, `src-tauri/src/core/filter.rs`;
+ * same for `logLevels`/`pids`), which is the right semantics under an OR node
+ * and a superset under an AND node. Only the AND caller needs to know, and
+ * only so it can force the JS pass that narrows the superset back down — see
+ * `fromNode`'s `and` branch (M4).
+ */
+function merge(target: FilterCriteria, source: FilterCriteria): boolean {
+  let widened = false;
+  if (source.logLevels) {
+    widened ||= (target.logLevels?.length ?? 0) > 0;
+    target.logLevels = [...(target.logLevels ?? []), ...source.logLevels];
+  }
+  if (source.pids) {
+    widened ||= (target.pids?.length ?? 0) > 0;
+    target.pids = [...(target.pids ?? []), ...source.pids];
+  }
+  if (source.tags) {
+    widened ||= (target.tags?.length ?? 0) > 0;
+    target.tags = [...(target.tags ?? []), ...source.tags];
+  }
   // Keep the longer (more specific) textSearch — a longer needle produces
-  // fewer false positives from the backend pre-filter.
+  // fewer false positives from the backend pre-filter. Dropping the other
+  // needle is a superset too, but every textSearch source already carries
+  // `needsJsPass: true`, so the JS pass that confirms it is never skipped.
   if (source.textSearch && (!target.textSearch || source.textSearch.length > target.textSearch.length))
     target.textSearch = source.textSearch;
+  return widened;
 }
 
 function fromNode(n: FilterNode): BackendFilter | null {
@@ -147,7 +170,13 @@ function fromNode(n: FilterNode): BackendFilter | null {
         if (isHeterogeneousOr) {
           needsJs = true;
         } else {
-          merge(merged, r.criteria);
+          // A second value for a field that already has one (`tag:A tag:B`,
+          // `level:E level:W`, `pid:1 pid:2`) is an OR to the backend while
+          // the expression means AND — an exact-flagged answer with the wrong
+          // semantics, which rendered every line tagged A *or* B (M4). The
+          // criteria stays as-is (it is still a superset), but the JS pass is
+          // now mandatory so `matchesFilter` narrows it back to the AND.
+          if (merge(merged, r.criteria)) needsJs = true;
           if (r.needsJsPass) needsJs = true;
           anyExtracted = true;
         }

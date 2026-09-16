@@ -112,6 +112,39 @@ describe('createLiveStreamStore', () => {
     disposeSessions();
   });
 
+  // H2: `handleBatch` republishes the streaming status on every payload (a
+  // fresh object, so `onStatus` always fires). Focusing from outside the
+  // "session is new" guard therefore snapped the user back to the live tab
+  // within one batch interval (~50 ms) of clicking any other one — remounting
+  // its QueryBar and every focus-derived panel — for as long as the capture
+  // ran. Focus belongs to the transition into streaming only.
+  it('does not re-focus the live session on every batch, so another tab stays readable', async () => {
+    const channel = captureOnEvent();
+    const { sessions, dispose: disposeSessions } = makeSessionStore();
+    const store = createLiveStreamStore({
+      cacheManager: makeCacheController(),
+      registry: makeRegistry(),
+      sessions,
+    });
+
+    await store.start('emulator-5554');
+    expect(sessions.focusedId()).toBe('s1');
+
+    // The user opens (or clicks back to) another session while capturing.
+    sessions.add(makeLoadResult({ sessionId: 's2', isStreaming: false, sourceName: 'other.log' }));
+    sessions.setFocused('s2');
+
+    channel.fire({ event: 'batch', data: { sessionId: 's1', lines: [], totalLines: 900 } } as never);
+    channel.fire({ event: 'batch', data: { sessionId: 's1', lines: [], totalLines: 1800 } } as never);
+
+    expect(sessions.focusedId()).toBe('s2');
+    // The line count still tracks the stream — only the focus write moved.
+    expect(sessions.byId('s1')?.totalLines).toBe(1800);
+
+    store.dispose();
+    disposeSessions();
+  });
+
   // Regression, found by the phase's live smoke rather than by any unit test.
   // Nothing else updates a live session's line count: `updateTotal`'s other
   // callers are the file-open path and the index-progress events, neither of
