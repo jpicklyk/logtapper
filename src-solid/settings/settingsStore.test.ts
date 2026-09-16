@@ -57,7 +57,7 @@ describe('settingsStore', () => {
       replacements: [{ token: '<EMAIL-1>', original: 'a@b.com', category: 'email', start: 5, end: 12 }],
     };
     const testAnonymizer = vi.fn(() => Promise.resolve(result));
-    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { testAnonymizer } });
+    const store = createSettingsStore({ mcpStatus: noStatus(), storage: memoryStorage(), commands: { testAnonymizer } });
     const returned = await store.runAnonymizerTest('user a@b.com logged in');
     expect(testAnonymizer).toHaveBeenCalledWith('user a@b.com logged in');
     expect(returned).toEqual(result);
@@ -75,7 +75,7 @@ describe('settingsStore', () => {
       return Promise.resolve();
     });
     const listThemes = vi.fn(() => Promise.resolve(savedThemes.map((t) => ({ ...t }))));
-    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { writeTextFile, readTextFile, writeTheme, listThemes } });
+    const store = createSettingsStore({ mcpStatus: noStatus(), storage: memoryStorage(), commands: { writeTextFile, readTextFile, writeTheme, listThemes } });
     await store.exportThemeToFile('C:/themes/midnight.json', theme);
     expect(writeTextFile).toHaveBeenCalledWith('C:/themes/midnight.json', JSON.stringify(theme, null, 2));
     const modified: UserTheme = { ...theme, tokens: { ...theme.tokens, '--surface': '#101010' } };
@@ -89,14 +89,14 @@ describe('settingsStore', () => {
   it('importThemeFromFile rejects invalid themes without writing them', async () => {
     const readTextFile = vi.fn(() => Promise.resolve(JSON.stringify({ name: '', base: 'nope', tokens: {} })));
     const writeTheme = vi.fn(() => Promise.resolve());
-    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { readTextFile, writeTheme } });
+    const store = createSettingsStore({ mcpStatus: noStatus(), storage: memoryStorage(), commands: { readTextFile, writeTheme } });
     await expect(store.importThemeFromFile('C:/bad.json', 'bad')).rejects.toThrow();
     expect(writeTheme).not.toHaveBeenCalled();
     store.dispose();
   });
   it('setAgentRawAccess calls the exact backend command', async () => {
     const setAgentRawAccess = vi.fn(() => Promise.resolve());
-    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { setAgentRawAccess } });
+    const store = createSettingsStore({ mcpStatus: noStatus(), storage: memoryStorage(), commands: { setAgentRawAccess } });
     await store.setAgentRawAccess(true);
     expect(setAgentRawAccess).toHaveBeenCalledWith(true);
     expect(store.agentRawAccessPending()).toBe(false);
@@ -105,7 +105,7 @@ describe('settingsStore', () => {
   it('allowlist writes call setMcpOpenAllowlist with the exact merged allowlist', async () => {
     const getMcpOpenAllowlist = vi.fn(() => Promise.resolve({ allowedDirs: ['C:/logs'], allowAll: false }));
     const setMcpOpenAllowlist = vi.fn(() => Promise.resolve());
-    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { getMcpOpenAllowlist, setMcpOpenAllowlist } });
+    const store = createSettingsStore({ mcpStatus: noStatus(), storage: memoryStorage(), commands: { getMcpOpenAllowlist, setMcpOpenAllowlist } });
     store.refreshAllowlist();
     await vi.waitFor(() => expect(store.allowlist()).not.toBeNull());
     await store.addAllowDir('D:/captures');
@@ -120,7 +120,7 @@ describe('settingsStore error channel (D1-H3)', () => {
   it('records a rejected mutation, clears it on the next attempt, and on clearError()', async () => {
     let fail = true;
     const setAgentRawAccess = vi.fn(() => (fail ? Promise.reject(new Error('backend said no')) : Promise.resolve()));
-    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { setAgentRawAccess } });
+    const store = createSettingsStore({ mcpStatus: noStatus(), storage: memoryStorage(), commands: { setAgentRawAccess } });
 
     expect(store.error()).toBeNull();
     await expect(store.setAgentRawAccess(true)).rejects.toThrow('backend said no');
@@ -142,7 +142,7 @@ describe('settingsStore error channel (D1-H3)', () => {
   it('a rejected allowlist write keeps its message while the rollback refresh runs', async () => {
     const getMcpOpenAllowlist = vi.fn(() => Promise.resolve({ allowedDirs: ['C:/logs'], allowAll: false }));
     const setMcpOpenAllowlist = vi.fn(() => Promise.reject(new Error('policy gate: NOT_ALLOWED')));
-    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { getMcpOpenAllowlist, setMcpOpenAllowlist } });
+    const store = createSettingsStore({ mcpStatus: noStatus(), storage: memoryStorage(), commands: { getMcpOpenAllowlist, setMcpOpenAllowlist } });
     store.refreshAllowlist();
     await vi.waitFor(() => expect(store.allowlist()).not.toBeNull());
 
@@ -160,7 +160,7 @@ describe('settingsStore security-toggle freshness (D1-M6)', () => {
     const refreshMcpStatus = vi.fn();
     let fail = false;
     const setAgentRawAccess = vi.fn(() => (fail ? Promise.reject(new Error('nope')) : Promise.resolve()));
-    const store = createSettingsStore({ mcpStatus: noStatus(), refreshMcpStatus, commands: { setAgentRawAccess } });
+    const store = createSettingsStore({ mcpStatus: noStatus(), storage: memoryStorage(), refreshMcpStatus, commands: { setAgentRawAccess } });
 
     await store.setAgentRawAccess(true);
     expect(refreshMcpStatus).toHaveBeenCalledTimes(1);
@@ -177,7 +177,7 @@ describe('settingsStore security-toggle freshness (D1-M6)', () => {
   it('re-reads McpStatus after the bridge toggle', async () => {
     const refreshMcpStatus = vi.fn();
     const startMcpBridge = vi.fn(() => Promise.resolve());
-    const store = createSettingsStore({ mcpStatus: noStatus(), refreshMcpStatus, commands: { startMcpBridge } });
+    const store = createSettingsStore({ mcpStatus: noStatus(), storage: memoryStorage(), refreshMcpStatus, commands: { startMcpBridge } });
     await store.setMcpBridgeEnabled(true);
     expect(refreshMcpStatus).toHaveBeenCalledTimes(1);
     store.dispose();
@@ -185,7 +185,7 @@ describe('settingsStore security-toggle freshness (D1-M6)', () => {
 
   it('builds without a refreshMcpStatus dep', async () => {
     const setAgentRawAccess = vi.fn(() => Promise.resolve());
-    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { setAgentRawAccess } });
+    const store = createSettingsStore({ mcpStatus: noStatus(), storage: memoryStorage(), commands: { setAgentRawAccess } });
     await expect(store.setAgentRawAccess(true)).resolves.toBeUndefined();
     store.dispose();
   });
