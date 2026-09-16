@@ -62,6 +62,27 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/* Esc and an outside click close the popover too, but a visible control is
+   the one a reader can find (sign-off review). */
+.closeButton {
+  margin-left: auto;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.closeButton:hover,
+.closeButton:focus-visible {
+  color: var(--text);
+  background: var(--bg-input);
+}
+
 .fileName {
   flex: 1;
   min-width: 0;

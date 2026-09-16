@@ -659,7 +659,9 @@ export function App(props: AppProps) {
               sourceName={store.focused()?.load.sourceName}
               firstTimestamp={store.focused()?.load.firstTimestamp}
               lastTimestamp={store.focused()?.load.lastTimestamp}
-              onShowFileInfo={store.focused() ? () => setSessionInfoOpen(true) : undefined}
+              // A toggle, not an opener: a second click on the same button is
+              // the natural way to put the popover away again.
+              onShowFileInfo={store.focused() ? () => setSessionInfoOpen((v) => !v) : undefined}
             />
           ),
           analyzers: () => (

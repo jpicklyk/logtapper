@@ -92,6 +92,25 @@ describe('SessionInfo', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('closes from its own × button, in both uncontrolled and controlled modes', () => {
+    const { unmount } = render(() => <SessionInfo entry={entry()} metadata={null} onReopenAs={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('status-session'));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /close session info/i }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    unmount();
+
+    const [open, setOpen] = createSignal(true);
+    const onOpenChange = vi.fn((next: boolean) => setOpen(next));
+    render(() => (
+      <SessionInfo entry={entry()} metadata={null} onReopenAs={vi.fn()} open={open} onOpenChange={onOpenChange} />
+    ));
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /close session info/i }));
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('opens a dialog popover on click, closed by default', () => {
     render(() => <SessionInfo entry={entry()} metadata={null} onReopenAs={vi.fn()} />);
 

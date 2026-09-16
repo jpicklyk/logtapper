@@ -203,6 +203,15 @@ function SessionInfoPopover(props: SessionInfoPopoverProps): JSX.Element {
           {load().sourceName}
         </span>
         <span class={styles.typeBadge}>{load().sourceType}</span>
+        <button
+          type="button"
+          class={styles.closeButton}
+          aria-label="Close session info"
+          title="Close (Esc)"
+          onClick={() => props.onClose()}
+        >
+          ×
+        </button>
       </div>
 
       <Show when={props.canReopen}>
