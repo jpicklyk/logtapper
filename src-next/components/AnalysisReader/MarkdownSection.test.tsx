@@ -56,7 +56,7 @@ describe('MarkdownSection — external links', () => {
     expect(openExternalUrl).not.toHaveBeenCalled();
   });
 
-  it('does not open a relative or fragment-only href', () => {
+  it('blocks a relative href but leaves a fragment href to the browser', () => {
     render(
       <MarkdownSection
         section={sectionWith('[rel](./notes.md) and [frag](#heading)')}
@@ -64,8 +64,12 @@ describe('MarkdownSection — external links', () => {
       />,
     );
 
-    clickLink('rel');
-    clickLink('frag');
+    // A relative href would otherwise navigate the chrome-less webview with no
+    // way back — it must be default-prevented even though there is nothing to
+    // hand to the OS. A fragment href is a same-page scroll and must NOT be
+    // prevented, or in-document navigation breaks.
+    expect(clickLink('rel')).toBe(true);
+    expect(clickLink('frag')).toBe(false);
     expect(openExternalUrl).not.toHaveBeenCalled();
   });
 
