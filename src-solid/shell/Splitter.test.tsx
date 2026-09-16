@@ -85,6 +85,60 @@ describe('createRegionWidths', () => {
     expect(widths.width('presence')).toBe(DEFAULT_REGION_WIDTH.presence);
     dispose();
   });
+
+  it('toColumns reports only the regions with an explicit width', () => {
+    const [widths, dispose] = inRoot(() => createRegionWidths(() => 'ws-cols'));
+    expect(widths.toColumns()).toEqual({});
+
+    widths.setWidth('navigator', 333);
+    expect(widths.toColumns()).toEqual({ navigator: 333 });
+
+    dispose();
+  });
+
+  it('applyColumns seeds a dragged width through a save/restore round trip', () => {
+    const [widths, dispose] = inRoot(() => createRegionWidths(() => 'ws-roundtrip'));
+    widths.setWidth('details', 501);
+    widths.commit();
+
+    const blob = widths.toColumns();
+    expect(blob).toEqual({ details: 501 });
+
+    // Simulate a fresh shell instance (e.g. reopening on another machine)
+    // restoring from the saved blob rather than from localStorage.
+    const [fresh, disposeFresh] = inRoot(() => createRegionWidths(() => 'ws-elsewhere'));
+    fresh.applyColumns(blob);
+    expect(fresh.width('details')).toBe(501);
+
+    dispose();
+    disposeFresh();
+  });
+
+  it('applyColumns leaves a region the blob has no entry for at its localStorage fallback', () => {
+    localStorage.setItem(widthsStorageKey('ws-fallback'), JSON.stringify({ navigator: 260 }));
+    const [widths, dispose] = inRoot(() => createRegionWidths(() => 'ws-fallback'));
+    expect(widths.width('navigator')).toBe(260);
+
+    // The restored blob only carries `details` — `navigator` must keep the
+    // per-machine value already loaded, not fall back to the hardcoded default.
+    widths.applyColumns({ details: 400 });
+    expect(widths.width('navigator')).toBe(260);
+    expect(widths.width('details')).toBe(400);
+
+    dispose();
+  });
+
+  it('applyColumns ignores unrecognised keys and does not write localStorage', () => {
+    const [widths, dispose] = inRoot(() => createRegionWidths(() => 'ws-ignore'));
+    widths.applyColumns({ rail: 999, navigator: 300 });
+    expect(widths.width('navigator')).toBe(300);
+    // A future/unknown region name must not throw or leak into a resizable slot.
+    expect(Object.keys(widths.toColumns())).toEqual(['navigator']);
+    // `apply` seeds from a restore, not a drag on this machine — it must not
+    // stamp the per-machine cache (see `RegionWidths.applyColumns`'s doc).
+    expect(localStorage.getItem(widthsStorageKey('ws-ignore'))).toBeNull();
+    dispose();
+  });
 });
 
 describe('Splitter', () => {

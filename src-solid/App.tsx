@@ -26,7 +26,7 @@ import {
   createTier,
   isSplitTier,
 } from './shell';
-import type { TabDescriptor } from './shell';
+import type { ShellLayoutHandle, TabDescriptor } from './shell';
 import { QueryBar, createLiveFilterBindings, createQueryStore } from './query';
 import type { FilterScan } from './query';
 import { PresencePanel, createPresenceStore } from './presence';
@@ -204,10 +204,33 @@ export function App(props: AppProps) {
   // Workspace home + switcher (W1b) — the workspace list, open/save/switch,
   // rename/delete over B3's wrappers. `store`/`actions` already satisfy the
   // structural `WorkspaceSessions`/`WorkspaceSessionActions` deps, so no
-  // adapter is needed. `shellLayout` is not wired yet — that needs a port out
-  // of `shell/Splitter.ts`, which is outside this file's scope (see W1a's own
-  // "Ask for W1b" in its implementation notes); until then a save/restore
-  // round-trips only React's layout keys, never Solid's own pane widths.
+  // adapter is needed.
+  //
+  // `shellLayout` round-trips three of `SolidLayout`'s four shell-state
+  // fields (S1c):
+  //  - `split` — S1's viewer-region split pane, via `splitView` as before.
+  //  - `columns` — `AppShell`'s per-region splitter widths. `AppShell` hands
+  //    back its live `RegionWidths` store through `onReady` below (the
+  //    `shellBox` forward reference, same trick `editorStoreBox` uses two
+  //    lines down); `read()` snapshots it, `apply()` seeds it. Region widths
+  //    were already per-workspace before this — `Splitter.ts`'s
+  //    `localStorage` keyed them by workspace id — so this moves the source
+  //    of truth into the `.ltw` blob (portable across machines) while
+  //    `localStorage` stays as the per-machine fallback for a region the
+  //    blob has no entry for (an older save, or a region added later).
+  //  - `collapsed` — the rail's open-drawer id (`AppShell`'s `openDrawer`),
+  //    as a 0-or-1-element array. Ported because it is part of the
+  //    arrangement a user made for a workspace, the same way the split and
+  //    the column widths are; `apply()` re-validates it against the
+  //    restoring window's own tier/mode (`ShellLayoutHandle.applyDrawer`)
+  //    instead of springing open a drawer that no longer applies.
+  //
+  // `tabs`/`activeTab` are deliberately left empty. The tab strip's order
+  // and selection are already fully determined by the restored session
+  // order and focused session (`applyRestore` replays the manifest through
+  // `store.order()`/`actions.focus`), so persisting a second copy of "which
+  // tab is where" here would just be a second source of truth for the same
+  // thing, free to drift from the first on the next reorder.
   //
   // `getEditorTabs` closes over a forward reference: the workspace store must
   // exist before `createEditorStore` (the editor store reads the workspace's
@@ -215,19 +238,34 @@ export function App(props: AppProps) {
   // W9's save-time provider is injected. A boxed reference filled in right
   // after breaks the cycle without changing W1a's `WorkspaceStoreDeps` shape.
   const editorStoreBox: { current?: Pick<EditorStore, 'toLtwTabs'> } = {};
+  // Same forward-reference trick for `AppShell`'s region-width store and
+  // open-drawer state — `AppShell` is only constructed below, in the JSX
+  // this function returns, but `onReady` fires during that construction
+  // (Solid runs a component's setup body once, synchronously), which is
+  // still before `startupRestore()`/`openWorkspace()` ever call `apply()`
+  // (both run from `onMount`, which fires only after the whole initial
+  // render — including `AppShell`'s own setup — has completed).
+  const shellBox: { current?: ShellLayoutHandle } = {};
   const workspace = createWorkspaceStore({
     sessions: store,
     actions,
     getEditorTabs: () => editorStoreBox.current?.toLtwTabs() ?? [],
-    // Only the split (S1) is wired into `.ltw` persistence so far — the
-    // region-width/collapsed-rail/tab-strip fields of `SolidLayout` stay
-    // their empty defaults until a future package ports `Splitter`'s
-    // localStorage widths onto this same port (see this task's
-    // implementation-notes: W1b's shellLayout was left unwired for exactly
-    // this reason).
     shellLayout: {
-      read: () => ({ columns: {}, collapsed: [], tabs: [], activeTab: null, split: splitView.toLayout() }),
-      apply: (layout) => splitView.applyLayout(layout.split),
+      read: () => ({
+        columns: shellBox.current?.widths.toColumns() ?? {},
+        collapsed: (() => {
+          const id = shellBox.current?.openDrawer() ?? null;
+          return id === null ? [] : [id];
+        })(),
+        tabs: [],
+        activeTab: null,
+        split: splitView.toLayout(),
+      }),
+      apply: (layout) => {
+        shellBox.current?.widths.applyColumns(layout.columns);
+        shellBox.current?.applyDrawer(layout.collapsed[0] ?? null);
+        splitView.applyLayout(layout.split);
+      },
     },
   });
   onCleanup(() => workspace.dispose());
@@ -590,6 +628,11 @@ export function App(props: AppProps) {
         // restore that populates sessions a moment later does not yank it away,
         // and closing it makes it stay closed.
         initialDrawer={store.order().length === 0 ? 'workspace-home' : null}
+        // See the `shellBox` comment above `createWorkspaceStore`: this is
+        // the forward reference the `shellLayout` port reads and seeds.
+        onReady={(handle) => {
+          shellBox.current = handle;
+        }}
         topBar={topBar}
         statusBar={statusBar}
         slots={{

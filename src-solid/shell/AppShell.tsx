@@ -14,7 +14,7 @@ import {
 } from './surfaces';
 import type { RegionId, SurfaceDef, SurfaceId } from './surfaces';
 import { Splitter, createRegionWidths } from './Splitter';
-import type { ResizableRegion } from './Splitter';
+import type { RegionWidths, ResizableRegion } from './Splitter';
 import { WindowControls } from './WindowControls';
 import styles from './shell.module.css';
 
@@ -65,6 +65,36 @@ export interface AppShellProps {
   statusBar?: JSX.Element;
   slots?: SurfaceSlots;
   regionSlots?: RegionSlots;
+  /**
+   * Hands the caller a reference to this shell instance's region-width store
+   * and open-drawer state, called exactly once at setup (a Solid component's
+   * function body runs once for its whole lifetime, so this is not a render
+   * effect — same forward-reference trick `App.tsx`'s `editorStoreBox` uses
+   * for the editor store). The workspace store's `shellLayout` port is the
+   * only consumer: it needs to read the live widths/drawer for a save and
+   * seed them on a restore, and both live here because validating a restored
+   * drawer id needs this shell's own `mode`/`tier`.
+   */
+  onReady?: (handle: ShellLayoutHandle) => void;
+}
+
+/**
+ * What `AppShell` exposes to whoever owns workspace persistence — the parts
+ * of its state that travel with a saved workspace (S1c). Not itself part of
+ * `SolidLayout`; `App.tsx`'s `shellLayout` port maps these onto that shape.
+ */
+export interface ShellLayoutHandle {
+  /** This shell instance's region-width store. */
+  widths: RegionWidths;
+  /** The currently open drawer's surface id, or null. */
+  openDrawer: Accessor<SurfaceId | null>;
+  /**
+   * Open the given drawer id if it is still openable for the *current*
+   * tier/mode (the same check `initialDrawer` applies on first mount),
+   * otherwise leave it closed. Used to restore a workspace's saved drawer
+   * without springing open an id that no longer applies here.
+   */
+  applyDrawer(id: string | null): void;
 }
 
 /** A surface with no implementation yet still renders, so the shell is reviewable.
@@ -111,16 +141,39 @@ export function AppShell(props: AppShellProps) {
   const mode = createMode({ sessionKind: () => props.sessionKind });
   const widths = createRegionWidths(() => props.workspaceId);
 
+  /** Every surface openable as a drawer right now, for this tier and mode —
+   *  shared by the initial-drawer check below and by `applyDrawer`, which
+   *  needs the identical check at restore time. */
+  const openableSurfaces = (): SurfaceDef[] => [
+    ...railSurfaces(mode(), tier()),
+    ...drawerSurfaces(mode(), tier()),
+  ];
+
   // Read once, untracked: see `initialDrawer`'s doc. A surface that is not a
   // drawer on this tier and mode is ignored rather than opening an empty aside.
   const [openDrawer, setOpenDrawer] = createSignal<SurfaceId | null>(
     (() => {
       const requested = props.initialDrawer ?? null;
       if (requested === null) return null;
-      const openable = [...railSurfaces(mode(), tier()), ...drawerSurfaces(mode(), tier())];
-      return openable.some((s) => s.id === requested) ? requested : null;
+      return openableSurfaces().some((s) => s.id === requested) ? requested : null;
     })(),
   );
+
+  /** See `ShellLayoutHandle.applyDrawer`'s doc. */
+  const applyDrawer = (id: string | null): void => {
+    if (id === null) {
+      setOpenDrawer(null);
+      return;
+    }
+    const match = openableSurfaces().find((s) => s.id === id);
+    setOpenDrawer(match?.id ?? null);
+  };
+
+  // Called once, deliberately non-reactively: `onReady` is a one-shot handoff
+  // of the store references at setup, not a value the shell needs to re-emit
+  // on every prop change (same non-reactive read as `props.tier` above).
+  // eslint-disable-next-line solid/reactivity -- one-shot handoff at setup, by design
+  props.onReady?.({ widths, openDrawer, applyDrawer });
 
   const regions = createMemo(() => activeRegions(mode(), tier()));
 
