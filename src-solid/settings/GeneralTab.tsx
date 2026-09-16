@@ -1,8 +1,8 @@
 /** @jsxImportSource solid-js */
-import { For, Show, createMemo, onMount } from 'solid-js';
+import { For, Show, createEffect, createMemo, onMount } from 'solid-js';
 import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog';
-import { BASE_THEMES } from '../theme/applyTheme';
-import type { Density, ThemeController, ThemeMode } from '../theme/applyTheme';
+import { BASE_THEMES } from '../theme';
+import type { Density, ThemeController, ThemeMode } from '../theme';
 import type { SettingsStore } from './settingsStore';
 import styles from './settings.module.css';
 const THEME_MODES: readonly ThemeMode[] = ['system', ...BASE_THEMES];
@@ -18,6 +18,15 @@ function bridgeLabel(running: boolean, idleSecs: number | null, enabled: boolean
   if (idleSecs === null) return 'ready';
   return idleSecs <= 30 ? 'connected' : 'ready';
 }
+/**
+ * Every store mutation already records its rejection in `store.error()`, which
+ * `SettingsPanel` renders as a dismissible alert above the tabs. This only stops
+ * the rejection surfacing a second time as an unhandled promise — it is not a
+ * swallow: dropping it here would make the failure invisible again (D1-H3).
+ */
+function reported(p: Promise<unknown>): void {
+  void p.catch(() => undefined);
+}
 export function GeneralTab(props: GeneralTabProps) {
   onMount(() => {
     props.store.refreshAllowlist();
@@ -25,9 +34,12 @@ export function GeneralTab(props: GeneralTabProps) {
   });
   const status = createMemo(() => props.store.mcpStatus());
   const running = createMemo(() => status()?.running ?? false);
+  /** No `McpStatus` yet: the backend's answer is unknown, so the security toggle
+   *  below must not claim one (M6). */
+  const statusUnknown = createMemo(() => status() === null);
   const addDir = async (): Promise<void> => {
     const result = await openDirectoryDialog({ directory: true, multiple: false }).catch(() => null);
-    if (typeof result === 'string') await props.store.addAllowDir(result).catch(() => undefined);
+    if (typeof result === 'string') reported(props.store.addAllowDir(result));
   };
   return (
     <div class={styles.panel} data-testid="general-tab">
@@ -55,18 +67,31 @@ export function GeneralTab(props: GeneralTabProps) {
             <span>HTTP Bridge</span>
             <span class={styles.labelHint}>Runs a local server on port 40404 for AI agent integration.</span>
           </div>
-          <input type="checkbox" checked={running()} disabled={props.store.mcpBridgePending()} onChange={(e) => void props.store.setMcpBridgeEnabled(e.currentTarget.checked).catch(() => undefined)} />
+          <input type="checkbox" checked={running()} disabled={props.store.mcpBridgePending()} onChange={(e) => reported(props.store.setMcpBridgeEnabled(e.currentTarget.checked))} />
         </div>
         <div class={styles.statusRow}>
           <span class={styles.statusDot} style={{ '--status-color': running() ? 'var(--success)' : 'var(--text-dimmed)' }} />
-          <span>Bridge: {bridgeLabel(running(), status()?.idleSecs ?? null, running())}</span>
+          <span>Bridge: {bridgeLabel(running(), status()?.idleSecs ?? null, props.store.mcpBridgeEnabled())}</span>
         </div>
         <div class={styles.row}>
           <div class={styles.label}>
             <span>Allow agents to read raw (un-anonymized) log text</span>
             <span class={styles.labelHint}>Off by default: agents read PII replaced by stable tokens such as {'<EMAIL-1>'}.</span>
           </div>
-          <input type="checkbox" checked={status()?.agentRawAccess ?? false} disabled={props.store.agentRawAccessPending()} onChange={(e) => void props.store.setAgentRawAccess(e.currentTarget.checked).catch(() => undefined)} />
+          <input
+            type="checkbox"
+            data-testid="agent-raw-access"
+            ref={(el) => {
+              // `indeterminate` is a DOM property with no attribute; an effect is
+              // the only way to keep it bound to the "status not known yet" state.
+              createEffect(() => { el.indeterminate = statusUnknown(); });
+            }}
+            checked={status()?.agentRawAccess ?? false}
+            disabled={statusUnknown() || props.store.agentRawAccessPending()}
+            aria-busy={statusUnknown() || props.store.agentRawAccessPending()}
+            title={statusUnknown() ? 'Waiting for the backend to report the current setting…' : undefined}
+            onChange={(e) => reported(props.store.setAgentRawAccess(e.currentTarget.checked))}
+          />
         </div>
       </div>
       <div class={styles.section}>
@@ -77,14 +102,14 @@ export function GeneralTab(props: GeneralTabProps) {
             <>
               <div class={styles.row}>
                 <span>Allow any path</span>
-                <input type="checkbox" checked={allowlist().allowAll} onChange={(e) => void props.store.setAllowAll(e.currentTarget.checked).catch(() => undefined)} />
+                <input type="checkbox" checked={allowlist().allowAll} onChange={(e) => reported(props.store.setAllowAll(e.currentTarget.checked))} />
               </div>
               <div class={styles.list}>
                 <For each={allowlist().allowedDirs}>
                   {(dir) => (
                     <div class={styles.listRow}>
                       <span class={styles.listRowPath} title={dir}>{dir}</span>
-                      <button type="button" class={styles.iconBtn} title="Remove directory" onClick={() => void props.store.removeAllowDir(dir)}>×</button>
+                      <button type="button" class={styles.iconBtn} title="Remove directory" onClick={() => reported(props.store.removeAllowDir(dir))}>×</button>
                     </div>
                   )}
                 </For>
@@ -101,7 +126,7 @@ export function GeneralTab(props: GeneralTabProps) {
             {(entry) => (
               <div class={styles.row}>
                 <span>{entry.label} (.{entry.ext}){entry.isDefault ? ' — default' : ''}</span>
-                <input type="checkbox" checked={entry.registered} onChange={(e) => void props.store.setFileAssociation(entry.ext, e.currentTarget.checked)} />
+                <input type="checkbox" checked={entry.registered} onChange={(e) => reported(props.store.setFileAssociation(entry.ext, e.currentTarget.checked))} />
               </div>
             )}
           </For>

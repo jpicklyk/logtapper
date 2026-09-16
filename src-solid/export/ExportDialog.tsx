@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { For, Show, onMount } from 'solid-js';
+import { For, Show, createSignal, onMount } from 'solid-js';
 import { save } from '@tauri-apps/plugin-dialog';
 import type { ExportStore } from './exportStore';
 import styles from './export.module.css';
@@ -12,11 +12,27 @@ function defaultFileName(info: { sessions: { sourceFilename: string }[] }): stri
  *  drawer. `props.store.refresh()` runs on mount so reopening it stays current. */
 export function ExportDialog(props: ExportDialogProps) {
   onMount(() => props.store.refresh());
+  /** Destination of the last successful write — the dialog's only success signal;
+   *  without it the button just slides back to "Export…" (L11). */
+  const [savedTo, setSavedTo] = createSignal<string | null>(null);
   const pickDestination = async (): Promise<void> => {
     const info = props.store.info();
     if (!info || info.sessions.length === 0) return;
-    const picked = await save({ defaultPath: defaultFileName(info), filters: [{ name: 'LogTapper Session', extensions: ['lts'] }] });
-    if (typeof picked === 'string') await props.store.runExport(picked).catch(() => undefined);
+    setSavedTo(null);
+    // A cancelled dialog resolves to `null`; a *failed* one rejects (or throws
+    // outright when the dialog backend is unavailable). Neither is a user-facing
+    // error — the user simply gets no file picker — but an unguarded call leaves
+    // an unhandled rejection behind, since this runs from `void pickDestination()` (L11).
+    let picked: string | null;
+    try {
+      picked = await save({ defaultPath: defaultFileName(info), filters: [{ name: 'LogTapper Session', extensions: ['lts'] }] });
+    } catch {
+      return;
+    }
+    if (typeof picked !== 'string') return;
+    // `runExport` records its own rejection in `store.error()`, which is rendered
+    // below; this catch only keeps it from also surfacing as an unhandled rejection.
+    await props.store.runExport(picked).then(() => setSavedTo(picked)).catch(() => undefined);
   };
   const totalBookmarks = () => props.store.info()?.sessions.reduce((n, s) => n + s.bookmarkCount, 0) ?? 0;
   const totalAnalyses = () => props.store.info()?.sessions.reduce((n, s) => n + s.analysisCount, 0) ?? 0;
@@ -39,6 +55,9 @@ export function ExportDialog(props: ExportDialogProps) {
               <p class={styles.hint}>Detected emails, IMEIs, MAC/IP addresses etc. become stable tokens such as {'<EMAIL-1>'}.</p>
             </div>
             <Show when={props.store.error()}><p class={styles.error} role="alert">{props.store.error()}</p></Show>
+            <Show when={!props.store.error() && savedTo()}>
+              {(dest) => <p class={styles.success} role="status" data-testid="export-success">Exported to {dest()}</p>}
+            </Show>
             <div class={styles.actions}>
               <button type="button" class={styles.primaryButton} disabled={props.store.exporting()} onClick={() => void pickDestination()}>
                 {props.store.exporting() ? 'Exporting…' : 'Export…'}

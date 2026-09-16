@@ -37,7 +37,7 @@ import { ExportDialog, createExportStore } from './export';
 import { SettingsPanel, createSettingsStore } from './settings';
 import { createPacksStore, UpdatesPrompt } from './packs';
 import { StreamControlsPanel, createLiveStreamStore } from './stream';
-import type { ThemeController } from './theme/applyTheme';
+import type { ThemeController } from './theme';
 import styles from './App.module.css';
 
 /**
@@ -301,8 +301,14 @@ export function App(props: AppProps) {
 
   // Settings (W8) — General/PII/Themes/Sources tabs for the `settings` rail
   // surface. Reuses A2's `presence.status` (`McpStatus`, already polled
-  // every 5s) instead of polling the bridge a second time.
-  const settings = createSettingsStore({ mcpStatus: presence.status });
+  // every 5s) instead of polling the bridge a second time. `refreshMcpStatus`
+  // is the undebounced re-read the security-relevant setters call after a
+  // write, so a rejected raw-access toggle is corrected from the backend at
+  // once rather than after the next poll.
+  const settings = createSettingsStore({
+    mcpStatus: presence.status,
+    refreshMcpStatus: presence.refreshStatus,
+  });
   onCleanup(() => settings.dispose());
 
   // Packs (P1) — the remote marketplace half (browse/install/uninstall/

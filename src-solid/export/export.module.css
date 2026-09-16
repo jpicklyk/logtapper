@@ -20,6 +20,15 @@
   color: var(--danger);
   background: var(--danger-muted);
 }
+.success {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--success);
+  border-radius: var(--radius-sm, 3px);
+  color: var(--success);
+  background: var(--success-muted);
+  word-break: break-all;
+}
 .actions { display: flex; justify-content: flex-end; }
 .primaryButton {
   padding: 6px 14px;

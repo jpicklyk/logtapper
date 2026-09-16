@@ -508,7 +508,11 @@ describe('App', () => {
     expect(refreshSpies.refreshCatalog).not.toHaveBeenCalled();
     expect(refreshSpies.refreshInstalled).not.toHaveBeenCalled();
 
-    const event = { caller: { kind: 'agent', client: 'claude' }, action: 'install', ids: ['wifi@official'] } as const;
+    const event: Parameters<(typeof handlers)[number]>[0] = {
+      caller: { kind: 'agent', client: 'claude' },
+      action: 'install',
+      ids: ['wifi@official'],
+    };
     for (const fire of handlers) fire(event);
 
     expect(refreshSpies.refreshCatalog).toHaveBeenCalledTimes(1);

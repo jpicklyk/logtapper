@@ -12,7 +12,7 @@
  * security-relevant indicator) > the activity-derived `reading|running|wrote`
  * (transient, hold+decay) > `idle` (the activity machine's resting state).
  */
-import { createEffect, createMemo, createRoot, createSignal } from 'solid-js';
+import { createEffect, createMemo, createRoot, createSignal, untrack } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import type { ActivityEntry } from '@bridge/generated/ActivityEntry';
 
@@ -173,9 +173,16 @@ export function createAgentState(inputs: AgentStateInputs): AgentStateController
     if (inputs.activity) {
       const activity = inputs.activity;
       createEffect(() => {
-        for (const entry of activity()) {
-          if (entry.id > lastSeenId) feed(entry);
-        }
+        const list = activity();
+        // Untracked: `feed()` -> `requestState()` *reads* `activityState()` before
+        // writing it, so without this the effect subscribes to a signal it writes
+        // and re-runs on every hold/decay transition, re-walking the whole journal.
+        // Only `activity()` above should re-trigger it.
+        untrack(() => {
+          for (const entry of list) {
+            if (entry.id > lastSeenId) feed(entry);
+          }
+        });
       });
     }
 

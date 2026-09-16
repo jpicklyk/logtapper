@@ -41,6 +41,16 @@ export const MAX_JOURNAL_ENTRIES = 500;
 /** Bridge-status poll interval. Slow on purpose — every event also forces a refresh. */
 export const STATUS_POLL_MS = 5_000;
 
+/**
+ * Trailing debounce on the event-driven status/name refreshes. A busy agent
+ * emits one `onActivity` per tool call; without this each one costs a
+ * `get_mcp_status` (plus a `get_export_all_sessions_info` for `session.*`) IPC
+ * round trip, turning the journal into an IPC amplifier. The 5 s poll already
+ * bounds how stale the status can get, so collapsing a burst into one refresh
+ * loses nothing.
+ */
+export const STATUS_REFRESH_DEBOUNCE_MS = 250;
+
 /** `true` = an agent's navigation request waits for Apply; `false` = it jumps immediately. */
 export const NAV_CONFIRM_STORAGE_KEY = 'logtapper-presence-nav-confirm';
 
@@ -61,12 +71,21 @@ export interface PresenceStoreOptions {
   navigate?: (target: NavTarget) => void;
   /** Poll interval override (tests). */
   pollMs?: number;
+  /** Event-driven refresh debounce override (tests). */
+  refreshDebounceMs?: number;
   /** Journal page size / cap override (tests). */
   limit?: number;
 }
 
 export interface PresenceStore {
   status: Accessor<McpStatus | null>;
+  /**
+   * Force an immediate `get_mcp_status` re-read. Undebounced: the caller is a
+   * user-initiated write that needs the backend's answer to *that* write
+   * (`settingsStore.setAgentRawAccess` / `setMcpBridgeEnabled`), not the ≤5 s
+   * poll's last one. The backend stays the only writer of `status`.
+   */
+  refreshStatus: () => void;
   agentRawAccess: Accessor<boolean>;
   /** Journaled actions, oldest first, deduped by id and capped. */
   entries: Accessor<readonly ActivityEntry[]>;
@@ -129,6 +148,7 @@ export function createPresenceStore(options: PresenceStoreOptions = {}): Presenc
   return createRoot((disposeRoot) => {
     const cap = options.limit ?? MAX_JOURNAL_ENTRIES;
     const pollMs = options.pollMs ?? STATUS_POLL_MS;
+    const refreshDebounceMs = options.refreshDebounceMs ?? STATUS_REFRESH_DEBOUNCE_MS;
 
     const [status, setStatus] = createSignal<McpStatus | null>(null);
     const [entries, setEntries] = createSignal<readonly ActivityEntry[]>([]);
@@ -195,6 +215,24 @@ export function createPresenceStore(options: PresenceStoreOptions = {}): Presenc
 
     const sessionName = (sessionId: string): string => names()[sessionId] ?? sessionId;
 
+    // ── Debounced event-driven refresh ───────────────────────────────────
+    // One timer for both fetches: a burst of agent activity collapses into a
+    // single trailing refresh (see STATUS_REFRESH_DEBOUNCE_MS).
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let refreshNamesToo = false;
+    const scheduleEventRefresh = (alsoNames: boolean): void => {
+      refreshNamesToo ||= alsoNames;
+      if (refreshTimer !== null) return;
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        const withNames = refreshNamesToo;
+        refreshNamesToo = false;
+        if (disposed) return;
+        if (withNames) refreshSessionNames();
+        refreshStatus();
+      }, refreshDebounceMs);
+    };
+
     // ── Activity journal ─────────────────────────────────────────────────
     const ingest = (incoming: readonly ActivityEntry[]): void => {
       setEntries((previous) => mergeEntries(previous, incoming, cap));
@@ -206,8 +244,9 @@ export function createPresenceStore(options: PresenceStoreOptions = {}): Presenc
         ingest([entry]);
         // A session opening or closing changes the name map; the bridge status
         // (session count, raw access) can change with any journaled mutation.
-        if (entry.action.startsWith('session.')) refreshSessionNames();
-        refreshStatus();
+        // Debounced — a tool-calling agent emits these far faster than either
+        // fetch is worth repeating.
+        scheduleEventRefresh(entry.action.startsWith('session.'));
       }),
     );
 
@@ -319,8 +358,13 @@ export function createPresenceStore(options: PresenceStoreOptions = {}): Presenc
     };
 
     const dispose = (): void => {
+      if (disposed) return; // idempotent: a double call must not re-run agent.dispose()/disposeRoot()
       disposed = true;
       clearInterval(pollTimer);
+      if (refreshTimer !== null) {
+        clearTimeout(refreshTimer);
+        refreshTimer = null;
+      }
       for (const fn of unlisteners) fn();
       unlisteners.length = 0;
       agent.dispose();
@@ -329,6 +373,7 @@ export function createPresenceStore(options: PresenceStoreOptions = {}): Presenc
 
     return {
       status,
+      refreshStatus,
       agentRawAccess,
       entries,
       focus,

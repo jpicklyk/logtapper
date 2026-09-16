@@ -321,3 +321,78 @@ describe('createPresenceStore — disposal', () => {
     expect(s.entries().map((e) => e.id)).toEqual([]);
   });
 });
+
+describe('createPresenceStore — event-driven refresh (C-L2)', () => {
+  it('collapses a burst of activity into one status re-read', async () => {
+    const s = createPresenceStore({ pollMs: 1_000_000, refreshDebounceMs: 20 });
+    store = s;
+    await flush();
+    const baseline = getMcpStatusMock.mock.calls.length;
+    const namesBaseline = getExportAllSessionsInfoMock.mock.calls.length;
+
+    for (let id = 1; id <= 10; id += 1) listeners.activity[0](entry(id));
+    await flush();
+    // Still inside the debounce window: no extra IPC yet.
+    expect(getMcpStatusMock.mock.calls.length).toBe(baseline);
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(getMcpStatusMock.mock.calls.length).toBe(baseline + 1);
+    // Names only re-read when a session.* entry was in the burst.
+    expect(getExportAllSessionsInfoMock.mock.calls.length).toBe(namesBaseline);
+    // Every entry still reached the journal — the debounce is on the refresh, not the ingest.
+    expect(s.entries().length).toBe(10);
+  });
+
+  it('re-reads the session names when a session.* entry is anywhere in the burst', async () => {
+    const s = createPresenceStore({ pollMs: 1_000_000, refreshDebounceMs: 20 });
+    store = s;
+    await flush();
+    const namesBaseline = getExportAllSessionsInfoMock.mock.calls.length;
+
+    listeners.activity[0](entry(1));
+    listeners.activity[0](entry(2, { action: 'session.open', summary: 'opened x' }));
+    listeners.activity[0](entry(3));
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(getExportAllSessionsInfoMock.mock.calls.length).toBe(namesBaseline + 1);
+  });
+
+  it('refreshStatus() re-reads immediately, without waiting out the debounce', async () => {
+    const s = build();
+    await flush();
+    const baseline = getMcpStatusMock.mock.calls.length;
+
+    s.refreshStatus();
+    expect(getMcpStatusMock.mock.calls.length).toBe(baseline + 1);
+    await flush();
+  });
+
+  it('a debounced refresh scheduled before dispose never fires', async () => {
+    const s = createPresenceStore({ pollMs: 1_000_000, refreshDebounceMs: 20 });
+    store = s;
+    await flush();
+    const baseline = getMcpStatusMock.mock.calls.length;
+
+    listeners.activity[0](entry(1));
+    s.dispose();
+    store = null;
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(getMcpStatusMock.mock.calls.length).toBe(baseline);
+  });
+});
+
+describe('createPresenceStore — dispose (C-L12)', () => {
+  it('is idempotent: a second call unlistens nothing further and does not throw', async () => {
+    const s = build();
+    await flush();
+
+    s.dispose();
+    const afterFirst = unlistenCalls.length;
+    expect(afterFirst).toBeGreaterThan(0);
+
+    expect(() => s.dispose()).not.toThrow();
+    expect(unlistenCalls.length).toBe(afterFirst);
+    store = null;
+  });
+});
