@@ -1,11 +1,61 @@
-//! Bridge-wide Axum middleware: trusted-origin gating and activity stamping.
+//! Bridge-wide Axum middleware: trusted-origin gating, activity stamping and
+//! the request-lifecycle event that drives the presence orb.
 
-use axum::{extract::State, middleware, response::IntoResponse};
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use axum::{extract::MatchedPath, extract::State, http::Method, middleware, response::IntoResponse};
+
+use super::respond::client_name;
 use super::BridgeCtx;
+use crate::services::events::{
+    AgentRequestEvent, AgentRequestKind, AgentRequestPhase, AGENT_REQUEST_EVENT,
+};
 use crate::services::ServiceError;
 
-/// Middleware: stamp `mcp_last_activity` on every inbound request.
+/// Sequence for [`AgentRequestEvent::id`]. Process-global: the `start` and
+/// `end` of one request share the value, and no two requests ever do.
+static REQUEST_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Classify an accepted request for the presence orb, or `None` for traffic
+/// that must not count as agent activity.
+///
+/// The one exclusion is the sidecar's heartbeat: `mcp-server/src/index.ts`
+/// polls `GET /mcp/status` every 10 s for as long as the process lives, so
+/// counting it would make an attached-but-idle agent look busy forever. It
+/// still stamps `mcp_last_activity` — that is exactly what the heartbeat is
+/// for — it just emits no event.
+///
+/// `route` is the matched template (`/mcp/sessions/{session_id}/query`), so
+/// the long-running set below is matched exactly against `ROUTES` entries —
+/// when you append a long-running route to `ROUTES`, add it here too, or it
+/// will read as a brief `Write` and the orb will not show `running` for it.
+pub(super) fn classify_request(method: &Method, route: &str) -> Option<AgentRequestKind> {
+    const LONG_RUNNING_POSTS: &[&str] = &[
+        "/mcp/sessions/{session_id}/run_pipeline",
+        "/mcp/sessions/{session_id}/filters",
+        "/mcp/export",
+        "/mcp/adb/stream",
+    ];
+    if *method == Method::GET {
+        return if route == "/mcp/status" { None } else { Some(AgentRequestKind::Read) };
+    }
+    let long_running = *method == Method::POST && LONG_RUNNING_POSTS.contains(&route);
+    Some(if long_running { AgentRequestKind::Run } else { AgentRequestKind::Write })
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+/// Middleware: stamp `mcp_last_activity` on every inbound request, and emit
+/// an [`AgentRequestEvent`] pair (`start` before the handler, `end` after)
+/// for every request that [`classify_request`] counts as agent activity.
+///
+/// Runs INSIDE [`require_local`] (see `super::router()`), so a rejected
+/// request neither stamps nor emits. A request that matches no route has no
+/// `MatchedPath` and emits nothing either — a 404 is not agent work.
 pub(super) async fn record_activity(
     State(ctx): State<BridgeCtx>,
     req: axum::extract::Request,
@@ -14,7 +64,37 @@ pub(super) async fn record_activity(
     if let Ok(mut ts) = ctx.state.mcp_last_activity.lock() {
         *ts = Some(std::time::Instant::now());
     }
-    next.run(req).await
+
+    let classified = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|m| m.as_str().to_owned())
+        .and_then(|route| classify_request(req.method(), &route).map(|kind| (route, kind)));
+    let Some((route, kind)) = classified else {
+        return next.run(req).await;
+    };
+
+    let mut event = AgentRequestEvent {
+        id: REQUEST_SEQ.fetch_add(1, Ordering::Relaxed) + 1,
+        ts: now_millis(),
+        client: client_name(req.headers()).to_owned(),
+        method: req.method().as_str().to_owned(),
+        route,
+        kind,
+        phase: AgentRequestPhase::Start,
+        status: None,
+    };
+    ctx.events
+        .emit_json(AGENT_REQUEST_EVENT, serde_json::to_value(&event).unwrap_or_default());
+
+    let response = next.run(req).await;
+
+    event.ts = now_millis();
+    event.phase = AgentRequestPhase::End;
+    event.status = Some(response.status().as_u16());
+    ctx.events
+        .emit_json(AGENT_REQUEST_EVENT, serde_json::to_value(&event).unwrap_or_default());
+    response
 }
 
 /// Pure decision function: is this request trustworthy as a local, non-browser
@@ -146,6 +226,43 @@ mod tests {
     fn rejects_missing_host() {
         let headers = headers_from(&[]);
         assert!(!is_trusted_request(&headers));
+    }
+
+    // ── classify_request ─────────────────────────────────────────────────────
+
+    #[test]
+    fn heartbeat_is_not_agent_activity() {
+        assert_eq!(classify_request(&Method::GET, "/mcp/status"), None);
+    }
+
+    #[test]
+    fn every_other_get_is_a_read() {
+        for route in ["/mcp/sessions", "/mcp/sessions/{session_id}/query", "/mcp/activity", "/mcp/filters/{filter_id}"] {
+            assert_eq!(classify_request(&Method::GET, route), Some(AgentRequestKind::Read), "{route}");
+        }
+    }
+
+    #[test]
+    fn long_running_posts_are_runs() {
+        for route in [
+            "/mcp/sessions/{session_id}/run_pipeline",
+            "/mcp/sessions/{session_id}/filters",
+            "/mcp/export",
+            "/mcp/adb/stream",
+        ] {
+            assert_eq!(classify_request(&Method::POST, route), Some(AgentRequestKind::Run), "{route}");
+        }
+    }
+
+    #[test]
+    fn other_mutations_are_writes() {
+        assert_eq!(classify_request(&Method::POST, "/mcp/sessions/{session_id}/bookmarks"), Some(AgentRequestKind::Write));
+        assert_eq!(classify_request(&Method::PUT, "/mcp/focus"), Some(AgentRequestKind::Write));
+        assert_eq!(classify_request(&Method::DELETE, "/mcp/filters/{filter_id}"), Some(AgentRequestKind::Write));
+        // Cancelling a filter is a POST under /filters/… but not the scan itself.
+        assert_eq!(classify_request(&Method::POST, "/mcp/filters/{filter_id}/cancel"), Some(AgentRequestKind::Write));
+        // Exact match, not suffix: a sibling route sharing a suffix is not a run.
+        assert_eq!(classify_request(&Method::POST, "/mcp/sessions/{session_id}/export_filters"), Some(AgentRequestKind::Write));
     }
 
     #[test]

@@ -26,7 +26,7 @@ import {
   getMcpStatus,
   setFocus,
 } from '@bridge/commands';
-import { onActivity, onFocusChanged, onNavigateRequest } from '@bridge/events';
+import { onActivity, onAgentRequest, onFocusChanged, onNavigateRequest } from '@bridge/events';
 import type { ActivityEntry, FocusContext, McpStatus, NavRequest } from '@bridge/types';
 import { createAgentState } from './agentState';
 import type { AgentStateController } from './agentState';
@@ -257,6 +257,16 @@ export function createPresenceStore(options: PresenceStoreOptions = {}): Presenc
       .catch(() => {
         // The journal is a nicety; a failed read must not blank the panel.
       });
+
+    // ── Request lifecycle ────────────────────────────────────────────────
+    // The only signal that an agent is *reading* — reads never reach the
+    // journal. Fed straight to the orb; nothing here is stored or refreshed
+    // (a request is not a mutation, and the 5 s poll covers the status).
+    track(
+      onAgentRequest((event) => {
+        if (!disposed) agent.request(event);
+      }),
+    );
 
     // ── Shared focus ─────────────────────────────────────────────────────
     track(

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ActivityEntry, FocusContext, McpStatus, NavRequest } from '@bridge/types';
+import type { ActivityEntry, AgentRequestEvent, FocusContext, McpStatus, NavRequest } from '@bridge/types';
 import {
   NAV_CONFIRM_STORAGE_KEY,
   createPresenceStore,
@@ -27,16 +27,21 @@ vi.mock('@bridge/commands', () => ({
 
 interface Listeners {
   activity: ((e: ActivityEntry) => void)[];
+  request: ((e: AgentRequestEvent) => void)[];
   focus: ((f: FocusContext | null) => void)[];
   nav: ((r: NavRequest) => void)[];
 }
-const listeners: Listeners = { activity: [], focus: [], nav: [] };
+const listeners: Listeners = { activity: [], request: [], focus: [], nav: [] };
 const unlistenCalls: string[] = [];
 
 vi.mock('@bridge/events', () => ({
   onActivity: (cb: (e: ActivityEntry) => void) => {
     listeners.activity.push(cb);
     return Promise.resolve(() => unlistenCalls.push('activity'));
+  },
+  onAgentRequest: (cb: (e: AgentRequestEvent) => void) => {
+    listeners.request.push(cb);
+    return Promise.resolve(() => unlistenCalls.push('request'));
   },
   onFocusChanged: (cb: (f: FocusContext | null) => void) => {
     listeners.focus.push(cb);
@@ -94,6 +99,7 @@ function build(options: { navigate?: (t: NavTarget) => void } = {}): PresenceSto
 
 beforeEach(() => {
   listeners.activity = [];
+  listeners.request = [];
   listeners.focus = [];
   listeners.nav = [];
   unlistenCalls.length = 0;
@@ -295,6 +301,60 @@ describe('createPresenceStore — navigation requests', () => {
   });
 });
 
+describe('createPresenceStore — request lifecycle', () => {
+  function requestEvent(overrides: Partial<AgentRequestEvent> = {}): AgentRequestEvent {
+    return {
+      id: 1,
+      ts: 1_700_000_000_000,
+      client: 'claude-cowork',
+      method: 'GET',
+      route: '/mcp/sessions/{session_id}/query',
+      kind: 'read',
+      phase: 'start',
+      status: null,
+      ...overrides,
+    };
+  }
+
+  it('drives the orb from bridge request events, with no journal entry involved', async () => {
+    const s = build();
+    await flush();
+    expect(s.agent.state()).toBe('idle');
+
+    listeners.request[0](requestEvent());
+    expect(s.agent.state()).toBe('reading');
+    expect(s.agent.inFlight()).toBe(1);
+    expect(s.agent.client()).toBe('claude-cowork');
+    expect(s.entries()).toEqual([]);
+
+    listeners.request[0](requestEvent({ phase: 'end', status: 200 }));
+    expect(s.agent.inFlight()).toBe(0);
+    // Still working — the agent is thinking between calls, not resting.
+    expect(s.agent.state()).toBe('reading');
+  });
+
+  it('a request event does not trigger a status re-read', async () => {
+    const s = build();
+    await flush();
+    const before = getMcpStatusMock.mock.calls.length;
+    listeners.request[0](requestEvent());
+    listeners.request[0](requestEvent({ phase: 'end', status: 200 }));
+    await flush();
+    expect(getMcpStatusMock.mock.calls.length).toBe(before);
+    expect(s.agent.state()).toBe('reading');
+  });
+
+  it('ignores request events after dispose', async () => {
+    const s = build();
+    await flush();
+    const fire = listeners.request[0];
+    s.dispose();
+    store = null;
+    fire(requestEvent());
+    expect(s.agent.inFlight()).toBe(0);
+  });
+});
+
 describe('createPresenceStore — disposal', () => {
   it('unlistens every subscription and stops the poll', async () => {
     const s = build();
@@ -303,7 +363,7 @@ describe('createPresenceStore — disposal', () => {
 
     s.dispose();
     store = null;
-    expect(unlistenCalls.sort()).toEqual(['activity', 'focus', 'nav']);
+    expect(unlistenCalls.sort()).toEqual(['activity', 'focus', 'nav', 'request']);
 
     const before = getMcpStatusMock.mock.calls.length;
     await flush();
