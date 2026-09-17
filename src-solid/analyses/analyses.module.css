@@ -52,6 +52,17 @@
   white-space: nowrap;
 }
 
+/* The session label is a file name and can be long. It gives way (with an
+   ellipsis) before the title does and never takes more than the title's
+   share of the row; the age stays `flex: none`. */
+.indexSession {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .panel {
   display: flex;
   flex-direction: column;

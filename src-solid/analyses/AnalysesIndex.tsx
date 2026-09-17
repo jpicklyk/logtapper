@@ -57,7 +57,11 @@ export function AnalysesIndex(props: AnalysesIndexProps): JSX.Element {
             >
               <span class={styles.indexTitle}>{artifact.title}</span>
               <Show when={sessionLabel(artifact)}>
-                {(label) => <span class={styles.indexMeta}>{label()}</span>}
+                {(label) => (
+                  <span class={`${styles.indexMeta} ${styles.indexSession}`} title={label()}>
+                    {label()}
+                  </span>
+                )}
               </Show>
               <span class={styles.indexMeta}>{relativeTime(artifact.createdAt)}</span>
             </button>
