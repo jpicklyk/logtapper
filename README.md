@@ -6,7 +6,7 @@
 
 # LogTapper
 
-A desktop log analysis tool for Android developers, IT staff, and support personel. Load logcat, bugreport, dumpstate, and kernel (dmesg) files, or stream live from ADB — then search, filter, and run custom analysis pipelines powered by a YAML processor system with embedded Rhai scripting.
+A desktop log analysis tool for Android developers, IT staff, and support personnel. Load logcat, bugreport, dumpstate, and kernel (dmesg) files, or stream live from ADB — then search, filter, and run custom analysis pipelines powered by a YAML processor system with embedded Rhai scripting.
 
 ## Install
 
@@ -49,7 +49,7 @@ supported install route on macOS.
 - Layered pipeline engine: transformers, reporters, state trackers, correlators
 - Rhai scripting sandbox for processor logic
 - PII anonymizer with pluggable detectors
-- Axum HTTP bridge for MCP integration (`127.0.0.1:40404`)
+- Axum HTTP bridge (loopback only) behind the bundled MCP server
 
 **Frontend (Solid 1.9 / TypeScript)**
 - [Vite 8](https://vite.dev/) for bundling and dev server
@@ -66,7 +66,7 @@ supported install route on macOS.
 - **Node.js** >= 22
 - **Rust** (stable toolchain, MSVC on Windows)
 - **npm** (comes with Node)
-- **[Bun](https://bun.sh/)** (required to compile the MCP sidecar binary for production builds)
+- **[Bun](https://bun.sh/)** (optional — only `npm run build:full` needs it, to compile the standalone MCP sidecar binary)
 
 ### Install dependencies
 
@@ -81,7 +81,7 @@ npm install
 npx tauri dev
 
 # Frontend only (no Rust backend)
-npx vite
+npm run dev
 ```
 
 ### Build
@@ -93,6 +93,10 @@ npm run build
 # Full Tauri app bundle (includes Rust compilation)
 npx tauri build
 ```
+
+`npx tauri build` does not compile the MCP sidecar binary; the release workflow stages it
+with Bun. A source checkout therefore has no sidecar, and `tauri dev` starts no MCP server —
+see [Running from source](docs/mcp/README.md#running-from-source) to run it with Node instead.
 
 ### Tests
 
@@ -110,17 +114,17 @@ cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 ## MCP Server
 
 LogTapper ships a bundled MCP ([Model Context Protocol](https://modelcontextprotocol.io/))
-server that gives AI agents direct tool access to your live log sessions — 21 tools
+server that gives AI agents direct tool access to your live log sessions — tools
 for searching lines, running analysis pipelines, reading state-tracker events, and
-managing bookmarks and watches. No Node.js or separate install required.
+managing bookmarks and watches. Installed releases need no Node.js or separate install.
 
 Enable the bridge in **Settings > General > MCP Integration**, then connect your client:
 
 | Client | Setup |
 |---|---|
-| **[Claude Code](docs/mcp/claude-code.md)** | One command with the URL `http://127.0.0.1:40405/mcp` — or let the LogTapper plugin do it |
+| **[Claude Code](docs/mcp/claude-code.md)** | One command with the URL shown in Settings (default `http://127.0.0.1:40405/mcp`) — or let the [LogTapper plugin](plugins/logtapper/README.md) do it |
 | **[Claude Desktop](docs/mcp/claude-desktop.md)** | Install the bundled `.mcpb` relay once from Settings; it forwards to the same URL and never needs updating |
-| **[Other MCP clients](docs/mcp/README.md#step-2--connect-your-client)** | Connect to the URL over Streamable HTTP, or launch the bundled binary over stdio |
+| **[Other MCP clients](docs/mcp/README.md#step-2--connect-your-client)** | Connect to the URL over Streamable HTTP, or launch the binary bundled with installed releases over stdio |
 
 LogTapper must be running with the bridge enabled for tool calls to work.
 
@@ -133,9 +137,11 @@ tool list, and troubleshooting.
 src-tauri/          Rust backend (Tauri commands, parsers, pipeline engine, MCP bridge)
 src-solid/          Frontend source (Solid UI: shell, viewer, stores, surfaces)
 src-shared/         Framework-free modules shared with the frontend (IPC bindings, cache, filter, viewport)
-mcp-server/         MCP server (Node.js, stdio transport)
+mcp-server/         MCP server the app spawns over HTTP, plus the Claude Desktop relay (`.mcpb`)
 marketplace/        Processor marketplace (YAML definitions + pack manifests)
-docs/               Documentation
+plugins/            Claude Code plugin (attach-mcp skill) and its marketplace manifest
+docs/               User documentation (MCP setup, processor authoring)
+design_docs/        Architecture and security design specs
 ```
 
 ## Documentation

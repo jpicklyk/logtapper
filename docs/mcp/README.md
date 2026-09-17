@@ -127,7 +127,7 @@ install.
 
 ## Capabilities
 
-The server exposes 36 tools:
+The server exposes tools in these groups:
 
 - **Session discovery** — list active sessions, get metadata (source type, line
   count, time range, tag distribution), browse bugreport/dumpstate sections
