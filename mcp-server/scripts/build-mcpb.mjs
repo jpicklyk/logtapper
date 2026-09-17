@@ -59,8 +59,11 @@ mkdirSync(join(staging, 'server'), { recursive: true });
 mkdirSync(join(serverRoot, 'dist'), { recursive: true });
 
 // 2. Bundle to a single ESM file — no node_modules ships in the bundle.
+//    The entry is the *relay*, not the server: the bundle forwards tool calls
+//    over HTTP to the server the running app spawns (see src/relay.ts), so it
+//    never carries tool definitions that could go stale.
 run(bin('rolldown'), [
-  join(serverRoot, 'src', 'index.ts'),
+  join(serverRoot, 'src', 'relay.ts'),
   '-o', join(staging, 'server', 'index.js'),
   '--format', 'esm',
   '--platform', 'node',

@@ -190,6 +190,10 @@ pub struct AppState {
     pub startup_file_path: Mutex<Option<String>>,
     /// Shutdown sender for the MCP HTTP bridge. Send `()` to stop the server.
     pub mcp_bridge_shutdown: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+    /// The `logtapper-mcp --http` sidecar the app spawns alongside the bridge,
+    /// so harnesses can reach MCP at one fixed localhost URL. `None` when the
+    /// bridge is off or this build ships no sidecar.
+    pub mcp_http_server: Mutex<Option<std::process::Child>>,
     /// YAML content for session-scoped processors imported from .lts files.
     /// Keyed by scoped ID like `wifi-state@lts-{session-uuid}`.
     /// Ephemeral — removed when the session closes.
@@ -308,6 +312,7 @@ impl AppState {
             packs: Mutex::new(Vec::new()),
             startup_file_path: Mutex::new(None),
             mcp_bridge_shutdown: Mutex::new(None),
+            mcp_http_server: Mutex::new(None),
             lts_processor_yamls: Mutex::new(HashMap::new()),
             workspace_envelope: Mutex::new(None),
             autosave_tx: Mutex::new(None),

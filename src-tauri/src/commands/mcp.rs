@@ -68,7 +68,93 @@ pub async fn start_mcp_bridge(
         let ctx = crate::mcp_bridge::BridgeCtx::new(app);
         tauri::async_runtime::spawn(crate::mcp_bridge::start(ctx, rx));
     }
+    // The MCP-over-HTTP server rides with the bridge: same on/off switch. Runs
+    // on every start call, not only a fresh bridge start, so a child that died
+    // (or a sidecar staged after launch) is picked up without toggling.
+    spawn_mcp_http_server(&state);
     Ok(())
+}
+
+// ── MCP over HTTP — the sidecar served at one fixed localhost URL ───────────
+//
+// Harnesses that speak Streamable HTTP (Claude Code, Cursor, VS Code, …) get
+// `http://127.0.0.1:40405/mcp` instead of a per-install binary path, and the
+// server they reach is always the one that shipped with the running app. The
+// Claude Desktop bundle is a stdio relay to the same URL (mcp-server/src/relay.ts).
+
+/// Port the app-spawned `logtapper-mcp --http` listens on (loopback only).
+pub const MCP_HTTP_PORT: u16 = 40405;
+
+/// The URL harnesses connect to while the HTTP server is up.
+pub fn mcp_http_url() -> String {
+    format!("http://127.0.0.1:{MCP_HTTP_PORT}/mcp")
+}
+
+/// Spawn `logtapper-mcp --http <port>` from next to our own executable.
+///
+/// No-op (with a log line) when this build ships no sidecar — `tauri dev`
+/// unless one was staged by hand — or when one is already running.
+pub(crate) fn spawn_mcp_http_server(state: &AppState) {
+    let Ok(mut slot) = state.mcp_http_server.lock() else { return };
+    if let Some(child) = slot.as_mut() {
+        if matches!(child.try_wait(), Ok(None)) {
+            return; // still running
+        }
+        *slot = None;
+    }
+    let Some(sidecar) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(std::path::Path::to_path_buf))
+        .and_then(|d| find_sidecar_in(&d))
+    else {
+        log::info!("[mcp-http] no logtapper-mcp sidecar next to the executable; HTTP endpoint not started");
+        return;
+    };
+
+    let mut cmd = std::process::Command::new(&sidecar);
+    cmd.arg("--http")
+        .arg(MCP_HTTP_PORT.to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        // A console-subsystem child of a GUI app would otherwise open a console window.
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    match cmd.spawn() {
+        Ok(child) => {
+            log::info!("[mcp-http] spawned {} (pid {}) at {}", sidecar.display(), child.id(), mcp_http_url());
+            *slot = Some(child);
+        }
+        Err(e) => log::warn!("[mcp-http] failed to spawn {}: {e}", sidecar.display()),
+    }
+}
+
+/// Kill the HTTP server child if one is running. Safe to call repeatedly.
+pub(crate) fn stop_mcp_http_server(state: &AppState) {
+    let Ok(mut slot) = state.mcp_http_server.lock() else { return };
+    if let Some(mut child) = slot.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+        log::info!("[mcp-http] stopped");
+    }
+}
+
+/// The MCP-over-HTTP URL, or `None` when the server is not running.
+#[tauri::command]
+pub fn get_mcp_http_endpoint(state: tauri::State<'_, std::sync::Arc<AppState>>) -> Option<String> {
+    let mut slot = state.mcp_http_server.lock().ok()?;
+    let child = slot.as_mut()?;
+    match child.try_wait() {
+        Ok(None) => Some(mcp_http_url()),
+        _ => {
+            *slot = None;
+            None
+        }
+    }
 }
 
 /// Stop the MCP HTTP bridge by signalling its shutdown channel.
@@ -79,6 +165,7 @@ pub async fn start_mcp_bridge(
 /// running.
 #[tauri::command]
 pub fn stop_mcp_bridge(state: tauri::State<'_, std::sync::Arc<AppState>>) -> Result<(), String> {
+    stop_mcp_http_server(&state);
     stop_mcp_bridge_inner(&state)
 }
 
@@ -129,6 +216,48 @@ pub fn get_mcp_sidecar_path() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
     find_sidecar_in(dir).map(|p| p.to_string_lossy().into_owned())
+}
+
+// ── Launcher pointer — lets the installed bundle run *this* app's server ────
+//
+// The `.mcpb` Claude Desktop installs is a thin launcher (mcp-server/src/
+// launcher.ts). It reads this file at every start and execs the sidecar it
+// names, so the server Claude Desktop runs is always the one that shipped
+// with the currently installed LogTapper — no bundle re-install per release.
+
+/// File name of the launcher pointer inside the app data directory.
+pub(crate) const LAUNCHER_POINTER_FILE: &str = "mcp-launcher.json";
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LauncherPointer<'a> {
+    command: &'a str,
+    args: [&'a str; 0],
+    app_version: &'a str,
+}
+
+/// Write `<data_dir>/mcp-launcher.json` naming the sidecar found in `exe_dir`.
+///
+/// Returns the pointer path on success. Returns `None` without touching the
+/// file when `exe_dir` holds no sidecar (a plain `tauri dev` build): dev and
+/// installed builds share the app data directory, so a dev run must never
+/// clobber the pointer an installed build wrote.
+pub(crate) fn write_launcher_pointer(
+    data_dir: &std::path::Path,
+    exe_dir: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let sidecar = find_sidecar_in(exe_dir)?;
+    let command = sidecar.to_string_lossy();
+    let json = serde_json::to_string_pretty(&LauncherPointer {
+        command: &command,
+        args: [],
+        app_version: env!("CARGO_PKG_VERSION"),
+    })
+    .ok()?;
+    std::fs::create_dir_all(data_dir).ok()?;
+    let path = data_dir.join(LAUNCHER_POINTER_FILE);
+    std::fs::write(&path, json).ok()?;
+    Some(path)
 }
 
 // ── MCP Bundle (.mcpb) — one-click install for Claude Desktop ──────────────
@@ -383,6 +512,41 @@ mod tests {
         let found = find_sidecar_in(dir.path()).expect("sidecar must be found");
 
         assert_eq!(found, expected);
+    }
+
+    // -------------------------------------------------------------------------
+    // write_launcher_pointer
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_launcher_pointer_names_the_sidecar() {
+        let exe_dir = tempfile::tempdir().unwrap();
+        let data_dir = tempfile::tempdir().unwrap();
+        let sidecar = exe_dir.path().join(sidecar_name("logtapper-mcp"));
+        std::fs::write(&sidecar, b"x").unwrap();
+
+        let written = write_launcher_pointer(data_dir.path(), exe_dir.path()).expect("pointer must be written");
+        assert_eq!(written, data_dir.path().join(LAUNCHER_POINTER_FILE));
+
+        let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&written).unwrap()).unwrap();
+        assert_eq!(json["command"], sidecar.to_string_lossy().as_ref());
+        assert_eq!(json["args"], serde_json::json!([]));
+        assert_eq!(json["appVersion"], env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn test_launcher_pointer_untouched_without_sidecar() {
+        let exe_dir = tempfile::tempdir().unwrap();
+        let data_dir = tempfile::tempdir().unwrap();
+        let existing = data_dir.path().join(LAUNCHER_POINTER_FILE);
+        std::fs::write(&existing, b"{\"command\":\"/installed/logtapper-mcp\"}").unwrap();
+
+        assert!(write_launcher_pointer(data_dir.path(), exe_dir.path()).is_none());
+        assert_eq!(
+            std::fs::read_to_string(&existing).unwrap(),
+            "{\"command\":\"/installed/logtapper-mcp\"}",
+            "a build without a sidecar must not clobber an installed build's pointer"
+        );
     }
 
     #[test]
