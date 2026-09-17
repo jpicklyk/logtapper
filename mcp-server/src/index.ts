@@ -57,8 +57,17 @@ setInterval(() => {
 
 const httpFlag = process.argv.indexOf("--http");
 if (httpFlag >= 0) {
+  // `--http` alone means the default port; a value that is present but not a
+  // port number is a typo the user should hear about, not a silent fallback.
   const raw = process.argv[httpFlag + 1];
-  const port = raw !== undefined && /^\d+$/.test(raw) ? Number(raw) : DEFAULT_HTTP_PORT;
+  let port = DEFAULT_HTTP_PORT;
+  if (raw !== undefined) {
+    port = Number(raw);
+    if (!/^\d+$/.test(raw) || port < 1 || port > 65535) {
+      log(`--http expects a port number, got ${JSON.stringify(raw)}`);
+      process.exit(2);
+    }
+  }
   runHttp(port);
 } else {
   await runStdio();

@@ -8,12 +8,16 @@ LogTapper instance and work with live log sessions by chat.
 
 | Skill | Invoke | What it does |
 |---|---|---|
-| `attach-mcp` | `/logtapper:attach-mcp` — or just *"attach to the LogTapper MCP"* | Detects the LogTapper MCP server (bundled binary in an installed app, or the node/TypeScript server in a dev checkout) and registers it with Claude Code at **user scope**. |
+| `attach-mcp` | `/logtapper:attach-mcp` — or just *"attach to the LogTapper MCP"* | Registers the MCP endpoint LogTapper serves (`http://127.0.0.1:40405/mcp`) with Claude Code at **user scope**, falling back to the bundled binary or a dev checkout over stdio. |
 
 Once attached, LogTapper's tools appear under the `logtapper` namespace
 (`mcp__logtapper__*`): list sessions, search log lines with context, run
 processors, read state-tracker/correlator events, and manage bookmarks and
 watches.
+
+**New in 0.4.0:** LogTapper 0.13 serves MCP over HTTP itself, so `attach-mcp`
+registers a URL instead of a per-install binary path. Nothing to re-register
+after moving or updating LogTapper.
 
 **New in 0.3.0** (backend service-layer migration): full agent parity with the
 desktop UI, not just read access. New tool families —

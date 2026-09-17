@@ -2,8 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
-import type { McpBundleInfo } from '@bridge/types';
-import { claudeCodeCommandFor, desktopConfigFor, McpAgentSetup } from './McpAgentSetup';
+import type { McpBundleInfo, McpStatus } from '@bridge/types';
+import { claudeCodeCommandFor, claudeCodeHttpCommandFor, desktopConfigFor, httpConfigFor, McpAgentSetup } from './McpAgentSetup';
 import { createSettingsStore } from './settingsStore';
 import type { SettingsStore } from './settingsStore';
 
@@ -27,6 +27,17 @@ describe('desktopConfigFor', () => {
   });
 });
 
+describe('claudeCodeHttpCommandFor / httpConfigFor', () => {
+  it('produces the http-transport add command at user scope', () => {
+    expect(claudeCodeHttpCommandFor('http://127.0.0.1:40405/mcp')).toBe(
+      'claude mcp add --transport http --scope user logtapper http://127.0.0.1:40405/mcp',
+    );
+  });
+  it('produces an mcpServers block keyed by url', () => {
+    expect(JSON.parse(httpConfigFor('http://127.0.0.1:40405/mcp'))).toEqual({ mcpServers: { logtapper: { url: 'http://127.0.0.1:40405/mcp' } } });
+  });
+});
+
 describe('claudeCodeCommandFor', () => {
   it('quotes the path for the shell', () => {
     expect(claudeCodeCommandFor('/usr/local/bin/logtapper-mcp')).toBe(
@@ -40,6 +51,8 @@ describe('claudeCodeCommandFor', () => {
 function fakeStore(overrides: {
   resolved?: boolean;
   sidecarPath?: string | null;
+  httpEndpoint?: string | null;
+  bridgeRunning?: boolean;
   bundle?: McpBundleInfo | null;
   installMcpBundle?: () => Promise<void>;
   saveMcpBundle?: (dest: string) => Promise<void>;
@@ -47,9 +60,13 @@ function fakeStore(overrides: {
   const [resolved] = createSignal(overrides.resolved ?? true);
   const [sidecarPath] = createSignal(overrides.sidecarPath === undefined ? '/opt/logtapper/logtapper-mcp' : overrides.sidecarPath);
   const [bundle] = createSignal<McpBundleInfo | null>(overrides.bundle === undefined ? { path: '/opt/logtapper/logtapper.mcpb', installable: true } : overrides.bundle);
+  const [httpEndpoint] = createSignal(overrides.httpEndpoint === undefined ? 'http://127.0.0.1:40405/mcp' : overrides.httpEndpoint);
+  const [status] = createSignal<McpStatus | null>(overrides.bridgeRunning ? ({ running: true } as McpStatus) : null);
   return {
     mcpAgentResolved: resolved,
     mcpSidecarPath: sidecarPath,
+    mcpHttpEndpoint: httpEndpoint,
+    mcpStatus: status,
     mcpBundleInfo: bundle,
     refreshMcpAgentSetup: vi.fn(),
     installMcpBundle: vi.fn(overrides.installMcpBundle ?? (() => Promise.resolve())),
@@ -82,16 +99,41 @@ describe('McpAgentSetup', () => {
     expect(screen.getByText('Save bundle…')).toBeTruthy();
   });
 
-  it('renders the no-sidecar hint when the sidecar path is null (source checkout)', () => {
-    render(() => <McpAgentSetup store={fakeStore({ sidecarPath: null })} />);
+  it('renders the no-sidecar hint when neither the endpoint nor the sidecar exists (source checkout)', () => {
+    render(() => <McpAgentSetup store={fakeStore({ sidecarPath: null, httpEndpoint: null })} />);
     expect(screen.getByText(/No bundled server binary found/)).toBeTruthy();
     expect(screen.queryByText('Copy path')).toBeNull();
+    expect(screen.queryByText('Copy URL')).toBeNull();
   });
 
-  it('still renders the Claude Code block when the Desktop bundle is absent (one allSettled leg missing)', () => {
+  it('tells the user to enable the bridge when the sidecar exists but the endpoint is down', () => {
+    render(() => <McpAgentSetup store={fakeStore({ httpEndpoint: null })} />);
+    expect(screen.getByText(/Enable the MCP bridge above/)).toBeTruthy();
+    expect(screen.queryByText('Copy URL')).toBeNull();
+    expect(screen.getByText('Copy path')).toBeTruthy();
+  });
+
+  it('reports a failed server start, not a bridge-off hint, when the bridge is running without an endpoint', () => {
+    render(() => <McpAgentSetup store={fakeStore({ httpEndpoint: null, bridgeRunning: true })} />);
+    expect(screen.getByText(/MCP server did not start/)).toBeTruthy();
+    expect(screen.queryByText(/Enable the MCP bridge above/)).toBeNull();
+  });
+
+  it('copy URL writes the endpoint, and the HTTP buttons write the URL-based command and config', () => {
+    render(() => <McpAgentSetup store={fakeStore()} />);
+    fireEvent.click(screen.getByText('Copy URL'));
+    expect(writeClipboard).toHaveBeenLastCalledWith('http://127.0.0.1:40405/mcp');
+    fireEvent.click(screen.getByText('Copy claude mcp add command'));
+    expect(writeClipboard).toHaveBeenLastCalledWith(claudeCodeHttpCommandFor('http://127.0.0.1:40405/mcp'));
+    fireEvent.click(screen.getByText('Copy JSON config'));
+    expect(writeClipboard).toHaveBeenLastCalledWith(httpConfigFor('http://127.0.0.1:40405/mcp'));
+  });
+
+  it('still renders the HTTP and by-path blocks when the Desktop bundle is absent (one allSettled leg missing)', () => {
     render(() => <McpAgentSetup store={fakeStore({ bundle: null })} />);
     expect(screen.queryByText('Claude Desktop')).toBeNull();
-    expect(screen.getByText('Claude Code')).toBeTruthy();
+    expect(screen.getByText('Any MCP client (HTTP)')).toBeTruthy();
+    expect(screen.getByText('Launch by path (stdio)')).toBeTruthy();
     expect(screen.getByText('/opt/logtapper/logtapper-mcp')).toBeTruthy();
   });
 
@@ -111,15 +153,15 @@ describe('McpAgentSetup', () => {
     }
   });
 
-  it('copy claude mcp add command writes the shell command', () => {
+  it('copy claude mcp add command (by path) writes the stdio shell command', () => {
     render(() => <McpAgentSetup store={fakeStore()} />);
-    fireEvent.click(screen.getByText('Copy claude mcp add command'));
+    fireEvent.click(screen.getByText('Copy claude mcp add command (by path)'));
     expect(writeClipboard).toHaveBeenCalledWith(claudeCodeCommandFor('/opt/logtapper/logtapper-mcp'));
   });
 
-  it('copy JSON config writes the desktop config block', () => {
+  it('copy JSON config (by path) writes the command-based config block', () => {
     render(() => <McpAgentSetup store={fakeStore()} />);
-    fireEvent.click(screen.getByText('Copy JSON config'));
+    fireEvent.click(screen.getByText('Copy JSON config (by path)'));
     expect(writeClipboard).toHaveBeenCalledWith(desktopConfigFor('/opt/logtapper/logtapper-mcp'));
   });
 

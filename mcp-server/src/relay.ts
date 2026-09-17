@@ -37,17 +37,27 @@ const log = (message: string): void => {
 // ---------------------------------------------------------------------------
 
 let upstream: Client | null = null;
+/** The connect in flight, so overlapping requests share one client instead of leaking the loser. */
+let connecting: Promise<Client> | null = null;
 
-async function connectUpstream(): Promise<Client> {
-  if (upstream) return upstream;
+function connectUpstream(): Promise<Client> {
+  if (upstream) return Promise.resolve(upstream);
+  if (connecting) return connecting;
   const client = new Client({ name: "logtapper-relay", version: RELAY_VERSION });
   client.onclose = () => {
     if (upstream === client) upstream = null;
   };
-  await client.connect(new StreamableHTTPClientTransport(new URL(UPSTREAM_URL)));
-  upstream = client;
-  log(`connected to ${UPSTREAM_URL}`);
-  return client;
+  connecting = client
+    .connect(new StreamableHTTPClientTransport(new URL(UPSTREAM_URL)))
+    .then(() => {
+      upstream = client;
+      log(`connected to ${UPSTREAM_URL}`);
+      return client;
+    })
+    .finally(() => {
+      connecting = null;
+    });
+  return connecting;
 }
 
 function dropUpstream(): void {

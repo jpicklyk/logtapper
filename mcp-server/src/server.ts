@@ -35,6 +35,10 @@
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+// The server ships inside the app and nothing else, so its version *is* the
+// app version. mcp-server/package.json carries the Claude Desktop bundle's
+// (relay) version instead — see scripts/build-mcpb.mjs.
+import appPackage from "../../package.json" with { type: "json" };
 import { z } from "zod";
 
 import type {
@@ -284,7 +288,7 @@ function argError(message: string): ToolResult {
 export function createServer(): McpServer {
   const server = new McpServer({
     name: "logtapper",
-    version: "1.3.0",
+    version: appPackage.version,
     description:
       "Query live Android log sessions loaded in LogTapper. " +
       "Use these tools to inspect log content, state-tracker events, and " +

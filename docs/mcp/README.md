@@ -7,27 +7,37 @@ watches. No Node.js and no separate install required.
 
 ## How it works
 
-LogTapper exposes its open sessions over a local HTTP bridge on
-`127.0.0.1:40404`. The MCP server is a small **stdio** process that your AI
-client launches and that relays tool calls to that bridge. Any client that can
-start a local MCP server can use it.
+While the MCP bridge is enabled, LogTapper runs its own MCP server and serves it
+over HTTP at a fixed local address:
 
 ```
-AI client  ──stdio──▶  logtapper-mcp  ──HTTP──▶  LogTapper (127.0.0.1:40404)
+http://127.0.0.1:40405/mcp
 ```
+
+Any client that speaks MCP's Streamable HTTP transport — Claude Code, Cursor,
+VS Code, Windsurf, Gemini CLI and most others — connects to that URL. There is
+no binary to locate and nothing to reinstall after a LogTapper update: the
+server you reach is always the one that shipped with the running app.
+
+```
+AI client  ──HTTP──▶  127.0.0.1:40405/mcp  (server LogTapper runs)  ──▶  LogTapper sessions
+```
+
+Claude Desktop is the one exception: its extensions are stdio-only and its
+cloud connectors cannot reach localhost, so it gets a small **relay extension**
+that forwards to the same URL. See [claude-desktop.md](claude-desktop.md).
 
 Three consequences worth knowing up front:
 
-- **LogTapper must be running** with the bridge enabled for any tool call to
-  succeed. Registering the server while the app is closed is fine — the calls
-  just fail until you open it.
-- The bridge is bound to loopback only. Nothing is exposed to your network.
-- **The MCP server has to run on the same machine as LogTapper.** The bridge
-  address is compiled in and the bridge rejects requests that do not arrive as
-  `127.0.0.1:40404` or `localhost:40404`, which blocks DNS-rebinding attacks but
-  also means there is no way to point the server at a different host. An agent
-  running in a container, in WSL, or over a remote SSH session cannot reach a
-  LogTapper running on your desktop.
+- **LogTapper must be running with the bridge enabled.** The MCP server starts
+  and stops with the bridge. A client configured while the app is closed is
+  fine — it just has no tools until you open the app.
+- Both ports (40404 for the bridge, 40405 for MCP) are bound to loopback only
+  and reject requests whose `Host` header is not `127.0.0.1` or `localhost`.
+  Nothing is exposed to your network, and DNS-rebinding attempts are refused.
+- **The client has to run on the same machine as LogTapper.** An agent running
+  in a container, in WSL, or over a remote SSH session cannot reach a LogTapper
+  running on your desktop.
 
 ## Step 1 — Enable the MCP Bridge
 
@@ -39,133 +49,104 @@ so `ready` is the expected state until you finish connecting one.
 The bridge stays off until you enable it, and the setting persists across
 restarts.
 
-## Step 2 — Find the bundled binary
+## Step 2 — Connect your client
 
-> **Claude Desktop users can skip this step.** LogTapper ships an MCP Bundle
-> and installs it for you — see [claude-desktop.md](claude-desktop.md). The path
-> below only matters for Claude Code, which launches the server by absolute path.
+The same **MCP Integration** section shows the URL under **Connect an AI
+agent**, with buttons that copy the URL, a ready-made `claude mcp add` command,
+or a ready-made JSON block.
 
-Releases newer than 0.10.0 install a compiled `logtapper-mcp` binary next to
-the main LogTapper executable (earlier releases did not include it). Your
-client needs its full path.
-
-**The easy way:** the same **Settings → General → MCP Integration** section
-shows the resolved path under **Connect an AI agent**, with buttons that copy
-the path, a ready-made `claude mcp add` command, or a ready-made Claude Desktop
-config block. If that panel says no bundled binary was found, you are on a
-pre-sidecar release or a source checkout — see
-[Running from source](#running-from-source).
-
-If you'd rather locate it by hand:
-
-| Platform | Path |
-|---|---|
-| **Windows** (installed "just for me") | `%LOCALAPPDATA%\LogTapper\logtapper-mcp.exe` |
-| **Windows** (installed "for all users", or `.msi`) | `C:\Program Files\LogTapper\logtapper-mcp.exe` |
-| **macOS** | `/Applications/LogTapper.app/Contents/MacOS/logtapper-mcp` |
-| **Linux** (`.deb`) | `/usr/bin/logtapper-mcp`, or alongside the `log-tapper` binary |
-| **Linux** (AppImage) | Next to the AppImage after extraction |
-
-On Windows, try the first path; if the folder doesn't exist, use the second.
-
-**Copying the path without a terminal:** paste `%LOCALAPPDATA%\LogTapper` into
-the File Explorer address bar and press Enter. Then hold **Shift**, right-click
-`logtapper-mcp.exe`, and choose **Copy as path**. That puts the full quoted path
-on your clipboard.
-
-> If you don't find a `logtapper-mcp` binary at all, check whether the filename
-> carries a platform suffix (e.g. `logtapper-mcp-x86_64-pc-windows-msvc.exe`) and
-> use that full name instead. If there's nothing matching `logtapper-mcp*`,
-> you're likely running a locally-built bundle rather than an official release —
-> see [Running from source](#running-from-source) below.
-
-## Step 3 — Connect your client
-
-Setup differs by client, because they consume the server differently:
-
-- **[Claude Desktop](claude-desktop.md)** — install a bundled `.mcpb` extension
-  saved from **Settings → General → MCP Integration**. The bundle carries its own
-  copy of the server, so no path is involved and Step 2 does not apply.
-- **[Claude Code](claude-code.md)** — registers the `logtapper-mcp` binary by
-  absolute path, via the LogTapper plugin or `claude mcp add`. Claude Code
-  cannot install `.mcpb` bundles, so this path stays manual.
-- **[Any other MCP client](#any-other-mcp-client)** — launch the binary over
-  stdio. See the contract below.
+- **[Claude Code](claude-code.md)** — one command with the URL, or let the
+  LogTapper plugin do it.
+- **[Claude Desktop](claude-desktop.md)** — install the relay extension once
+  from the same Settings section.
+- **[Any other MCP client](#any-other-mcp-client)** — the contract below.
 
 ### Any other MCP client
 
-Most MCP clients are not Claude Desktop and cannot install a `.mcpb`. They launch
-a local process and speak MCP over its stdin/stdout, which is exactly what the
-bundled binary does — so any of them can use LogTapper. Rather than describe each
-client's configuration format, here is the contract to map onto whatever your
-client asks for:
-
 | Property | Value |
 |---|---|
-| Transport | **stdio** (the client launches the process; there is no URL to connect to) |
-| Command | the full path to `logtapper-mcp` — see [Step 2](#step-2--find-the-bundled-binary) |
-| Arguments | none |
-| Environment | none |
+| Transport | **Streamable HTTP** |
+| URL | `http://127.0.0.1:40405/mcp` |
+| Authentication | none (loopback only) |
 | Server name | `logtapper` — tools are namespaced from it, so a different name renames every tool |
 
-Most clients express this as a JSON object keyed by server name, with a
-`command` and optional `args`:
+Most clients express this as a JSON object keyed by server name with a `url`:
 
 ```json
 {
-  "logtapper": {
-    "command": "/full/path/to/logtapper-mcp"
+  "mcpServers": {
+    "logtapper": {
+      "url": "http://127.0.0.1:40405/mcp"
+    }
   }
 }
 ```
 
 Where that object goes, and what the surrounding key is called, differs by
-client — check your client's own MCP documentation for the file it reads and the
-schema it expects. Two details are worth carrying over regardless: on Windows a
-path in JSON needs its backslashes doubled or replaced with forward slashes, and
-most clients only start MCP servers at launch, so restart the client after
-adding one.
+client (VS Code, for example, uses `servers` and adds `"type": "http"`) — check
+your client's own MCP documentation. Most clients only start MCP servers at
+launch, so restart the client after adding one.
 
-Running from a source checkout instead of an installed release? Use `node` as the
-command and the server entry point as the argument — see
-[Running from source](#running-from-source).
+#### Clients that only support stdio
+
+The same server can be launched as a process. The `logtapper-mcp` binary is
+installed next to the LogTapper executable, and the **Launch by path (stdio)**
+row in Settings shows the resolved path with copy buttons for it. The contract:
+
+| Property | Value |
+|---|---|
+| Transport | **stdio** |
+| Command | the full path to `logtapper-mcp` |
+| Arguments | none |
+
+The path changes if LogTapper is moved or reinstalled between per-user and
+all-users locations, which is why the URL is the recommended route. On Windows
+a path in JSON needs its backslashes doubled or replaced with forward slashes.
 
 ## Capabilities
 
-The server exposes 21 tools:
+The server exposes 36 tools:
 
 - **Session discovery** — list active sessions, get metadata (source type, line
   count, time range, tag distribution), browse bugreport/dumpstate sections
-- **Log querying** — sample lines (uniform/recent/around strategies), regex
-  search with context, get lines around a point of interest
-- **Pipeline & processors** — view processor definitions, trigger pipeline runs,
-  get results (reporter emissions, state tracker transitions, correlator
-  events), get rendered insight summaries
+- **Log querying** — sample lines, regex search with context, persistent filter
+  scans, get lines around a point of interest
+- **Pipeline & processors** — view processor definitions, edit a session's
+  processor chain, trigger pipeline runs, get results (reporter emissions, state
+  tracker transitions, correlator events), get rendered insight summaries,
+  charts and timelines
 - **State reconstruction** — get a tracker's state at any line number (e.g.
   "what was the WiFi state when this crash happened?")
 - **Annotations** — manage bookmarks and analysis artifacts with line references
-- **Live monitoring** — create watches with filter criteria for real-time ADB
-  streaming
+- **Live monitoring** — start and stop ADB streams, create watches with filter
+  criteria
+- **Workspace and settings** — list, load and save workspaces; read settings
+  and the shared activity journal; export sessions
 - **File access** — open log files directly, subject to the allowlist in
   **Settings → General → MCP File Access**
+
+Log text reaching an agent is PII-redacted unless you opt out in Settings.
+Agents cannot change the anonymizer, the open-file allowlist or their own raw
+access — those switches are UI-only by design.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Tools are listed, but Claude reports "LogTapper is not running, or the MCP bridge is unavailable" (or a "fetch failed" error) | Bridge off, or LogTapper not running | Enable **Settings → General → MCP Integration**, and keep LogTapper open |
-| No `logtapper` tools appear at all | Wrong binary path, or client not restarted | Verify the path from Step 2, then fully restart your client |
+| Tools are listed, but Claude reports "LogTapper is not running, or the MCP bridge is unavailable" | Bridge off, or LogTapper not running | Enable **Settings → General → MCP Integration**, and keep LogTapper open |
+| The client cannot connect to the URL at all | Bridge off (the MCP server runs only while it is on), or the client was started first | Enable the bridge, then reconnect or restart the client |
+| No `logtapper` tools appear at all | Wrong URL, or client not restarted | Copy the URL from Settings again, then fully restart your client |
 | `logtapper_open_file` is denied | Directory not allowlisted | Add the folder under **Settings → General → MCP File Access** |
-| Worked before, broken after reinstall | App moved between per-user and all-users install | Re-check the path in Step 2 and re-register |
-| Saved `.mcpb` won't open, or only **Save bundle...** is offered | Nothing on the system is registered for `.mcpb` — the Microsoft Store build of Claude Desktop does not claim it | Install it in Claude Desktop with **Developer -> Extensions -> Install Extension...** |
+| Worked before, broken after moving the app (stdio route only) | The registered path no longer exists | Switch to the URL, or re-register with the new path |
 
 ## Running from source
 
-If you cloned the repository instead of installing a release, there is no
-compiled binary — run the TypeScript server directly with Node 22+:
+If you cloned the repository instead of installing a release, `tauri dev` has no
+compiled sidecar to spawn, so run the TypeScript server yourself with Node 22+:
 
 ```
-node --experimental-strip-types <repo>/mcp-server/src/index.ts
+node --experimental-strip-types <repo>/mcp-server/src/index.ts --http 40405
 ```
 
-Use that as the launch command wherever a client doc says "the binary path".
+and connect to `http://127.0.0.1:40405/mcp` as above. Without `--http` the same
+command is the stdio server, for clients that launch a process.

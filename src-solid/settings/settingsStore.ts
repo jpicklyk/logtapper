@@ -13,7 +13,7 @@ export type SettingsCommands = Pick<typeof cmds,
   | 'setFileAssociation' | 'openDefaultAppsSettings' | 'getMcpOpenAllowlist' | 'setMcpOpenAllowlist' | 'setAgentRawAccess'
   | 'startMcpBridge' | 'stopMcpBridge' | 'listThemes' | 'readTheme' | 'writeTheme' | 'deleteTheme' | 'readTextFile'
   | 'writeTextFile' | 'listSources' | 'addSource' | 'removeSource'
-  | 'getMcpSidecarPath' | 'getMcpBundlePath' | 'openMcpBundle' | 'saveMcpBundle'>;
+  | 'getMcpSidecarPath' | 'getMcpBundlePath' | 'getMcpHttpEndpoint' | 'openMcpBundle' | 'saveMcpBundle'>;
 export interface SettingsStoreDeps {
   /** A2's bridge-status accessor (`presenceStore.status`) — read-only here. */
   mcpStatus: Accessor<McpStatus | null>;
@@ -72,6 +72,10 @@ export interface SettingsStore {
    *  the whole block's first paint — same "render nothing until settled" contract as the
    *  React component it ports. */
   mcpSidecarPath: Accessor<string | null>; mcpBundleInfo: Accessor<McpBundleInfo | null>;
+  /** The MCP-over-HTTP URL, `null` while the bridge is off (the app spawns and
+   *  kills that server with the bridge) or when the build ships no sidecar.
+   *  Re-read after every bridge toggle, since that is exactly when it changes. */
+  mcpHttpEndpoint: Accessor<string | null>;
   mcpAgentResolved: Accessor<boolean>; refreshMcpAgentSetup(): void;
   /** Both route their rejection through `error()` via `mutate` — the caller (a UI
    *  action handler) only needs a success continuation; the failure is already
@@ -105,7 +109,12 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
     const [sources, setSources] = createSignal<Source[]>([]);
     const [mcpSidecarPath, setMcpSidecarPath] = createSignal<string | null>(null);
     const [mcpBundleInfo, setMcpBundleInfo] = createSignal<McpBundleInfo | null>(null);
+    const [mcpHttpEndpoint, setMcpHttpEndpoint] = createSignal<string | null>(null);
     const [mcpAgentResolved, setMcpAgentResolved] = createSignal(false);
+    /** Silent like the other agent-setup reads: `null` is a normal answer. */
+    const refreshMcpHttpEndpoint = (): void => {
+      c.getMcpHttpEndpoint().then((url) => { if (!disposed) setMcpHttpEndpoint(url); }, () => undefined);
+    };
     const [error, setError] = createSignal<string | null>(null);
     const [mcpBridgeEnabled, setMcpBridgeEnabledSignal] = createSignal(readSharedSettings(storage).mcpBridgeEnabled === true);
     let disposed = false;
@@ -137,13 +146,13 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
         .then(() => persistBridgePreference(enabled))
         // Re-read `McpStatus` rather than wait out A2's ≤5 s poll: until it lands the
         // UI cannot say whether the bridge is actually up (M6).
-        .finally(() => { if (!disposed) setMcpBridgePending(false); refreshMcpStatus?.(); });
+        .finally(() => { if (!disposed) setMcpBridgePending(false); refreshMcpStatus?.(); refreshMcpHttpEndpoint(); });
     };
     // Same launch behaviour as the React shell (`useAppShellSetup.ts`): the bridge starts on
     // its own when the saved preference says so, so an agent finds it without a manual toggle.
     // Untracked: a one-time read of the seeded preference at construction, not a subscription.
     if (untrack(mcpBridgeEnabled)) {
-      c.startMcpBridge().catch(fail);
+      c.startMcpBridge().then(refreshMcpHttpEndpoint, fail);
     }
     const setAgentRawAccess = (enabled: boolean): Promise<void> => {
       setAgentRawAccessPending(true);
@@ -213,10 +222,11 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
      *  missing sidecar or bundle in a source checkout is the normal, silent case
      *  (rendered as the "no bundled server" hint), not an error worth the banner. */
     const refreshMcpAgentSetup = (): void => {
-      Promise.allSettled([c.getMcpSidecarPath(), c.getMcpBundlePath()]).then(([sidecar, bundle]) => {
+      Promise.allSettled([c.getMcpSidecarPath(), c.getMcpBundlePath(), c.getMcpHttpEndpoint()]).then(([sidecar, bundle, http]) => {
         if (disposed) return;
         if (sidecar.status === 'fulfilled') setMcpSidecarPath(sidecar.value);
         if (bundle.status === 'fulfilled') setMcpBundleInfo(bundle.value);
+        if (http.status === 'fulfilled') setMcpHttpEndpoint(http.value);
         setMcpAgentResolved(true);
       });
     };
@@ -232,7 +242,7 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
       themes, refreshThemes, readTheme: c.readTheme, saveTheme, deleteTheme: deleteThemeFn,
       importThemeFromFile, exportThemeToFile,
       sources, refreshSources, addSource: addSourceFn, removeSource: removeSourceFn,
-      mcpSidecarPath, mcpBundleInfo, mcpAgentResolved, refreshMcpAgentSetup,
+      mcpSidecarPath, mcpBundleInfo, mcpHttpEndpoint, mcpAgentResolved, refreshMcpAgentSetup,
       installMcpBundle, saveMcpBundle: saveMcpBundleFn,
       error, clearError, dispose,
     };

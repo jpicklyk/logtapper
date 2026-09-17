@@ -329,14 +329,6 @@ pub fn run() {
                 log::info!("[startup] removed {swept} orphaned spill file(s)");
             }
 
-            // Record where this build's MCP sidecar lives so the launcher
-            // bundle installed in Claude Desktop runs the current server.
-            let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(std::path::Path::to_path_buf));
-            match exe_dir.and_then(|d| commands::mcp::write_launcher_pointer(&data_dir, &d)) {
-                Some(p) => log::info!("[startup] MCP launcher pointer written to {}", p.display()),
-                None => log::info!("[startup] no MCP sidecar next to the executable; launcher pointer left as is"),
-            }
-
             // Load anonymizer config from disk
             let config_path = data_dir.join("anonymizer_config.json");
             if let Ok(json) = std::fs::read_to_string(&config_path) {

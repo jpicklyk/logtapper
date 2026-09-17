@@ -803,6 +803,16 @@ export function getMcpSidecarPath(): Promise<string | null> {
 }
 
 /**
+ * The MCP-over-HTTP URL the app serves while the bridge is on
+ * (`http://127.0.0.1:40405/mcp`), or `null` when it is off or this build ships
+ * no sidecar to serve it. Any harness that speaks Streamable HTTP connects
+ * here; the Claude Desktop bundle relays to it.
+ */
+export function getMcpHttpEndpoint(): Promise<string | null> {
+  return invoke('get_mcp_http_endpoint');
+}
+
+/**
  * The bundled `.mcpb`, or `null` when this build ships none (dev builds stage
  * no resources).
  *
