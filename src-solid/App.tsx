@@ -19,6 +19,7 @@ import {
 import type { SessionEntry } from './app/index';
 import {
   AppShell,
+  REGION_ENTRY_PREFIX,
   SECONDARY_PANE_ID,
   TabStrip,
   ViewerSplit,
@@ -218,12 +219,18 @@ export function App(props: AppProps) {
   //    of truth into the `.ltw` blob (portable across machines) while
   //    `localStorage` stays as the per-machine fallback for a region the
   //    blob has no entry for (an older save, or a region added later).
-  //  - `collapsed` — the rail's open-drawer id (`AppShell`'s `openDrawer`),
-  //    as a 0-or-1-element array. Ported because it is part of the
-  //    arrangement a user made for a workspace, the same way the split and
-  //    the column widths are; `apply()` re-validates it against the
-  //    restoring window's own tier/mode (`ShellLayoutHandle.applyDrawer`)
-  //    instead of springing open a drawer that no longer applies.
+  //  - `collapsed` — two things in one array, distinguished by a prefix so
+  //    older blobs keep reading correctly. The rail's open-drawer id
+  //    (`AppShell`'s `openDrawer`) is written bare, as a 0-or-1-element
+  //    head; each collapsed grid region follows it as `region:<id>`
+  //    (`ShellLayoutHandle.collapse.toEntries`). `apply()` takes the FIRST
+  //    entry without the `region:` prefix as the drawer id and hands the
+  //    whole array to `collapse.applyEntries`, which ignores everything
+  //    else. Both are part of the arrangement a user made for a workspace,
+  //    the same way the split and the column widths are; the drawer id is
+  //    re-validated against the restoring window's own tier/mode
+  //    (`ShellLayoutHandle.applyDrawer`) instead of springing open a drawer
+  //    that no longer applies, and an unknown region id is dropped.
   //
   // `tabs`/`activeTab` are deliberately left empty. The tab strip's order
   // and selection are already fully determined by the restored session
@@ -255,7 +262,8 @@ export function App(props: AppProps) {
         columns: shellBox.current?.widths.toColumns() ?? {},
         collapsed: (() => {
           const id = shellBox.current?.openDrawer() ?? null;
-          return id === null ? [] : [id];
+          const regions = shellBox.current?.collapse.toEntries() ?? [];
+          return id === null ? regions : [id, ...regions];
         })(),
         tabs: [],
         activeTab: null,
@@ -263,7 +271,10 @@ export function App(props: AppProps) {
       }),
       apply: (layout) => {
         shellBox.current?.widths.applyColumns(layout.columns);
-        shellBox.current?.applyDrawer(layout.collapsed[0] ?? null);
+        shellBox.current?.applyDrawer(
+          layout.collapsed.find((entry) => !entry.startsWith(REGION_ENTRY_PREFIX)) ?? null,
+        );
+        shellBox.current?.collapse.applyEntries(layout.collapsed);
         splitView.applyLayout(layout.split);
       },
     },

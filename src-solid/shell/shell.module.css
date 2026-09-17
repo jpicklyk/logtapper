@@ -8,6 +8,8 @@
   --shell-splitter-w: 5px;
   --shell-bar-h: 34px;
   --shell-drawer-w: 380px;
+  --shell-collapsed-w: 28px;
+  --shell-header-h: 24px;
   --shell-pad: var(--ui-gap, 8px);
 
   position: fixed;
@@ -153,6 +155,110 @@
   flex: 1;
   flex-direction: column;
   min-height: 0;
+}
+
+/* ── region header / collapsed strip ────────────────────────────────────── */
+
+/* A collapsed column is `--shell-collapsed-w` wide and holds nothing but the
+   strip; nothing inside it may spill into the viewer next door. */
+.region[data-collapsed='true'] {
+  overflow: hidden;
+}
+
+/* The slim row above `.regionScroll`: what is docked here, plus the control
+   that folds the column away. A sibling of the scroll box, so it stays put
+   while the column scrolls — and so the splitter stays a sibling too (B-M4). */
+.regionHeader {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--shell-pad) / 2);
+  height: var(--shell-header-h);
+  min-width: 0;
+  padding: 0 var(--shell-pad);
+  color: var(--text-muted);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.regionHeaderTitle {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.regionCollapse {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: calc(var(--shell-header-h) - 6px);
+  height: calc(var(--shell-header-h) - 6px);
+  padding: 0;
+  color: var(--text-muted);
+  font: inherit;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.regionCollapse:hover {
+  color: var(--text);
+  background: var(--surface-overlay);
+}
+
+.regionCollapse:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* The whole collapsed column is one button, so the click target is the strip
+   rather than a glyph the user has to aim at. Same hover/focus vocabulary as
+   `.railButton`, which is the other "a column folded into an icon" control. */
+.regionStrip {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--shell-pad) / 2);
+  width: 100%;
+  min-height: 0;
+  padding: var(--shell-pad) 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.regionStrip:hover {
+  color: var(--text);
+  background: var(--surface-overlay);
+}
+
+.regionStrip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.regionStripChevron {
+  flex: 0 0 auto;
+  line-height: 1;
+}
+
+.regionStripLabel {
+  min-height: 0;
+  overflow: hidden;
+  writing-mode: vertical-rl;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  letter-spacing: 0.04em;
 }
 
 /* ── panels ─────────────────────────────────────────────────────────────── */

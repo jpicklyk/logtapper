@@ -69,7 +69,7 @@ export function emptySplitLayout(): SplitLayout {
  * The Solid shell's persisted layout.
  *
  * `columns`/`collapsed` are the shell's region state (per-region splitter
- * widths and which rails are collapsed); `tabs`/`activeTab` are the tab
+ * widths, plus the open drawer and the folded-away columns); `tabs`/`activeTab` are the tab
  * strip's order and selection, keyed the same way `TabStrip` keys its
  * descriptors (a session's source path for log tabs, the editor tab's own key
  * for editor tabs). `split` is S1's viewer-region split pane.
@@ -77,7 +77,17 @@ export function emptySplitLayout(): SplitLayout {
 export interface SolidLayout {
   /** Region id → width in px. */
   columns: Record<string, number>;
-  /** Ids of regions/rails the user collapsed. */
+  /**
+   * Two kinds of shell state in one array of opaque strings, told apart by a
+   * prefix so a blob written before columns could collapse still reads:
+   *
+   *  - the rail's open-drawer surface id, written bare — the FIRST entry
+   *    without the `region:` prefix is it, and there is at most one;
+   *  - each collapsed grid region as `region:<id>`, appended after it.
+   *
+   * This module never interprets either — `sanitizeStrings` keeps whatever
+   * strings are there and `App.tsx`'s `shellLayout` port owns the split.
+   */
   collapsed: string[];
   /** Tab keys in strip order. */
   tabs: string[];
