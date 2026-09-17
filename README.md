@@ -6,7 +6,7 @@
 
 # LogTapper
 
-A desktop log analysis tool for Android developers, IT staff, and support personel. Load logcat, bugreport, dumpstate, and kernel (dmesg) files, or stream live from ADB — then search, filter, and run custom analysis pipelines powered by a YAML processor system with embedded Rhai scripting.
+A desktop log analysis tool for Android developers, IT staff, and support personnel. Load logcat, bugreport, dumpstate, and kernel (dmesg) files, or stream live from ADB — then search, filter, and run custom analysis pipelines powered by a YAML processor system with embedded Rhai scripting.
 
 ## Install
 
@@ -49,7 +49,7 @@ supported install route on macOS.
 - Layered pipeline engine: transformers, reporters, state trackers, correlators
 - Rhai scripting sandbox for processor logic
 - PII anonymizer with pluggable detectors
-- Axum HTTP bridge for MCP integration (`127.0.0.1:40404`)
+- Axum HTTP bridge (loopback only) behind the bundled MCP server
 
 **Frontend (Solid 1.9 / TypeScript)**
 - [Vite 8](https://vite.dev/) for bundling and dev server
@@ -66,7 +66,7 @@ supported install route on macOS.
 - **Node.js** >= 22
 - **Rust** (stable toolchain, MSVC on Windows)
 - **npm** (comes with Node)
-- **[Bun](https://bun.sh/)** (required to compile the MCP sidecar binary for production builds)
+- **[Bun](https://bun.sh/)** (optional — only `npm run build:full` needs it, to compile the standalone MCP sidecar binary)
 
 ### Install dependencies
 
@@ -81,7 +81,7 @@ npm install
 npx tauri dev
 
 # Frontend only (no Rust backend)
-npx vite
+npm run dev
 ```
 
 ### Build
@@ -93,6 +93,10 @@ npm run build
 # Full Tauri app bundle (includes Rust compilation)
 npx tauri build
 ```
+
+`npx tauri build` does not compile the MCP sidecar binary; the release workflow stages it
+with Bun. A source checkout therefore has no sidecar to launch — see
+[Running from source](docs/mcp/README.md#running-from-source) to run the server with Node instead.
 
 ### Tests
 
@@ -110,17 +114,17 @@ cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
 ## MCP Server
 
 LogTapper ships a bundled MCP ([Model Context Protocol](https://modelcontextprotocol.io/))
-server that gives AI agents direct tool access to your live log sessions — 21 tools
+server that gives AI agents direct tool access to your live log sessions — tools
 for searching lines, running analysis pipelines, reading state-tracker events, and
-managing bookmarks and watches. No Node.js or separate install required.
+managing bookmarks and watches. Installed releases need no Node.js or separate install.
 
 Enable the bridge in **Settings > General > MCP Integration**, then connect your client:
 
 | Client | Setup |
 |---|---|
 | **[Claude Desktop](docs/mcp/claude-desktop.md)** | Save the bundled `.mcpb` extension from Settings, then install it via Claude Desktop's Developer menu |
-| **[Claude Code](docs/mcp/claude-code.md)** | Two commands — the LogTapper plugin finds the binary and registers it for you |
-| **[Other MCP clients](docs/mcp/README.md#step-3--connect-your-client)** | Launch the bundled binary over stdio — no arguments, no environment variables |
+| **[Claude Code](docs/mcp/claude-code.md)** | Two commands — the [LogTapper plugin](plugins/logtapper/README.md) finds the binary and registers it for you |
+| **[Other MCP clients](docs/mcp/README.md#step-3--connect-your-client)** | Launch the binary bundled with installed releases over stdio — no arguments, no environment variables |
 
 LogTapper must be running with the bridge enabled for tool calls to work.
 
@@ -135,7 +139,9 @@ src-solid/          Frontend source (Solid UI: shell, viewer, stores, surfaces)
 src-shared/         Framework-free modules shared with the frontend (IPC bindings, cache, filter, viewport)
 mcp-server/         MCP server (Node.js, stdio transport)
 marketplace/        Processor marketplace (YAML definitions + pack manifests)
-docs/               Documentation
+plugins/            Claude Code plugin (attach-mcp skill) and its marketplace manifest
+docs/               User documentation (MCP setup, processor authoring)
+design_docs/        Architecture and security design specs
 ```
 
 ## Documentation

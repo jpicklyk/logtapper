@@ -132,7 +132,7 @@ command and the server entry point as the argument — see
 
 ## Capabilities
 
-The server exposes 21 tools:
+The server exposes tools in these groups:
 
 - **Session discovery** — list active sessions, get metadata (source type, line
   count, time range, tag distribution), browse bugreport/dumpstate sections
