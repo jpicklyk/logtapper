@@ -15,6 +15,8 @@ import {
 import type { RegionId, SurfaceDef, SurfaceId } from './surfaces';
 import { Splitter, createRegionWidths } from './Splitter';
 import type { RegionWidths, ResizableRegion } from './Splitter';
+import { REGION_TITLE, createRegionCollapse } from './regionCollapse';
+import type { RegionCollapse } from './regionCollapse';
 import { WindowControls } from './WindowControls';
 import styles from './shell.module.css';
 
@@ -86,6 +88,12 @@ export interface AppShellProps {
 export interface ShellLayoutHandle {
   /** This shell instance's region-width store. */
   widths: RegionWidths;
+  /**
+   * This shell instance's region-collapse store. Travels in the same
+   * `SolidLayout.collapsed` array as `openDrawer` below, tagged with a
+   * `region:` prefix — see `RegionCollapse.toEntries`.
+   */
+  collapse: RegionCollapse;
   /** The currently open drawer's surface id, or null. */
   openDrawer: Accessor<SurfaceId | null>;
   /**
@@ -140,6 +148,13 @@ export function AppShell(props: AppShellProps) {
   const tier = props.tier ?? createTier();
   const mode = createMode({ sessionKind: () => props.sessionKind });
   const widths = createRegionWidths(() => props.workspaceId);
+  const collapse = createRegionCollapse(() => props.workspaceId);
+
+  /** `viewer` is never collapsible — it is the region everything else gives
+   *  its width back to, so narrowing the type here keeps the JSX below from
+   *  casting in four places. */
+  const isCollapsed = (region: RegionId): boolean =>
+    region !== 'viewer' && collapse.isCollapsed(region as ResizableRegion);
 
   /** Every surface openable as a drawer right now, for this tier and mode —
    *  shared by the initial-drawer check below and by `applyDrawer`, which
@@ -173,7 +188,7 @@ export function AppShell(props: AppShellProps) {
   // of the store references at setup, not a value the shell needs to re-emit
   // on every prop change (same non-reactive read as `props.tier` above).
   // eslint-disable-next-line solid/reactivity -- one-shot handoff at setup, by design
-  props.onReady?.({ widths, openDrawer, applyDrawer });
+  props.onReady?.({ widths, collapse, openDrawer, applyDrawer });
 
   const regions = createMemo(() => activeRegions(mode(), tier()));
 
@@ -228,9 +243,14 @@ export function AppShell(props: AppShellProps) {
     [
       'var(--shell-rail-w)',
       ...(pushing() ? ['var(--shell-drawer-w)'] : []),
-      ...regions().map((region) =>
-        region === 'viewer' ? 'minmax(0, 1fr)' : `${widths.width(region as ResizableRegion)}px`,
-      ),
+      ...regions().map((region) => {
+        if (region === 'viewer') return 'minmax(0, 1fr)';
+        // A collapsed column keeps a fixed strip's worth of the grid and gives
+        // the rest back: the viewer's `minmax(0, 1fr)` is the only flexible
+        // track, so whatever this column stops claiming lands there.
+        if (isCollapsed(region)) return 'var(--shell-collapsed-w)';
+        return `${widths.width(region as ResizableRegion)}px`;
+      }),
     ].join(' '),
   );
 
@@ -376,32 +396,108 @@ export function AppShell(props: AppShellProps) {
       </Show>
 
       <For each={regions()}>
-        {(region) => (
-          <div class={styles.region} data-region={region}>
-            {/* The scroll container is an inner element so the splitter can be
-                its *sibling* rather than its child (review B-M4): an
-                absolutely positioned child of a scroll container scrolls away
-                with the content, so on a `details` column tall enough to
-                overflow the 5px resize handle ended up above the viewport and
-                the column could no longer be resized. */}
-            <div class={styles.regionScroll}>
-              <Show when={region === 'viewer'}>
-                <div class={styles.viewerSlot}>{props.slots?.viewer?.()}</div>
+        {(region) => {
+          /** The surfaces docked here right now, as one label — what the strip
+           *  rotates and the header row shows ("Analyzers · Device state"). */
+          const dockedTitles = () =>
+            regionSurfaces(region, mode(), tier())
+              .filter((s) => s.id !== 'viewer')
+              .map((s) => s.title)
+              .join(' · ');
+          /** Which edge this column folds away to: the navigator is left of
+           *  the viewer, everything else is right of it. A chevron points at
+           *  the edge the click moves the column towards. */
+          const foldsLeft = () => region === 'navigator';
+          let regionEl: HTMLDivElement | undefined;
+          /** Folding the column unmounts the button that was just pressed, and
+           *  unfolding it unmounts the strip: left alone, focus falls to
+           *  `<body>` and a keyboard user loses their place in the shell. Move
+           *  it to the control that replaced the one they used — but only when
+           *  focus was actually inside this column, so a restore from a `.ltw`
+           *  blob never steals it. */
+          const toggleCollapsed = (next: boolean): void => {
+            const hadFocus = regionEl?.contains(document.activeElement) ?? false;
+            collapse.set(region as ResizableRegion, next);
+            if (!hadFocus) return;
+            regionEl?.querySelector<HTMLElement>('[data-collapse-control]')?.focus();
+          };
+          return (
+            <div
+              ref={regionEl}
+              class={styles.region}
+              data-region={region}
+              data-collapsed={String(isCollapsed(region))}
+            >
+              <Show
+                when={isCollapsed(region)}
+                fallback={
+                  <>
+                    {/* The header is a sibling of the scroll box, not a child
+                        of it, so it stays put while the column scrolls. */}
+                    <Show when={region !== 'viewer'}>
+                      <div class={styles.regionHeader}>
+                        <span class={styles.regionHeaderTitle}>{dockedTitles()}</span>
+                        <button
+                          type="button"
+                          class={styles.regionCollapse}
+                          data-collapse-control=""
+                          aria-expanded="true"
+                          aria-label={`Collapse ${REGION_TITLE[region as ResizableRegion]}`}
+                          title={`Collapse ${REGION_TITLE[region as ResizableRegion]}`}
+                          onClick={() => toggleCollapsed(true)}
+                        >
+                          <span aria-hidden="true">{foldsLeft() ? '‹' : '›'}</span>
+                        </button>
+                      </div>
+                    </Show>
+                    {/* The scroll container is an inner element so the splitter
+                        can be its *sibling* rather than its child (review
+                        B-M4): an absolutely positioned child of a scroll
+                        container scrolls away with the content, so on a
+                        `details` column tall enough to overflow the 5px resize
+                        handle ended up above the viewport and the column could
+                        no longer be resized. */}
+                    <div class={styles.regionScroll}>
+                      <Show when={region === 'viewer'}>
+                        <div class={styles.viewerSlot}>{props.slots?.viewer?.()}</div>
+                      </Show>
+                      <For each={regionSurfaces(region, mode(), tier()).filter((s) => s.id !== 'viewer')}>
+                        {(surface) => <SurfacePanel surface={surface} slot={props.slots?.[surface.id]} />}
+                      </For>
+                      {props.regionSlots?.[region]?.()}
+                    </div>
+                    <Show when={region !== 'viewer'}>
+                      <Splitter
+                        region={region as ResizableRegion}
+                        widths={widths}
+                        side={foldsLeft() ? 'start' : 'end'}
+                      />
+                    </Show>
+                  </>
+                }
+              >
+                {/* Collapsed: no splitter and, deliberately, no surface panels.
+                    Unmounting them is the point — a column the user folded away
+                    must not keep the analyzers or the presence feed alive doing
+                    work behind a 28px strip. */}
+                <button
+                  type="button"
+                  class={styles.regionStrip}
+                  data-collapse-control=""
+                  aria-expanded="false"
+                  aria-label={`Expand ${REGION_TITLE[region as ResizableRegion]}`}
+                  title={dockedTitles()}
+                  onClick={() => toggleCollapsed(false)}
+                >
+                  <span class={styles.regionStripChevron} aria-hidden="true">
+                    {foldsLeft() ? '›' : '‹'}
+                  </span>
+                  <span class={styles.regionStripLabel}>{dockedTitles()}</span>
+                </button>
               </Show>
-              <For each={regionSurfaces(region, mode(), tier()).filter((s) => s.id !== 'viewer')}>
-                {(surface) => <SurfacePanel surface={surface} slot={props.slots?.[surface.id]} />}
-              </For>
-              {props.regionSlots?.[region]?.()}
             </div>
-            <Show when={region !== 'viewer'}>
-              <Splitter
-                region={region as ResizableRegion}
-                widths={widths}
-                side={region === 'navigator' ? 'start' : 'end'}
-              />
-            </Show>
-          </div>
-        )}
+          );
+        }}
       </For>
 
       {/* The mode/tier pair used to ship here as text. It is a developer

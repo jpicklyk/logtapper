@@ -55,12 +55,13 @@ import {
 } from '@workspace';
 import type { RestorePlan, StoredTab } from '@workspace';
 import type { LoadWorkspaceSessionData } from '@bridge/types';
-// Region widths are keyed per workspace in localStorage by `shell/Splitter`;
-// deleting a workspace has to take its entry with it, and the key shape is the
+// Region widths and the collapsed-column set are keyed per workspace in
+// localStorage by `shell/Splitter` and `shell/regionCollapse`; deleting a
+// workspace has to take both entries with it, and the key shapes are the
 // shell's to own — hence the barrel import rather than a second copy of the
-// prefix here. `shell` only reaches back into `workspace/layoutBlob` (a leaf),
-// so this adds no module cycle.
-import { widthsStorageKey } from '../shell';
+// prefixes here. `shell` only reaches back into `workspace/layoutBlob` (a
+// leaf), so this adds no module cycle.
+import { collapsedStorageKey, widthsStorageKey } from '../shell';
 import { emptySolidLayout, readSolidLayout, writeSolidLayout } from './layoutBlob';
 import type { SolidLayout } from './layoutBlob';
 import { runRestorePlan } from './restore';
@@ -277,14 +278,16 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       });
     };
 
-    /** Drop the shell's per-workspace region widths for a workspace that no
-     *  longer exists. `logtapper-shell-widths:<id>` has no other owner and no
-     *  expiry, so without this localStorage accretes a dead entry per delete. */
-    const forgetShellWidths = (id: string): void => {
+    /** Drop the shell's per-workspace region state for a workspace that no
+     *  longer exists. `logtapper-shell-widths:<id>` and
+     *  `logtapper-shell-collapsed:<id>` have no other owner and no expiry, so
+     *  without this localStorage accretes a dead entry per delete. */
+    const forgetShellRegionState = (id: string): void => {
       try {
         storage.removeItem(widthsStorageKey(id));
+        storage.removeItem(collapsedStorageKey(id));
       } catch {
-        /* private mode / quota — the widths cache is best-effort by design. */
+        /* private mode / quota — the region caches are best-effort by design. */
       }
     };
 
@@ -671,7 +674,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       // The shell's per-workspace region widths outlive the workspace itself
       // otherwise — `logtapper-shell-widths:<id>` has no other owner and no
       // expiry, so localStorage accretes a dead entry per deleted workspace.
-      forgetShellWidths(id);
+      forgetShellRegionState(id);
       // A forced delete of the active workspace leaves the backend with no
       // active id; mirror that rather than promoting an unrelated entry whose
       // `.ltw` was never loaded (an autosave would then write into it).
@@ -760,7 +763,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       onWorkspaceListChanged((payload) => {
         if (payload.action === 'deleted') {
           setList((prev) => prev.filter((w) => w.id !== payload.workspaceId));
-          forgetShellWidths(payload.workspaceId);
+          forgetShellRegionState(payload.workspaceId);
           if (activeId() === payload.workspaceId) {
             setActiveId(list()[0]?.id ?? null);
             // Promoting a neighbour loads no `.ltw`, so the blob of the deleted

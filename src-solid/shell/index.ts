@@ -29,6 +29,14 @@ export {
   widthsStorageKey,
 } from './Splitter';
 export type { RegionWidths, ResizableRegion, SplitterProps } from './Splitter';
+export {
+  COLLAPSED_STORAGE_PREFIX,
+  REGION_ENTRY_PREFIX,
+  REGION_TITLE,
+  collapsedStorageKey,
+  createRegionCollapse,
+} from './regionCollapse';
+export type { RegionCollapse } from './regionCollapse';
 export { SECONDARY_PANE_ID, createSplitView, isSplitTier } from './splitView';
 export type { PaneSlot, SplitView } from './splitView';
 export { WindowControls } from './WindowControls';

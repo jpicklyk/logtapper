@@ -15,7 +15,7 @@ import type {
 } from './workspaceStore';
 import { writeSolidLayout } from './layoutBlob';
 import type { SolidLayout } from './layoutBlob';
-import { widthsStorageKey } from '../shell';
+import { collapsedStorageKey, widthsStorageKey } from '../shell';
 
 // The store is the only module here that talks to the bridge, so both bridge
 // modules are mocked wholesale (the presenceStore.test.ts pattern).
@@ -732,6 +732,7 @@ describe('rename and delete', () => {
     getAppStateMock.mockResolvedValue(appState([entry('a'), entry('b')], 'a'));
     const fakes = makeFakes();
     fakes.store[widthsStorageKey('a')] = JSON.stringify({ navigator: 320 });
+    fakes.store[collapsedStorageKey('a')] = JSON.stringify(['details']);
     const store = build(fakes);
     await store.hydrate();
     await Promise.resolve();
@@ -739,22 +740,28 @@ describe('rename and delete', () => {
     expect(store.list().map((w) => w.id)).toEqual(['b']);
     expect(store.activeId()).toBe('b');
     // A delete from elsewhere (an agent, another window) leaks the same dead
-    // widths key as a local one.
+    // widths and collapsed keys as a local one.
     expect(fakes.store[widthsStorageKey('a')]).toBeUndefined();
+    expect(fakes.store[collapsedStorageKey('a')]).toBeUndefined();
   });
 
-  it("removes the workspace's shell region widths when it is deleted", async () => {
+  it("removes the workspace's shell region widths and collapsed columns when it is deleted", async () => {
     getAppStateMock.mockResolvedValue(appState([entry('a'), entry('b')], 'a'));
     deleteMock.mockResolvedValue();
     const fakes = makeFakes();
     fakes.store[widthsStorageKey('a')] = JSON.stringify({ navigator: 320 });
     fakes.store[widthsStorageKey('b')] = JSON.stringify({ navigator: 300 });
+    fakes.store[collapsedStorageKey('a')] = JSON.stringify(['presence']);
+    fakes.store[collapsedStorageKey('b')] = JSON.stringify(['analyses']);
     const store = build(fakes);
     await store.hydrate();
     await store.delete('a', { force: true });
-    // Nothing else owns `logtapper-shell-widths:<id>` or expires it.
+    // Nothing else owns `logtapper-shell-widths:<id>` /
+    // `logtapper-shell-collapsed:<id>` or expires it.
     expect(fakes.store[widthsStorageKey('a')]).toBeUndefined();
+    expect(fakes.store[collapsedStorageKey('a')]).toBeUndefined();
     expect(fakes.store[widthsStorageKey('b')]).toBeDefined();
+    expect(fakes.store[collapsedStorageKey('b')]).toBeDefined();
   });
 
   it('re-hydrates from disk when workspace-list-changed reports a rename', async () => {

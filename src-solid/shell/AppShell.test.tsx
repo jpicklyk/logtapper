@@ -418,4 +418,121 @@ describe('AppShell — onReady handle for the workspace shellLayout port', () =>
     handle.applyDrawer(null);
     expect(handle.openDrawer()).toBeNull();
   });
+
+  it('hands back the collapse store, seedable from a restored blob', () => {
+    setViewportWidth(2600);
+    let handle!: ShellLayoutHandle;
+    const { container } = render(() => (
+      <AppShell
+        workspaceId="ws"
+        sessionKind="file"
+        slots={{ viewer: () => <div />, presence: () => <div data-testid="presence-slot" /> }}
+        onReady={(h) => {
+          handle = h;
+        }}
+      />
+    ));
+
+    expect(handle.collapse.toEntries()).toEqual([]);
+
+    // An unknown region id in the blob is dropped, not thrown on; the drawer
+    // id that shares the array is simply not a `region:` entry.
+    handle.collapse.applyEntries(['region:presence', 'region:bogus', 'analyzers']);
+
+    expect(handle.collapse.isCollapsed('presence')).toBe(true);
+    expect(handle.collapse.isCollapsed('details')).toBe(false);
+    expect(handle.collapse.toEntries()).toEqual(['region:presence']);
+    expect(container.querySelector('[data-region="presence"] [data-testid="presence-slot"]')).toBeNull();
+
+    // Round-trip: the entries this produced seed the same state back.
+    const entries = handle.collapse.toEntries();
+    handle.collapse.applyEntries([]);
+    expect(handle.collapse.isCollapsed('presence')).toBe(false);
+    handle.collapse.applyEntries(entries);
+    expect(handle.collapse.isCollapsed('presence')).toBe(true);
+  });
+});
+
+// ── Collapsible shell columns ──────────────────────────────────────────────
+
+describe('AppShell — collapsing a region', () => {
+  it('unmounts the column\'s surfaces and its splitter, and gives the width back', () => {
+    setViewportWidth(2600);
+    const { container } = render(() => (
+      <AppShell
+        workspaceId="ws"
+        sessionKind="file"
+        slots={{ viewer: () => <div />, analyzers: () => <div data-testid="analyzers-body" /> }}
+      />
+    ));
+
+    const shell = container.querySelector('[data-tier]') as HTMLElement;
+    const details = () => container.querySelector('[data-region="details"]') as HTMLElement;
+
+    expect(details().getAttribute('data-collapsed')).toBe('false');
+    expect(details().querySelector('[role="separator"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="analyzers-body"]')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Details' }));
+
+    expect(details().getAttribute('data-collapsed')).toBe('true');
+    // The whole point: a folded column keeps nothing alive behind the strip.
+    expect(details().querySelector('[role="separator"]')).toBeNull();
+    expect(container.querySelector('[data-testid="analyzers-body"]')).toBeNull();
+    expect(details().querySelector('[data-surface="analyzers"]')).toBeNull();
+    expect(shell.style.getPropertyValue('--shell-columns')).toContain('var(--shell-collapsed-w)');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Details' }));
+
+    expect(details().getAttribute('data-collapsed')).toBe('false');
+    expect(details().querySelector('[role="separator"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="analyzers-body"]')).toBeTruthy();
+    expect(shell.style.getPropertyValue('--shell-columns')).not.toContain('var(--shell-collapsed-w)');
+  });
+
+  it('moves focus to the control that replaced the one the user pressed', () => {
+    setViewportWidth(2600);
+    render(() => (
+      <AppShell workspaceId="ws-focus" sessionKind="file" slots={{ viewer: () => <div /> }} />
+    ));
+
+    // Collapsing unmounts the button that was just activated; leaving focus on
+    // the removed node drops it to <body> and a keyboard user loses the shell.
+    const collapseBtn = screen.getByRole('button', { name: 'Collapse Agent' });
+    collapseBtn.focus();
+    fireEvent.click(collapseBtn);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Expand Agent' }));
+
+    // And back the other way when the strip expands the column again.
+    fireEvent.click(document.activeElement as HTMLElement);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Collapse Agent' }));
+  });
+
+  it('keeps the collapse per workspace across a remount', () => {
+    setViewportWidth(2600);
+    const mount = (workspaceId: string) =>
+      render(() => (
+        <AppShell workspaceId={workspaceId} sessionKind="file" slots={{ viewer: () => <div /> }} />
+      ));
+
+    const first = mount('ws-a');
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Agent' }));
+    expect(
+      (first.container.querySelector('[data-region="presence"]') as HTMLElement).getAttribute('data-collapsed'),
+    ).toBe('true');
+    cleanup();
+
+    // Same workspace: the fold comes back.
+    const again = mount('ws-a');
+    expect(
+      (again.container.querySelector('[data-region="presence"]') as HTMLElement).getAttribute('data-collapsed'),
+    ).toBe('true');
+    cleanup();
+
+    // A different workspace must not inherit it.
+    const other = mount('ws-b');
+    expect(
+      (other.container.querySelector('[data-region="presence"]') as HTMLElement).getAttribute('data-collapsed'),
+    ).toBe('false');
+  });
 });
