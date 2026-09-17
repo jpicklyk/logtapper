@@ -13,8 +13,31 @@ A desktop log analysis tool for Android developers, IT staff, and support person
 Download the latest release for your platform from [GitHub Releases](https://github.com/jpicklyk/logtapper/releases):
 
 - **Windows:** `.exe` (NSIS installer) or `.msi`
-- **macOS:** `.dmg` (note: you may need to right-click > Open on first launch — the app is not yet notarized)
+- **macOS:** `.dmg` — pick `aarch64` for Apple Silicon or `x64` for Intel (see the note below)
 - **Linux:** `.deb` or `.AppImage`
+
+### macOS first launch
+
+LogTapper is not yet notarized by Apple, so a downloaded build carries a quarantine
+flag. On first launch macOS reports **"LogTapper is damaged and can't be opened"** and
+offers to move it to the Trash. The app is not damaged — this is Gatekeeper blocking an
+unsigned download. Right-clicking **Open** no longer clears it on current macOS.
+
+To install:
+
+1. Open the `.dmg` and drag **LogTapper** to your Applications folder.
+2. Eject the disk image.
+3. Remove the quarantine flag from the installed app:
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/LogTapper.app
+   ```
+
+4. Launch LogTapper from Applications as normal.
+
+You only need to do this once per installed version. Removing notarization from the
+warning path requires an Apple Developer Program membership; until then this step is the
+supported install route on macOS.
 
 ## Tech Stack
 

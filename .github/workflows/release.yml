@@ -88,8 +88,23 @@ jobs:
             See the assets below to download the installer for your platform.
 
             **Windows:** Download the `.exe` (NSIS installer) or `.msi`
-            **macOS:** Download the `.dmg` (note: you may need to right-click > Open on first launch)
+            **macOS:** Download the `.dmg` — `aarch64` for Apple Silicon, `x64` for Intel
             **Linux:** Download the `.deb` or `.AppImage`
+
+            ### macOS first launch
+
+            LogTapper is not yet notarized, so macOS reports **"LogTapper is damaged and
+            can't be opened"** on first launch. The app is not damaged — this is Gatekeeper
+            blocking an unsigned download, and right-click > Open no longer clears it on
+            current macOS. To install:
+
+            1. Open the `.dmg` and drag **LogTapper** to Applications.
+            2. Eject the disk image.
+            3. Remove the quarantine flag:
+               ```
+               xattr -dr com.apple.quarantine /Applications/LogTapper.app
+               ```
+            4. Launch LogTapper from Applications.
           releaseDraft: true
           prerelease: false
           args: --target ${{ matrix.target }} --config src-tauri/tauri.ci.conf.json
