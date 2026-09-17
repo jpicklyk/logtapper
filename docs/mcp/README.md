@@ -103,6 +103,28 @@ The path changes if LogTapper is moved or reinstalled between per-user and
 all-users locations, which is why the URL is the recommended route. On Windows
 a path in JSON needs its backslashes doubled or replaced with forward slashes.
 
+## Changing the MCP port
+
+The MCP server listens on 40405 by default. If another program on your machine
+owns that port, LogTapper says so in **Settings → General → MCP Integration**
+("The MCP server did not start: …address in use…") and offers a **Port** field
+right there. Choose a port between 1024 and 65535 other than 40404, click
+**Apply port**, and the URL and every copy button in that section update to the
+new address. The choice is saved and applied on every launch.
+
+Every client then needs the new URL once:
+
+| Client | What to update |
+|---|---|
+| Claude Code | `claude mcp remove logtapper --scope user`, then the **Copy claude mcp add command** button gives you the add command with the new URL |
+| Claude Desktop | Nothing to reinstall. Open the LogTapper extension's settings in Claude Desktop and set **LogTapper MCP URL** to the new address — [details and both orderings](claude-desktop.md#changing-the-mcp-port) |
+| Any other HTTP client | Edit the `url` in its config to the new address and restart the client |
+| stdio-by-path clients | Unaffected — they launch the binary and never use the port |
+
+The bundle file LogTapper ships is not rewritten when the port changes; the
+Claude Desktop extension's own setting is where the address lives after
+install.
+
 ## Capabilities
 
 The server exposes 36 tools:

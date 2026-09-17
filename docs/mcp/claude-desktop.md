@@ -66,11 +66,40 @@ LogTapper is installed; it only knows the URL. That has three consequences:
 - **Start order does not matter.** If Claude Desktop starts before LogTapper,
   the extension shows no tools until the bridge is up, then picks them up on
   its own within a few seconds — no toggling, no restart.
-- **Changed the port?** If another program owns port 40405 on your machine,
-  change LogTapper's MCP port under **Settings → General → MCP Integration**,
-  then open the extension's settings in Claude Desktop and set **LogTapper MCP
-  URL** to the new address shown there. That is the only setting the relay
-  has, and it is the only time you touch it.
+- **Changed the port?** See [Changing the MCP port](#changing-the-mcp-port)
+  below — it is a one-time edit of the extension's single setting, not a
+  reinstall.
+
+## Changing the MCP port
+
+If another program on your machine already owns port 40405, LogTapper reports
+it under **Settings → General → MCP Integration** ("The MCP server did not
+start: …address in use…") with a **Port** field next to it. Pick another port,
+click **Apply port**, and the URL shown there changes to match.
+
+The bundle file does **not** change when you do this, and it does not need to.
+The relay has exactly one setting, **LogTapper MCP URL**, which Claude Desktop
+stores with the installed extension. That setting is what you update:
+
+1. In Claude Desktop, open **Settings → Extensions**, find **LogTapper**, and
+   open its settings (the gear or **Configure** control on its row).
+2. Set **LogTapper MCP URL** to the address LogTapper now shows, for example
+   `http://127.0.0.1:41000/mcp`, and save.
+3. Start a new conversation. The relay reads the setting when it starts.
+
+Two orderings are worth knowing:
+
+- **Extension installed first, port changed later** — just do the three steps
+  above. Nothing else changes; you never reinstall the bundle for this.
+- **Port changed first, extension installed later** — the install dialog
+  pre-fills the default URL, because the saved bundle file always carries the
+  default. Either change the URL in that dialog before confirming, or install
+  with the default and then do the three steps above.
+
+If the setting is blank or not a valid `http://` URL, the relay falls back to
+the default address and says so in its log, so a typo there shows up as
+"LogTapper is not reachable at http://127.0.0.1:40405/mcp" rather than
+silence.
 
 ## Verify
 
@@ -142,7 +171,7 @@ the tray icon and choose **Quit**. On macOS use **Cmd+Q**.
 | No *Claude Desktop* row in Settings at all | This LogTapper build ships no bundle — use the manual fallback above |
 | The install is refused | Your organization's extension allowlist may not include LogTapper — ask your administrator |
 | Extension installed but no tools appear | LogTapper is closed or the bridge is off. Enable **Settings → General → MCP Integration**; the tools appear within a few seconds |
-| Claude replies "LogTapper is not reachable at http://127.0.0.1:40405/mcp" | Same cause — the MCP server runs only while the bridge is on |
+| Claude replies "LogTapper is not reachable at http://127.0.0.1:40405/mcp" | Same cause — the MCP server runs only while the bridge is on. If LogTapper shows a different port, the extension's **LogTapper MCP URL** setting still has the default; see [Changing the MCP port](#changing-the-mcp-port) |
 | Still nothing | Check the extension's entry in Claude Desktop's extension list, then its log: `%LOCALAPPDATA%\Claude\Logs\mcp-server-LogTapper.log` on Windows, `~/Library/Logs/Claude/mcp-server-LogTapper.log` on macOS |
 | `logtapper_open_file` is denied | The folder isn't allowlisted — add it under **Settings → General → MCP File Access** |
 

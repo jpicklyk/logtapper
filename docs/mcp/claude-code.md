@@ -86,6 +86,12 @@ claude mcp remove logtapper --scope user
 With the URL route there is nothing to update after a LogTapper release. Only a
 path-based registration needs re-adding when the app moves.
 
+The one thing that does change the URL is the MCP port. If you changed it in
+LogTapper because another program owned 40405, remove the registration as above
+and re-add it with the new address — the **Copy claude mcp add command** button
+in Settings already carries it. See
+[Changing the MCP port](README.md#changing-the-mcp-port) for the other clients.
+
 ## If something isn't working
 
 | Symptom | Fix |

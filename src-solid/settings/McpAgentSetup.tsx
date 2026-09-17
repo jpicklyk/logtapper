@@ -2,6 +2,7 @@
 import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
 import { save as saveFileDialog } from '@tauri-apps/plugin-dialog';
 import { writeClipboard } from '@viewport/copyText';
+import { DEFAULT_MCP_HTTP_PORT } from './settingsStore';
 import type { SettingsStore } from './settingsStore';
 import styles from './settings.module.css';
 
@@ -227,6 +228,13 @@ export function McpAgentSetup(props: McpAgentSetupProps) {
                   ? 'Installs a small relay extension that forwards to the URL above. Install it once — it does not change with LogTapper releases.'
                   : 'Save the relay extension, then install it in Claude Desktop: Developer → Extensions → Install Extension… Install it once — it does not change with LogTapper releases.'}
               </div>
+              <Show when={props.store.mcpHttpPort() !== DEFAULT_MCP_HTTP_PORT}>
+                <div class={styles.labelHint}>
+                  The port is not the default, so the bundle's built-in address is wrong for this machine: in Claude
+                  Desktop, open the LogTapper extension's settings and set <strong>LogTapper MCP URL</strong> to the URL
+                  above. The saved bundle file is never rewritten.
+                </div>
+              </Show>
               <div class={styles.mcpAgentActions}>
                 <Show when={bundle().installable}>
                   <button type="button" class={styles.button} onClick={handleInstall}>

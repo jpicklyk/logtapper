@@ -132,6 +132,14 @@ describe('McpAgentSetup', () => {
     expect(screen.getByText(/did not start: cannot listen on 127.0.0.1:40405: EADDRINUSE/)).toBeTruthy();
   });
 
+  it('tells Claude Desktop users to update the extension setting only when the port is not the default', () => {
+    render(() => <McpAgentSetup store={fakeStore({ httpPort: 40405 })} />);
+    expect(screen.queryByText(/LogTapper MCP URL/)).toBeNull();
+    cleanup();
+    render(() => <McpAgentSetup store={fakeStore({ httpPort: 41000, httpEndpoint: 'http://127.0.0.1:41000/mcp' })} />);
+    expect(screen.getByText(/open the LogTapper extension/)).toBeTruthy();
+  });
+
   it('port editor: Apply is disabled until the draft is a different valid number, then calls setMcpHttpPort', () => {
     const store = fakeStore({ httpPort: 40405 });
     render(() => <McpAgentSetup store={store} />);
