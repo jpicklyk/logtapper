@@ -102,7 +102,7 @@ jobs:
             2. Eject the disk image.
             3. Remove the quarantine flag:
                ```
-               xattr -dr com.apple.quarantine /Applications/LogTapper.app
+               xattr -d -r com.apple.quarantine /Applications/LogTapper.app
                ```
             4. Launch LogTapper from Applications.
           releaseDraft: true
