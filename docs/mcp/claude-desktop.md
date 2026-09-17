@@ -66,6 +66,11 @@ LogTapper is installed; it only knows the URL. That has three consequences:
 - **Start order does not matter.** If Claude Desktop starts before LogTapper,
   the extension shows no tools until the bridge is up, then picks them up on
   its own within a few seconds — no toggling, no restart.
+- **Changed the port?** If another program owns port 40405 on your machine,
+  change LogTapper's MCP port under **Settings → General → MCP Integration**,
+  then open the extension's settings in Claude Desktop and set **LogTapper MCP
+  URL** to the new address shown there. That is the only setting the relay
+  has, and it is the only time you touch it.
 
 ## Verify
 

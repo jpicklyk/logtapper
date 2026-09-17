@@ -20,8 +20,9 @@ import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } fr
 /** Bumped only when the relay itself changes — not with LogTapper releases. */
 const RELAY_VERSION = "1.0.0";
 
-/** Where the app serves MCP over HTTP. Overridable for experiments only. */
-const UPSTREAM_URL = process.env.LOGTAPPER_MCP_URL ?? "http://127.0.0.1:40405/mcp";
+import { resolveUpstreamUrl } from "./relay-core.ts";
+
+const UPSTREAM_URL = resolveUpstreamUrl(process.env.LOGTAPPER_MCP_URL, (m) => process.stderr.write(`logtapper relay: ${m}\n`));
 
 const NOT_REACHABLE =
   `LogTapper is not reachable at ${UPSTREAM_URL}. Start LogTapper and enable the MCP bridge ` +

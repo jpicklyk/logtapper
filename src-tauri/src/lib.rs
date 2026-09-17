@@ -639,7 +639,8 @@ pub fn run() {
             commands::mcp::save_mcp_bundle,
             commands::mcp::start_mcp_bridge,
             commands::mcp::stop_mcp_bridge,
-            commands::mcp::get_mcp_http_endpoint,
+            commands::mcp::get_mcp_http_info,
+            commands::mcp::set_mcp_http_port,
             // Shared focus context + agent navigation requests (B1)
             commands::focus::set_focus,
             commands::focus::get_focus,

@@ -135,6 +135,7 @@ access — those switches are UI-only by design.
 |---|---|---|
 | Tools are listed, but Claude reports "LogTapper is not running, or the MCP bridge is unavailable" | Bridge off, or LogTapper not running | Enable **Settings → General → MCP Integration**, and keep LogTapper open |
 | The client cannot connect to the URL at all | Bridge off (the MCP server runs only while it is on), or the client was started first | Enable the bridge, then reconnect or restart the client |
+| Settings says the MCP server did not start, naming an address-in-use error | Another program owns port 40405 | Change the port in the same Settings section; the URL and copy buttons follow it. Re-register clients with the new URL, and set the Claude Desktop extension's **LogTapper MCP URL** setting to match |
 | No `logtapper` tools appear at all | Wrong URL, or client not restarted | Copy the URL from Settings again, then fully restart your client |
 | `logtapper_open_file` is denied | Directory not allowlisted | Add the folder under **Settings → General → MCP File Access** |
 | Worked before, broken after moving the app (stdio route only) | The registered path no longer exists | Switch to the URL, or re-register with the new path |

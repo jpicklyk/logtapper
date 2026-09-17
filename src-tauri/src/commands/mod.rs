@@ -192,8 +192,18 @@ pub struct AppState {
     pub mcp_bridge_shutdown: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     /// The `logtapper-mcp --http` sidecar the app spawns alongside the bridge,
     /// so harnesses can reach MCP at one fixed localhost URL. `None` when the
-    /// bridge is off or this build ships no sidecar.
+    /// bridge is off, this build ships no sidecar, or every spawn attempt failed
+    /// (then `mcp_http_last_error` says why).
     pub mcp_http_server: Mutex<Option<std::process::Child>>,
+    /// Port the HTTP MCP server listens on. Defaults to `mcp::MCP_HTTP_PORT`;
+    /// the frontend applies the user's saved choice via `set_mcp_http_port`.
+    pub mcp_http_port: Mutex<u16>,
+    /// The sidecar's last stderr line (or spawn error) from the most recent
+    /// failed start, for Settings to show. Cleared on every new spawn.
+    pub mcp_http_last_error: Mutex<Option<String>>,
+    /// Bumped by every stop/restart so a spawn supervisor thread from before
+    /// the stop discards the child it was about to hand over.
+    pub mcp_http_generation: std::sync::atomic::AtomicU64,
     /// YAML content for session-scoped processors imported from .lts files.
     /// Keyed by scoped ID like `wifi-state@lts-{session-uuid}`.
     /// Ephemeral — removed when the session closes.
@@ -313,6 +323,9 @@ impl AppState {
             startup_file_path: Mutex::new(None),
             mcp_bridge_shutdown: Mutex::new(None),
             mcp_http_server: Mutex::new(None),
+            mcp_http_port: Mutex::new(mcp::MCP_HTTP_PORT),
+            mcp_http_last_error: Mutex::new(None),
+            mcp_http_generation: std::sync::atomic::AtomicU64::new(0),
             lts_processor_yamls: Mutex::new(HashMap::new()),
             workspace_envelope: Mutex::new(None),
             autosave_tx: Mutex::new(None),

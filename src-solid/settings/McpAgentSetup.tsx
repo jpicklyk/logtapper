@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { Show, createSignal, onCleanup, onMount } from 'solid-js';
+import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
 import { save as saveFileDialog } from '@tauri-apps/plugin-dialog';
 import { writeClipboard } from '@viewport/copyText';
 import type { SettingsStore } from './settingsStore';
@@ -56,6 +56,23 @@ export interface McpAgentSetupProps {
 export function McpAgentSetup(props: McpAgentSetupProps) {
   const [copied, setCopied] = createSignal<CopyKey | null>(null);
   const [note, setNote] = createSignal<string | null>(null);
+  // The port field edits a draft; Apply pushes it to the store, whose rejection
+  // (validation, or the backend refusing) lands in the panel's error banner.
+  const [portDraft, setPortDraft] = createSignal<string>('');
+  // Follow the store's port (initially, and after an Apply lands) so the draft
+  // never shows a stale number — a tracked scope, so the reactivity rule holds.
+  createEffect(() => setPortDraft(String(props.store.mcpHttpPort())));
+  const draftPort = (): number | null => {
+    const n = Number(portDraft());
+    return /^\d+$/.test(portDraft()) && Number.isInteger(n) ? n : null;
+  };
+  const portDirty = (): boolean => draftPort() !== props.store.mcpHttpPort();
+  const applyPort = (): void => {
+    const port = draftPort();
+    if (port === null) return;
+    const mcp = props.store;
+    mcp.setMcpHttpPort(port).catch(() => undefined); // rejection already recorded in store.error()
+  };
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
   let noteTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -106,6 +123,26 @@ export function McpAgentSetup(props: McpAgentSetupProps) {
       .catch(() => undefined); // rejection already recorded in store.error()
   };
 
+  const PortEditor = () => (
+    <div class={styles.mcpAgentPathRow}>
+      <label class={styles.labelHint} for="mcp-http-port">Port</label>
+      <input
+        id="mcp-http-port"
+        class={styles.input}
+        type="number"
+        inputmode="numeric"
+        min="1024"
+        max="65535"
+        value={portDraft()}
+        onInput={(e) => setPortDraft(e.currentTarget.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && portDirty() && draftPort() !== null) applyPort(); }}
+      />
+      <button type="button" class={styles.linkBtn} disabled={!portDirty() || draftPort() === null} onClick={applyPort}>
+        Apply port
+      </button>
+    </div>
+  );
+
   return (
     <Show when={props.store.mcpAgentResolved()}>
       <div class={styles.mcpAgentSetup} data-testid="mcp-agent-setup">
@@ -133,10 +170,13 @@ export function McpAgentSetup(props: McpAgentSetupProps) {
                 }
               >
                 <div class={styles.labelHint}>
-                  {props.store.mcpStatus()?.running
-                    ? 'The bridge is on but the MCP server did not start — port 40405 may be in use. Toggle the bridge to retry; the app log has the reason.'
-                    : 'Enable the MCP bridge above — the HTTP endpoint starts and stops with it.'}
+                  {props.store.mcpHttpError()
+                    ? `The MCP server did not start: ${props.store.mcpHttpError()}. If the port is taken, choose another below.`
+                    : props.store.mcpStatus()?.running
+                      ? 'Starting the MCP server…'
+                      : 'Enable the MCP bridge above — the HTTP endpoint starts and stops with it.'}
                 </div>
+                <PortEditor />
               </Show>
             }
           >
@@ -154,6 +194,7 @@ export function McpAgentSetup(props: McpAgentSetupProps) {
                     {copied() === 'url' ? 'Copied' : 'Copy URL'}
                   </button>
                 </div>
+                <PortEditor />
                 <div class={styles.mcpAgentActions}>
                   <button
                     type="button"

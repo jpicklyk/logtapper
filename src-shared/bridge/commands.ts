@@ -44,6 +44,7 @@ import type {
   FileAssocEntry,
   McpOpenAllowlist,
   McpBundleInfo,
+  McpHttpInfo,
   SaveWorkspaceV4Options,
   SyncWorkspaceEnvelopeOptions,
   LoadWorkspaceV4Result,
@@ -803,13 +804,23 @@ export function getMcpSidecarPath(): Promise<string | null> {
 }
 
 /**
- * The MCP-over-HTTP URL the app serves while the bridge is on
- * (`http://127.0.0.1:40405/mcp`), or `null` when it is off or this build ships
- * no sidecar to serve it. Any harness that speaks Streamable HTTP connects
- * here; the Claude Desktop bundle relays to it.
+ * The MCP-over-HTTP endpoint the app serves while the bridge is on: its URL
+ * when up (`null` when the bridge is off, the build ships no sidecar, or the
+ * last start failed), the configured port, and the last start failure's
+ * reason. Any harness that speaks Streamable HTTP connects to the URL; the
+ * Claude Desktop bundle relays to it.
  */
-export function getMcpHttpEndpoint(): Promise<string | null> {
-  return invoke('get_mcp_http_endpoint');
+export function getMcpHttpInfo(): Promise<McpHttpInfo> {
+  return invoke('get_mcp_http_info');
+}
+
+/**
+ * Change the HTTP port (1024–65535, not the bridge's own). Restarts the server
+ * on the new port immediately when the bridge is on; otherwise it applies on
+ * the next bridge start. Rejects with the validation message.
+ */
+export function setMcpHttpPort(port: number): Promise<void> {
+  return invoke('set_mcp_http_port', { port });
 }
 
 /**

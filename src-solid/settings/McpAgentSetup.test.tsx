@@ -52,8 +52,11 @@ function fakeStore(overrides: {
   resolved?: boolean;
   sidecarPath?: string | null;
   httpEndpoint?: string | null;
+  httpError?: string | null;
+  httpPort?: number;
   bridgeRunning?: boolean;
   bundle?: McpBundleInfo | null;
+  setMcpHttpPort?: (port: number) => Promise<void>;
   installMcpBundle?: () => Promise<void>;
   saveMcpBundle?: (dest: string) => Promise<void>;
 } = {}): SettingsStore {
@@ -62,10 +65,15 @@ function fakeStore(overrides: {
   const [bundle] = createSignal<McpBundleInfo | null>(overrides.bundle === undefined ? { path: '/opt/logtapper/logtapper.mcpb', installable: true } : overrides.bundle);
   const [httpEndpoint] = createSignal(overrides.httpEndpoint === undefined ? 'http://127.0.0.1:40405/mcp' : overrides.httpEndpoint);
   const [status] = createSignal<McpStatus | null>(overrides.bridgeRunning ? ({ running: true } as McpStatus) : null);
+  const [httpError] = createSignal<string | null>(overrides.httpError ?? null);
+  const [httpPort] = createSignal(overrides.httpPort ?? 40405);
   return {
     mcpAgentResolved: resolved,
     mcpSidecarPath: sidecarPath,
     mcpHttpEndpoint: httpEndpoint,
+    mcpHttpError: httpError,
+    mcpHttpPort: httpPort,
+    setMcpHttpPort: vi.fn(overrides.setMcpHttpPort ?? (() => Promise.resolve())),
     mcpStatus: status,
     mcpBundleInfo: bundle,
     refreshMcpAgentSetup: vi.fn(),
@@ -113,10 +121,40 @@ describe('McpAgentSetup', () => {
     expect(screen.getByText('Copy path')).toBeTruthy();
   });
 
-  it('reports a failed server start, not a bridge-off hint, when the bridge is running without an endpoint', () => {
+  it('shows "starting" while the bridge is on and no endpoint or error has been reported yet', () => {
     render(() => <McpAgentSetup store={fakeStore({ httpEndpoint: null, bridgeRunning: true })} />);
-    expect(screen.getByText(/MCP server did not start/)).toBeTruthy();
+    expect(screen.getByText(/Starting the MCP server/)).toBeTruthy();
     expect(screen.queryByText(/Enable the MCP bridge above/)).toBeNull();
+  });
+
+  it('shows the backend reason verbatim when the last start failed', () => {
+    render(() => <McpAgentSetup store={fakeStore({ httpEndpoint: null, bridgeRunning: true, httpError: 'cannot listen on 127.0.0.1:40405: EADDRINUSE' })} />);
+    expect(screen.getByText(/did not start: cannot listen on 127.0.0.1:40405: EADDRINUSE/)).toBeTruthy();
+  });
+
+  it('port editor: Apply is disabled until the draft is a different valid number, then calls setMcpHttpPort', () => {
+    const store = fakeStore({ httpPort: 40405 });
+    render(() => <McpAgentSetup store={store} />);
+    const apply = screen.getByText('Apply port') as HTMLButtonElement;
+    const input = screen.getByLabelText('Port') as HTMLInputElement;
+    expect(input.value).toBe('40405');
+    expect(apply.disabled).toBe(true);
+    fireEvent.input(input, { target: { value: '41000' } });
+    expect(apply.disabled).toBe(false);
+    fireEvent.click(apply);
+    expect(store.setMcpHttpPort).toHaveBeenCalledWith(41000);
+    fireEvent.input(input, { target: { value: 'abc' } });
+    expect(apply.disabled).toBe(true);
+  });
+
+  it('port editor: a rejected port change is swallowed here (the store renders it) and does not throw', async () => {
+    const store = fakeStore({ setMcpHttpPort: () => Promise.reject(new Error('Port 80 is privileged')) });
+    render(() => <McpAgentSetup store={store} />);
+    fireEvent.input(screen.getByLabelText('Port'), { target: { value: '80' } });
+    fireEvent.click(screen.getByText('Apply port'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(store.setMcpHttpPort).toHaveBeenCalledWith(80);
   });
 
   it('copy URL writes the endpoint, and the HTTP buttons write the URL-based command and config', () => {
