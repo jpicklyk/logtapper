@@ -55,6 +55,13 @@ export interface RowProps {
   selected: boolean;
   /** The keyboard cursor's row. */
   active: boolean;
+  /**
+   * Non-null while this row is the target of a controller jump that asked for
+   * a highlight. The value becomes `data-flash`, and the stylesheet keys a
+   * different animation-name off each phase, so flashing the same row twice in
+   * a row restarts the animation instead of being swallowed.
+   */
+  flash?: 'a' | 'b' | null;
   onLineClick: (lineNum: number, e: MouseEvent) => void;
 }
 
@@ -89,6 +96,7 @@ export function Row(props: RowProps) {
       data-level={line()?.level}
       data-selected={props.selected ? '' : undefined}
       data-active={props.active ? '' : undefined}
+      data-flash={props.flash ?? undefined}
       data-skeleton={line() ? undefined : ''}
       onClick={(e) => props.onLineClick(lineNum(), e)}
     >

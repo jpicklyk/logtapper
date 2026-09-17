@@ -11,11 +11,13 @@ const SID = 'session-a';
 function makePane() {
   const handle: PaneHandle = {
     jumpToLine: vi.fn(),
+    flashLine: vi.fn(),
     focus: vi.fn(),
     setSelection: vi.fn(),
   };
   return handle as PaneHandle & {
     jumpToLine: ReturnType<typeof vi.fn>;
+    flashLine: ReturnType<typeof vi.fn>;
     focus: ReturnType<typeof vi.fn>;
     setSelection: ReturnType<typeof vi.fn>;
   };
@@ -276,6 +278,56 @@ describe('createViewerController — pane routing', () => {
     pane.setSelection.mockClear();
     controller.scrollToLine(SID, 10);
     expect(pane.setSelection).not.toHaveBeenCalled();
+    expect(pane.flashLine).not.toHaveBeenCalled();
+    controller.dispose();
+  });
+
+  it('a highlight jump selects the target line itself and flashes it, after the jump', () => {
+    const { controller } = build();
+    const pane = makePane();
+    controller.attachPane(DEFAULT_PANE_ID, pane);
+    controller.bindSession(SID, DEFAULT_PANE_ID);
+
+    const order: string[] = [];
+    pane.jumpToLine.mockImplementation(() => order.push('jump'));
+    pane.setSelection.mockImplementation(() => order.push('select'));
+    pane.flashLine.mockImplementation(() => order.push('flash'));
+
+    controller.scrollToLine(SID, 21, { highlight: true, source: 'analysis' });
+
+    expect(pane.jumpToLine).toHaveBeenCalledWith(21);
+    expect(pane.setSelection).toHaveBeenCalledWith([21, 21]);
+    expect(pane.flashLine).toHaveBeenCalledWith(21);
+    expect(order).toEqual(['jump', 'select', 'flash']);
+    controller.dispose();
+  });
+
+  it('an explicit range wins over the single-line default of a highlight jump', () => {
+    const { controller } = build();
+    const pane = makePane();
+    controller.attachPane(DEFAULT_PANE_ID, pane);
+    controller.bindSession(SID, DEFAULT_PANE_ID);
+
+    controller.scrollToLine(SID, 21, { highlight: true, select: [21, 30] });
+
+    expect(pane.setSelection).toHaveBeenCalledWith([21, 30]);
+    expect(pane.flashLine).toHaveBeenCalledWith(21);
+    controller.dispose();
+  });
+
+  it('publishes the cursor before driving the pane, so the pane can recognise its own echo', () => {
+    const { controller } = build();
+    const pane = makePane();
+    controller.attachPane(DEFAULT_PANE_ID, pane);
+    controller.bindSession(SID, DEFAULT_PANE_ID);
+
+    let seenAtJump: unknown = 'unset';
+    pane.jumpToLine.mockImplementation(() => {
+      seenAtJump = controller.cursor();
+    });
+
+    controller.scrollToLine(SID, 4, { source: 'user' });
+    expect(seenAtJump).toEqual({ sessionId: SID, line: 4, source: 'user' });
     controller.dispose();
   });
 
