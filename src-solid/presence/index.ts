@@ -18,7 +18,9 @@ export {
   createAgentState,
   DETACHED_IDLE_THRESHOLD_SEC,
   HOLD_MS,
-  DECAY_MS,
+  WORKING_DECAY_MS,
+  WROTE_FLASH_MS,
+  IN_FLIGHT_STALE_MS,
 } from './agentState';
 export type { AgentOrbState, AgentBridgeStatus, AgentStateInputs, AgentStateController } from './agentState';
 

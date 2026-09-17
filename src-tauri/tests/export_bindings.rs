@@ -91,6 +91,9 @@ macro_rules! ROOT_TYPES {
             // --- services — caller model, activity journal, progress events ---
             app_lib::services::Caller,
             app_lib::services::activity::ActivityEntry,
+            app_lib::services::events::AgentRequestEvent,
+            app_lib::services::events::AgentRequestKind,
+            app_lib::services::events::AgentRequestPhase,
             app_lib::services::events::ProgressEvent,
             app_lib::services::events::PipelineProgressEvent,
             app_lib::services::events::SearchProgressEvent,

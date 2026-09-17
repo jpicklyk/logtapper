@@ -282,6 +282,74 @@ async fn journal_emits_exactly_one_activity_event_with_the_stored_id() {
 }
 
 // ---------------------------------------------------------------------------
+// 3b. agent-request lifecycle events (the presence orb's "reading" signal)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn an_accepted_read_emits_a_start_and_end_agent_request_pair() {
+    let (router, _state, sink, _tmp) = app();
+
+    let mut headers = trusted_headers();
+    headers.push(("x-logtapper-client", "claude-cowork"));
+    let (status, _body) = get(&router, "/mcp/sessions", &headers).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let events = sink.events_named("agent-request");
+    assert_eq!(events.len(), 2, "one start + one end: {events:?}");
+    let start = &events[0].payload;
+    let end = &events[1].payload;
+    assert_eq!(start["phase"], "start");
+    assert_eq!(end["phase"], "end");
+    assert_eq!(start["id"], end["id"], "both halves share the request id");
+    assert_eq!(start["kind"], "read");
+    assert_eq!(start["client"], "claude-cowork");
+    assert_eq!(start["method"], "GET");
+    assert_eq!(start["route"], "/mcp/sessions", "the route template, not a concrete path");
+    assert_eq!(start["status"], Value::Null);
+    assert_eq!(end["status"], 200);
+    assert!(sink.events_named("activity").is_empty(), "reads are still never journaled");
+}
+
+#[tokio::test]
+async fn the_route_template_is_emitted_not_the_concrete_path() {
+    let (router, _state, sink, _tmp) = app();
+    let (status, _body) = get(&router, "/mcp/sessions/nosuch/query", &trusted_headers()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let events = sink.events_named("agent-request");
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].payload["route"], "/mcp/sessions/{session_id}/query");
+    assert_eq!(events[1].payload["status"], 404, "the end phase carries the real status");
+}
+
+#[tokio::test]
+async fn the_heartbeat_stamps_activity_but_emits_no_agent_request() {
+    let (router, state, sink, _tmp) = app();
+    let (status, _body) = get(&router, "/mcp/status", &trusted_headers()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(state.mcp_last_activity.lock().unwrap().is_some(), "the heartbeat still keeps the bridge 'connected'");
+    assert!(sink.events_named("agent-request").is_empty(), "but must not read as agent work");
+}
+
+#[tokio::test]
+async fn a_rejected_request_emits_no_agent_request() {
+    let (router, state, sink, _tmp) = app();
+    let (status, _body) =
+        get(&router, "/mcp/sessions", &[("host", "127.0.0.1:40404"), ("origin", "http://evil.example")]).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(state.mcp_last_activity.lock().unwrap().is_none());
+    assert!(sink.events_named("agent-request").is_empty());
+}
+
+#[tokio::test]
+async fn an_unrouted_path_emits_no_agent_request() {
+    let (router, _state, sink, _tmp) = app();
+    let (status, _body) = get(&router, "/mcp/no_such_route", &trusted_headers()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(sink.events_named("agent-request").is_empty(), "a 404 is not agent work");
+}
+
+// ---------------------------------------------------------------------------
 // 4. open_file gating
 // ---------------------------------------------------------------------------
 

@@ -1,5 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { ActivityEntry, AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, PipelineProgress, PipelineCompleteEvent, ChainUpdateEvent, CatalogUpdateEvent, UpdatesAvailableEvent, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent, WatchUpdateEvent, LoadResult, SessionClosedEvent, WorkspaceAutoSavedEvent, WorkspaceRestoredEvent, WorkspaceListChangedEvent, LtsEditorTabPayload, FocusContext, NavRequest } from './types';
+import type { ActivityEntry, AgentRequestEvent, AdbStreamStopped, AdbTrackerUpdate, FileIndexProgress, FileIndexComplete, SearchProgress, FilterProgress, PipelineProgress, PipelineCompleteEvent, ChainUpdateEvent, CatalogUpdateEvent, UpdatesAvailableEvent, BookmarkUpdateEvent, AnalysisUpdateEvent, WatchMatchEvent, WatchUpdateEvent, LoadResult, SessionClosedEvent, WorkspaceAutoSavedEvent, WorkspaceRestoredEvent, WorkspaceListChangedEvent, LtsEditorTabPayload, FocusContext, NavRequest } from './types';
 
 // ---------------------------------------------------------------------------
 // ADB streaming events
@@ -194,12 +194,27 @@ export function onWatchUpdate(
  * mutation from either caller — the same entries `getActivity()` returns, so
  * the normal pattern is one `getActivity()` on mount followed by this listener
  * appending. Reads are never journaled, so this stays quiet while the user is
- * only looking around.
+ * only looking around — and while an agent is only reading; `onAgentRequest`
+ * is the signal for that.
  */
 export function onActivity(
   cb: (entry: ActivityEntry) => void,
 ): Promise<UnlistenFn> {
   return listen<ActivityEntry>('activity', (e) => cb(e.payload));
+}
+
+/**
+ * The MCP bridge's request lifecycle: a `start` before every accepted agent
+ * request runs and an `end` (with the HTTP status) after, sharing one `id`.
+ * Emitted by the bridge middleware for reads and writes alike, but never for
+ * the sidecar's 10 s `GET /mcp/status` heartbeat, so an attached-but-idle
+ * agent stays quiet here. Not journaled and not retrievable later — a
+ * listener that mounts mid-request may see an `end` with no `start`.
+ */
+export function onAgentRequest(
+  cb: (event: AgentRequestEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<AgentRequestEvent>('agent-request', (e) => cb(e.payload));
 }
 
 // ---------------------------------------------------------------------------

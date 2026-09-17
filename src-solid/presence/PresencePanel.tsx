@@ -67,14 +67,11 @@ export function PresencePanel(props: PresencePanelProps): JSX.Element {
   const stateText = createMemo(() => STATE_TEXT[state()]);
 
   /**
-   * The connected agent's own name, straight from the journal's caller
-   * identity — there is no separate "who is attached" call, and an agent that
+   * The connected agent's own name, from its most recent request or journal
+   * entry — there is no separate "who is attached" call, and an agent that
    * has never acted has no name to show.
    */
-  const clientName = createMemo(() => {
-    const entry = store().agent.lastAgentEntry();
-    return entry && entry.caller.kind === 'agent' ? entry.caller.client : 'Agent';
-  });
+  const clientName = createMemo(() => store().agent.client() ?? 'Agent');
 
   const toggle = (): void => {
     const next = !collapsed();

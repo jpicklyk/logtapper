@@ -9,7 +9,7 @@ call one `services::*` function, return `Result<Json<T>, ServiceError>` — see
 ```
 mcp_bridge/
   mod.rs        BridgeCtx, ROUTES, router(), start()
-  middleware.rs record_activity, require_local (+ is_trusted_request)
+  middleware.rs record_activity (+ classify_request → the `agent-request` event), require_local (+ is_trusted_request)
   respond.rs    IntoResponse for ServiceError, client_name(), a few shared JSON helpers
   routes/*.rs   one file per domain — activity, artifacts, export, filters, insights,
                 lines, pipeline, processors, search, sessions, settings, stream, timeline,
@@ -48,6 +48,18 @@ and therefore runs *first*. `router()` adds `record_activity` before `require_lo
 `require_local` is outermost: a non-local request is turned away before
 `record_activity` ever stamps `mcp_last_activity`. If you reorder these, untrusted traffic
 can stamp activity timestamps before being rejected.
+
+**`record_activity` is also the presence orb's "reading" signal.** Reads are never
+journaled (`services/activity.rs`), so the middleware emits the `agent-request` event
+(`services::events::AgentRequestEvent`) twice per accepted request — `start` before the
+handler, `end` with the HTTP status after, sharing one `id` — classified by
+`classify_request(method, MatchedPath)` into `read | write | run`. Two exclusions, both
+pinned by tests in `tests/bridge_http.rs`: the sidecar's 10 s `GET /mcp/status` heartbeat
+(it still stamps `mcp_last_activity`, it just is not agent work) and anything with no
+`MatchedPath` (a 404 is not agent work). The payload carries the route *template*, never a
+concrete path. Nothing is stored — the frontend's `presence/agentState.ts` holds the
+working state between calls; a new long-running route belongs in `classify_request`'s
+`Run` list.
 
 **Agent anonymization is decided in `services::policy`, never here.** A bridge caller is
 always `Caller::Agent`, so every raw-line route is redacted unless the user persisted the

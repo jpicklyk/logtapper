@@ -103,7 +103,10 @@ pre-existing gap where an agent-created watch was invisible to the Watches panel
 UI-created path had the same gap and is fixed by the same listener), **`onActivity`**
 (`activity`, one `ActivityEntry` per journaled mutation from *either* transport — see
 `useActivityFeed` for the consumer pattern: fetch `getActivity(200)` once, then append by
-`id`, bounded client-side to 200 even though the backend ring holds 500),
+`id`, bounded client-side to 200 even though the backend ring holds 500), **`onAgentRequest`**
+(`agent-request`, `AgentRequestEvent` — the bridge middleware's `start`/`end` pair for every
+accepted agent request, reads included, never the sidecar heartbeat; the only signal that an
+agent is *reading*, consumed by `presence/presenceStore.ts` → `agentState.request()`),
 `onWorkspaceRestored` (`WorkspaceRestoredEvent`, `source: 'lts' | 'workspace'`),
 `onWorkspaceAutoSaved` (`WorkspaceAutoSavedEvent`), **`onChainUpdate`** (`chain-update`,
 `ChainUpdateEvent` — the WHOLE new chain, `activeProcessorIds` disabled members included,

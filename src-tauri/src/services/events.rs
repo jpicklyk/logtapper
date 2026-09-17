@@ -46,6 +46,65 @@ impl EventSink for NullSink {
 }
 
 // ---------------------------------------------------------------------------
+// AgentRequestEvent — bridge request lifecycle (never journaled)
+// ---------------------------------------------------------------------------
+
+/// Wire name of the request-lifecycle event the bridge middleware emits.
+pub const AGENT_REQUEST_EVENT: &str = "agent-request";
+
+/// What a bridge request does, coarsely — enough for the presence orb to pick
+/// a state, nothing more. Decided in `mcp_bridge::middleware` from the
+/// method and the matched route template.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentRequestKind {
+    /// A read: every `GET` other than the heartbeat.
+    Read,
+    /// A state change that completes quickly (bookmarks, focus, settings…).
+    Write,
+    /// A long-running job: pipeline runs, filter scans, exports, ADB streams.
+    Run,
+}
+
+/// Which end of the request an [`AgentRequestEvent`] marks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentRequestPhase {
+    Start,
+    End,
+}
+
+/// Payload of the `agent-request` event, emitted twice per accepted bridge
+/// request — once before the handler runs, once after.
+///
+/// This is the UI's only signal that an agent is *reading*. The activity
+/// journal is mutation-only and bounded, so read traffic must never land
+/// there; this event is fire-and-forget, carries no session data, and is not
+/// retained anywhere. The sidecar's `GET /mcp/status` heartbeat is excluded so
+/// an attached-but-idle agent does not look busy.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRequestEvent {
+    /// Monotonic per process; the `start` and `end` of one request share it.
+    #[ts(type = "number")]
+    pub id: u64,
+    /// Unix epoch milliseconds.
+    #[ts(type = "number")]
+    pub ts: u64,
+    /// The self-reported `X-LogTapper-Client` name, `"mcp"` when absent.
+    pub client: String,
+    /// HTTP method, upper-case.
+    pub method: String,
+    /// The matched route *template* (`/mcp/sessions/{session_id}/query`), not
+    /// the concrete path — no ids leak and the frontend can match on it.
+    pub route: String,
+    pub kind: AgentRequestKind,
+    pub phase: AgentRequestPhase,
+    /// HTTP status of the response; `None` on the `start` phase.
+    pub status: Option<u16>,
+}
+
+// ---------------------------------------------------------------------------
 // ProgressSink — long-running operation progress
 // ---------------------------------------------------------------------------
 

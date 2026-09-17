@@ -202,6 +202,7 @@ vi.mock('@bridge/commands', () => ({
 }));
 vi.mock('@bridge/events', () => ({
   onActivity: vi.fn(() => Promise.resolve(() => {})),
+  onAgentRequest: vi.fn(() => Promise.resolve(() => {})),
   onFocusChanged: vi.fn(() => Promise.resolve(() => {})),
   onNavigateRequest: vi.fn(() => Promise.resolve(() => {})),
   onBridgeSessionOpened: vi.fn(() => Promise.resolve(() => {})),
