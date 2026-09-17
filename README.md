@@ -95,8 +95,8 @@ npx tauri build
 ```
 
 `npx tauri build` does not compile the MCP sidecar binary; the release workflow stages it
-with Bun. A source checkout therefore has no sidecar to launch — see
-[Running from source](docs/mcp/README.md#running-from-source) to run the server with Node instead.
+with Bun. A source checkout therefore has no sidecar, and `tauri dev` starts no MCP server —
+see [Running from source](docs/mcp/README.md#running-from-source) to run it with Node instead.
 
 ### Tests
 
@@ -122,9 +122,9 @@ Enable the bridge in **Settings > General > MCP Integration**, then connect your
 
 | Client | Setup |
 |---|---|
-| **[Claude Desktop](docs/mcp/claude-desktop.md)** | Save the bundled `.mcpb` extension from Settings, then install it via Claude Desktop's Developer menu |
-| **[Claude Code](docs/mcp/claude-code.md)** | Two commands — the [LogTapper plugin](plugins/logtapper/README.md) finds the binary and registers it for you |
-| **[Other MCP clients](docs/mcp/README.md#step-3--connect-your-client)** | Launch the binary bundled with installed releases over stdio — no arguments, no environment variables |
+| **[Claude Code](docs/mcp/claude-code.md)** | One command with the URL shown in Settings (default `http://127.0.0.1:40405/mcp`) — or let the [LogTapper plugin](plugins/logtapper/README.md) do it |
+| **[Claude Desktop](docs/mcp/claude-desktop.md)** | Install the bundled `.mcpb` relay once from Settings; it forwards to the same URL and never needs updating |
+| **[Other MCP clients](docs/mcp/README.md#step-2--connect-your-client)** | Connect to the URL over Streamable HTTP, or launch the binary bundled with installed releases over stdio |
 
 LogTapper must be running with the bridge enabled for tool calls to work.
 
@@ -137,7 +137,7 @@ tool list, and troubleshooting.
 src-tauri/          Rust backend (Tauri commands, parsers, pipeline engine, MCP bridge)
 src-solid/          Frontend source (Solid UI: shell, viewer, stores, surfaces)
 src-shared/         Framework-free modules shared with the frontend (IPC bindings, cache, filter, viewport)
-mcp-server/         MCP server (Node.js, stdio transport)
+mcp-server/         MCP server the app spawns over HTTP, plus the Claude Desktop relay (`.mcpb`)
 marketplace/        Processor marketplace (YAML definitions + pack manifests)
 plugins/            Claude Code plugin (attach-mcp skill) and its marketplace manifest
 docs/               User documentation (MCP setup, processor authoring)

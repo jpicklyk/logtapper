@@ -23,6 +23,9 @@
     // Safe only because `noEmit` is set (no emitted `.js` file could ever
     // collide with the `.ts` one being imported).
     "allowImportingTsExtensions": true,
+    // `server.ts` reports LogTapper's version (the root package.json) in the MCP
+    // handshake, since the sidecar ships with the app and nothing else.
+    "resolveJsonModule": true,
     "baseUrl": ".",
     // The generated wire types live outside this package (`src-shared/` is the
     // frontend-shared tree). `rootDirs` tells the module resolver to treat `src`

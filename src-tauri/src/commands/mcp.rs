@@ -68,6 +68,254 @@ pub async fn start_mcp_bridge(
         let ctx = crate::mcp_bridge::BridgeCtx::new(app);
         tauri::async_runtime::spawn(crate::mcp_bridge::start(ctx, rx));
     }
+    // The MCP-over-HTTP server rides with the bridge: same on/off switch. Runs
+    // on every start call, not only a fresh bridge start, so a child that died
+    // (or a sidecar staged after launch) is picked up without toggling.
+    spawn_mcp_http_server(std::sync::Arc::clone(state.inner()));
+    Ok(())
+}
+
+// ── MCP over HTTP — the sidecar served at one fixed localhost URL ───────────
+//
+// Harnesses that speak Streamable HTTP (Claude Code, Cursor, VS Code, …) get
+// `http://127.0.0.1:<port>/mcp` instead of a per-install binary path, and the
+// server they reach is always the one that shipped with the running app. The
+// Claude Desktop bundle is a stdio relay to the same URL (mcp-server/src/relay.ts).
+//
+// The port defaults to 40405 and is a user setting for the machine where
+// something else owns that port for good. A spawn is supervised on its own
+// thread: the sidecar gets a few attempts (a port still in TIME_WAIT after a
+// quick toggle frees up within a second), its stderr is captured so Settings
+// can show the real reason when every attempt fails, and a stop that races the
+// supervisor wins via `mcp_http_generation`.
+
+use std::sync::atomic::Ordering;
+
+/// Default port for the app-spawned `logtapper-mcp --http` (loopback only).
+pub const MCP_HTTP_PORT: u16 = 40405;
+
+/// Spawn attempts before giving up, and how long each gets to prove it stays up.
+const SPAWN_ATTEMPTS: u32 = 3;
+const SPAWN_SETTLE_MS: u64 = 750;
+const SPAWN_RETRY_DELAY_MS: u64 = 500;
+
+/// The URL harnesses connect to for a given port.
+pub fn mcp_http_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}/mcp")
+}
+
+/// Ports the HTTP server may use: not privileged, not the bridge's own.
+pub fn validate_http_port(port: u16) -> Result<u16, String> {
+    if port < 1024 {
+        return Err(format!("Port {port} is privileged; choose 1024 or higher"));
+    }
+    if port == crate::mcp_bridge::PORT {
+        return Err(format!("Port {port} is the MCP bridge's own port; choose another"));
+    }
+    Ok(port)
+}
+
+/// What Settings shows for the HTTP endpoint.
+#[derive(serde::Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct McpHttpInfo {
+    /// The URL while the server is up; `None` when the bridge is off, the
+    /// build ships no sidecar, or the last start failed (see `error`).
+    pub url: Option<String>,
+    /// The configured port, whether or not the server is currently up.
+    pub port: u16,
+    /// Why the most recent start failed, verbatim from the sidecar's stderr
+    /// or the OS spawn error. `None` when it is running or was never tried.
+    pub error: Option<String>,
+}
+
+fn current_port(state: &AppState) -> u16 {
+    lock_or_err(&state.mcp_http_port, "mcp_http_port").map(|p| *p).unwrap_or(MCP_HTTP_PORT)
+}
+
+fn record_error(state: &AppState, message: Option<String>) {
+    match lock_or_err(&state.mcp_http_last_error, "mcp_http_last_error") {
+        Ok(mut e) => *e = message,
+        Err(e) => log::warn!("[mcp-http] {e}"),
+    }
+}
+
+/// Spawn `logtapper-mcp --http <port>` from next to our own executable.
+///
+/// Returns immediately; the attempts run on a supervisor thread. No-op (with a
+/// log line) when this build ships no sidecar — `tauri dev` unless one was
+/// staged by hand — or when one is already running.
+pub(crate) fn spawn_mcp_http_server(state: std::sync::Arc<AppState>) {
+    {
+        let mut slot = match lock_or_err(&state.mcp_http_server, "mcp_http_server") {
+            Ok(slot) => slot,
+            Err(e) => {
+                log::warn!("[mcp-http] {e}");
+                return;
+            }
+        };
+        if let Some(child) = slot.as_mut() {
+            if matches!(child.try_wait(), Ok(None)) {
+                return; // still running
+            }
+            *slot = None;
+        }
+    }
+    let Some(sidecar) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(std::path::Path::to_path_buf))
+        .and_then(|d| find_sidecar_in(&d))
+    else {
+        log::info!("[mcp-http] no logtapper-mcp sidecar next to the executable; HTTP endpoint not started");
+        return;
+    };
+    let port = current_port(&state);
+    let generation = state.mcp_http_generation.load(Ordering::SeqCst);
+    record_error(&state, None);
+    if let Err(e) = std::thread::Builder::new()
+        .name("mcp-http-spawn".into())
+        .spawn(move || supervise_spawn(state, sidecar, port, generation))
+    {
+        log::warn!("[mcp-http] could not start supervisor thread: {e}");
+    }
+}
+
+/// One attempt: spawn, capture stderr, and report whether the child was still
+/// alive after `SPAWN_SETTLE_MS`. On failure the error text is returned.
+fn try_spawn_once(sidecar: &std::path::Path, port: u16) -> Result<std::process::Child, String> {
+    let mut cmd = std::process::Command::new(sidecar);
+    cmd.arg("--http")
+        .arg(port.to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(windows)]
+    {
+        // A console-subsystem child of a GUI app would otherwise open a console window.
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("could not start {}: {e}", sidecar.display()))?;
+
+    // Drain stderr on its own thread for the child's whole life (a full pipe
+    // would block the sidecar) and keep the last line as the failure reason.
+    let last_line = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+    if let Some(stderr) = child.stderr.take() {
+        let last = std::sync::Arc::clone(&last_line);
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(stderr).lines().map_while(Result::ok) {
+                log::info!("[mcp-http] {line}");
+                if let Ok(mut l) = last.lock() {
+                    *l = Some(line);
+                }
+            }
+        });
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(SPAWN_SETTLE_MS);
+    while std::time::Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Ok(Some(status)) => {
+                // Give the reader a moment to catch the last line.
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                let reason = last_line.lock().ok().and_then(|l| l.clone()).unwrap_or_default();
+                return Err(if reason.is_empty() { format!("exited with {status}") } else { reason });
+            }
+            Err(e) => return Err(format!("could not poll {}: {e}", sidecar.display())),
+        }
+    }
+    Ok(child)
+}
+
+fn supervise_spawn(state: std::sync::Arc<AppState>, sidecar: std::path::PathBuf, port: u16, generation: u64) {
+    let mut last_err = String::new();
+    for attempt in 1..=SPAWN_ATTEMPTS {
+        match try_spawn_once(&sidecar, port) {
+            Ok(mut child) => {
+                if state.mcp_http_generation.load(Ordering::SeqCst) != generation {
+                    // A stop (or a port change) happened meanwhile; ours is stale.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return;
+                }
+                log::info!(
+                    "[mcp-http] spawned {} (pid {}) at {} on attempt {attempt}",
+                    sidecar.display(),
+                    child.id(),
+                    mcp_http_url(port)
+                );
+                match lock_or_err(&state.mcp_http_server, "mcp_http_server") {
+                    Ok(mut slot) => *slot = Some(child),
+                    Err(e) => log::warn!("[mcp-http] {e}"),
+                }
+                record_error(&state, None);
+                return;
+            }
+            Err(e) => {
+                log::warn!("[mcp-http] attempt {attempt}/{SPAWN_ATTEMPTS} on port {port} failed: {e}");
+                last_err = e;
+                if attempt < SPAWN_ATTEMPTS {
+                    std::thread::sleep(std::time::Duration::from_millis(SPAWN_RETRY_DELAY_MS));
+                }
+            }
+        }
+    }
+    record_error(&state, Some(last_err));
+}
+
+/// Kill the HTTP server child if one is running. Safe to call repeatedly.
+pub(crate) fn stop_mcp_http_server(state: &AppState) {
+    state.mcp_http_generation.fetch_add(1, Ordering::SeqCst);
+    let mut slot = match lock_or_err(&state.mcp_http_server, "mcp_http_server") {
+        Ok(slot) => slot,
+        Err(e) => {
+            log::warn!("[mcp-http] {e}");
+            return;
+        }
+    };
+    if let Some(mut child) = slot.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+        log::info!("[mcp-http] stopped");
+    }
+}
+
+/// The endpoint's current state for Settings.
+#[tauri::command]
+pub fn get_mcp_http_info(state: tauri::State<'_, std::sync::Arc<AppState>>) -> Result<McpHttpInfo, String> {
+    let port = current_port(&state);
+    let error = lock_or_err(&state.mcp_http_last_error, "mcp_http_last_error")?.clone();
+    let mut slot = lock_or_err(&state.mcp_http_server, "mcp_http_server")?;
+    let alive = match slot.as_mut() {
+        Some(child) => matches!(child.try_wait(), Ok(None)),
+        None => false,
+    };
+    if !alive {
+        *slot = None; // reap a child that exited so the next start is not skipped
+    }
+    Ok(McpHttpInfo { url: alive.then(|| mcp_http_url(port)), port, error })
+}
+
+/// Change the HTTP port. Takes effect immediately when the bridge is on (the
+/// server is restarted on the new port); otherwise on the next bridge start.
+#[tauri::command]
+pub fn set_mcp_http_port(port: u16, state: tauri::State<'_, std::sync::Arc<AppState>>) -> Result<(), String> {
+    let port = validate_http_port(port)?;
+    let changed = {
+        let mut current = lock_or_err(&state.mcp_http_port, "mcp_http_port")?;
+        let changed = *current != port;
+        *current = port;
+        changed
+    };
+    let bridge_on = lock_or_err(&state.mcp_bridge_port, "mcp_bridge_port")?.is_some();
+    let server_down = lock_or_err(&state.mcp_http_server, "mcp_http_server")?.is_none();
+    if bridge_on && (changed || server_down) {
+        stop_mcp_http_server(&state);
+        spawn_mcp_http_server(std::sync::Arc::clone(state.inner()));
+    }
     Ok(())
 }
 
@@ -79,6 +327,7 @@ pub async fn start_mcp_bridge(
 /// running.
 #[tauri::command]
 pub fn stop_mcp_bridge(state: tauri::State<'_, std::sync::Arc<AppState>>) -> Result<(), String> {
+    stop_mcp_http_server(&state);
     stop_mcp_bridge_inner(&state)
 }
 
@@ -394,6 +643,53 @@ mod tests {
             find_sidecar_in(dir.path()).is_none(),
             "the main app binary must not be mistaken for the sidecar"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // MCP over HTTP: port validation and the spawn attempt
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_http_port_rejects_privileged_and_bridge_ports() {
+        assert!(validate_http_port(80).is_err());
+        assert!(validate_http_port(1023).is_err());
+        assert!(validate_http_port(crate::mcp_bridge::PORT).is_err(), "must not collide with the bridge");
+        assert_eq!(validate_http_port(1024), Ok(1024));
+        assert_eq!(validate_http_port(MCP_HTTP_PORT), Ok(MCP_HTTP_PORT));
+        assert_eq!(validate_http_port(65535), Ok(65535));
+    }
+
+    #[test]
+    fn test_mcp_http_url_uses_the_given_port() {
+        assert_eq!(mcp_http_url(41000), "http://127.0.0.1:41000/mcp");
+    }
+
+    #[test]
+    fn test_try_spawn_once_reports_a_spawn_error_for_a_non_executable() {
+        // A text file named like the sidecar: spawn fails at the OS level, and
+        // the error must name the path so Settings can show something useful.
+        let dir = tempfile::tempdir().unwrap();
+        let fake = dir.path().join(sidecar_name("logtapper-mcp"));
+        std::fs::write(&fake, b"not a program").unwrap();
+
+        let err = try_spawn_once(&fake, MCP_HTTP_PORT).expect_err("a text file cannot be spawned");
+        assert!(err.contains("logtapper-mcp"), "error should name the sidecar: {err}");
+    }
+
+    #[test]
+    fn test_set_port_persists_without_bridge_and_reports_via_info_shape() {
+        // With the bridge off, set_mcp_http_port only records the port; the
+        // supervisor is not started. Exercised through the state directly.
+        let state = make_state();
+        {
+            let mut p = state.mcp_http_port.lock().unwrap();
+            *p = 41000;
+        }
+        assert_eq!(current_port(&state), 41000);
+        record_error(&state, Some("boom".into()));
+        assert_eq!(state.mcp_http_last_error.lock().unwrap().as_deref(), Some("boom"));
+        record_error(&state, None);
+        assert!(state.mcp_http_last_error.lock().unwrap().is_none());
     }
 
     #[test]

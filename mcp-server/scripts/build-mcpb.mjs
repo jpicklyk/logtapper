@@ -24,6 +24,9 @@ const outFile = join(serverRoot, 'dist', 'logtapper.mcpb');
 
 const pkg = JSON.parse(readFileSync(join(serverRoot, 'package.json'), 'utf8'));
 
+/** Must match `DEFAULT_UPSTREAM_URL` in src/relay.ts and `MCP_HTTP_PORT` in the backend. */
+const DEFAULT_MCP_URL = 'http://127.0.0.1:40405/mcp';
+
 // npx/rolldown resolve differently on Windows — call the shim directly.
 const bin = (name) =>
   join(repoRoot, 'node_modules', '.bin', process.platform === 'win32' ? `${name}.cmd` : name);
@@ -59,8 +62,11 @@ mkdirSync(join(staging, 'server'), { recursive: true });
 mkdirSync(join(serverRoot, 'dist'), { recursive: true });
 
 // 2. Bundle to a single ESM file — no node_modules ships in the bundle.
+//    The entry is the *relay*, not the server: the bundle forwards tool calls
+//    over HTTP to the server the running app spawns (see src/relay.ts), so it
+//    never carries tool definitions that could go stale.
 run(bin('rolldown'), [
-  join(serverRoot, 'src', 'index.ts'),
+  join(serverRoot, 'src', 'relay.ts'),
   '-o', join(staging, 'server', 'index.js'),
   '--format', 'esm',
   '--platform', 'node',
@@ -91,12 +97,30 @@ const manifest = {
   repository: { type: 'git', url: 'https://github.com/jpicklyk/logtapper' },
   license: 'GPL-3.0-or-later',
   keywords: ['logtapper', 'logs', 'android', 'logcat', 'bugreport', 'log-analysis'],
+  // The relay only needs to know where the app serves MCP. Claude Desktop
+  // renders `user_config` as extension settings and substitutes the value
+  // into `env`, so a user who changed LogTapper's MCP port edits this once
+  // in Claude Desktop rather than reinstalling anything.
+  user_config: {
+    mcp_url: {
+      type: 'string',
+      title: 'LogTapper MCP URL',
+      description:
+        'Where LogTapper serves MCP over HTTP. Only change this if you changed the port in ' +
+        'LogTapper (Settings > General > MCP Integration).',
+      default: DEFAULT_MCP_URL,
+      required: false,
+    },
+  },
   server: {
     type: 'node',
     entry_point: 'server/index.js',
     mcp_config: {
       command: 'node',
       args: ['${__dirname}/server/index.js'],
+      env: {
+        LOGTAPPER_MCP_URL: '${user_config.mcp_url}',
+      },
     },
   },
 };

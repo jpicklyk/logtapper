@@ -35,6 +35,10 @@
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+// The server ships inside the app and nothing else, so its version *is* the
+// app version. mcp-server/package.json carries the Claude Desktop bundle's
+// (relay) version instead — see scripts/build-mcpb.mjs.
+import appPackage from "../../package.json" with { type: "json" };
 import { z } from "zod";
 
 import type {
@@ -274,14 +278,31 @@ function argError(message: string): ToolResult {
 // MCP server
 // ---------------------------------------------------------------------------
 
-export const server = new McpServer({
-  name: "logtapper",
-  version: "1.3.0",
-  description:
-    "Query live Android log sessions loaded in LogTapper. " +
-    "Use these tools to inspect log content, state-tracker events, and " +
-    "processor results before designing new YAML processors.",
-});
+/**
+ * Build a fresh server with every tool registered.
+ *
+ * The stdio entrypoint and the in-memory tests share the `server` singleton
+ * below; the HTTP mode creates one instance per request (stateless Streamable
+ * HTTP), so registration has to be repeatable.
+ */
+export function createServer(): McpServer {
+  const server = new McpServer({
+    name: "logtapper",
+    version: appPackage.version,
+    description:
+      "Query live Android log sessions loaded in LogTapper. " +
+      "Use these tools to inspect log content, state-tracker events, and " +
+      "processor results before designing new YAML processors.",
+  });
+  registerTools(server);
+  return server;
+}
+
+/** Shared instance for the stdio entrypoint and the in-memory tests. */
+export const server = createServer();
+
+/** Register every LogTapper tool on `server`. */
+export function registerTools(server: McpServer): void {
 
 // ── 1. logtapper_get_status ─────────────────────────────────────────────
 
@@ -2361,6 +2382,8 @@ server.tool(
     }
   }
 );
+
+}
 
 // ---------------------------------------------------------------------------
 // Types with no generated twin
