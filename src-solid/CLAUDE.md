@@ -74,6 +74,15 @@ build). Build and test with the root scripts: `npm run dev`, `npm run build`, `n
 9. **Security decisions stay in the backend.** The frontend reflects `McpStatus` and the
    agent-access flag; it never decides anonymization or path access.
 10. **No formatter.** ESLint is the only style gate; never run prettier here.
+11. **A restore pushes workspace-owned state back into the backend.** Analyses live in
+   `AppState::analyses`, and every save (this store's, the backend's debounced flush, the
+   exit flush) snapshots that store into the `.ltw`. `applyRestore` hands the file's
+   `analyses` to `setWorkspaceAnalyses` before any session load; the new/open/switch
+   teardown clears it. Skip the push and the store is empty after a restart, and the next
+   autosave writes that emptiness over the file (a workspace lost its analysis this way on
+   2026-09-17). Bookmarks and processor meta are per-session and ride
+   `restore_workspace_session`; the bookmarks store re-fetches on `workspace-restored`
+   because they land after the session's first-focus fetch.
 
 ## Module map
 

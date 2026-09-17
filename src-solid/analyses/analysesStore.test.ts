@@ -146,6 +146,21 @@ describe('createAnalysesStore', () => {
       await flush();
       expect(commands.listAnalyses).toHaveBeenCalledTimes(1);
     });
+
+    // `set_workspace_analyses` (a workspace restore replacing the backend
+    // store wholesale) emits one `restored` with an empty artifact id — the
+    // list must be re-read from the backend, not patched from the event.
+    it('a workspace restore ("restored" with no artifact id) re-reads the list from the backend', async () => {
+      await flush();
+      expect(store.list()).toEqual([]);
+      const restored = [artifact('r1'), artifact('r2')];
+      (commands.listAnalyses as ReturnType<typeof vi.fn>).mockClear();
+      (commands.listAnalyses as ReturnType<typeof vi.fn>).mockResolvedValue(restored);
+      listen.emit(updateEvent('', 'restored'));
+      await flush();
+      expect(commands.listAnalyses).toHaveBeenCalledTimes(1);
+      expect(store.list()).toEqual(restored);
+    });
   });
 
   describe('per-id cache (open)', () => {

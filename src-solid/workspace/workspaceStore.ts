@@ -35,6 +35,7 @@ import {
   renameWorkspace,
   saveAppState,
   saveWorkspaceV4,
+  setWorkspaceAnalyses,
   syncWorkspaceEnvelope,
 } from '@bridge/commands';
 import {
@@ -42,7 +43,7 @@ import {
   onWorkspaceListChanged,
   onWorkspaceRestored,
 } from '@bridge/events';
-import type { LtwEditorTab } from '@bridge/types';
+import type { AnalysisArtifact, LtwEditorTab } from '@bridge/types';
 import type { WorkspaceIdentity } from '@bridge/workspaceTypes';
 import { createEmptyWorkspace } from '@bridge/workspaceTypes';
 import {
@@ -447,17 +448,67 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       }
     };
 
+    /**
+     * Analyses are workspace-owned and live in the backend store
+     * (`AppState::analyses`) — the `.ltw`'s top-level `analyses.json` is a
+     * snapshot of that store, and EVERY save (this store's `saveWorkspace`,
+     * the backend's debounced flush after a bookmark or chain edit, the exit
+     * flush) re-snapshots it. Bookmarks and processor meta are per-session and
+     * ride `restore_workspace_session`; analyses have no session to ride, so
+     * a restore must push the file's list back itself. React's `restoreCore`
+     * did; the Solid port dropped the call, and a workspace restored on
+     * 2026-09-17 came back with an empty store that the next autosave wrote
+     * over the file — the analysis was gone for good. The teardown half
+     * (`clearWorkspaceAnalyses`) is the same invariant in the other direction:
+     * without it a switch carries the outgoing workspace's analyses into the
+     * incoming one's next save.
+     *
+     * A failure here is reported, never thrown — the sessions still deserve
+     * to come back even if the analysis restore failed.
+     */
+    const replaceWorkspaceAnalyses = async (
+      analyses: readonly AnalysisArtifact[],
+    ): Promise<string | null> => {
+      try {
+        await setWorkspaceAnalyses([...analyses]);
+        return null;
+      } catch (e) {
+        return `Failed to restore workspace analyses: ${String(e)}`;
+      }
+    };
+
+    /** The one teardown for new/open/switch: close every session and empty the
+     *  workspace-owned analyses store. Callers arm `beginWorkspaceSwitch()`
+     *  first so no backend flush can observe the half-cleared state. */
+    const teardownWorkspace = async (): Promise<void> => {
+      await closeAllSessions();
+      const warning = await replaceWorkspaceAnalyses([]);
+      if (warning) console.warn(`[workspaceStore] ${warning}`);
+    };
+
     const applyRestore = async (
       plan: RestorePlan,
       sessionData: readonly LoadWorkspaceSessionData[],
       layout: unknown,
       editorTabs: readonly LtwEditorTab[],
+      /** The `.ltw`'s workspace-level analyses; `null` when no file was read
+       *  (a CLI startup file with nothing else, or a startup with no
+       *  candidate), which leaves the backend store as it is. */
+      analyses: readonly AnalysisArtifact[] | null,
     ): Promise<void> => {
       restoreDepth += 1;
       cancelPending();
       try {
+        const warnings: string[] = [];
+        // Before any session load, so the legacy per-session merges inside
+        // `runRestorePlan` (backend upserts by artifact id) land on top of the
+        // correct base set rather than racing a load.
+        if (analyses !== null) {
+          const warning = await replaceWorkspaceAnalyses(analyses);
+          if (warning) warnings.push(warning);
+        }
         const outcome = await runRestorePlan(plan, sessionData, { openPath: openPathIds });
-        setWarnings(outcome.warnings);
+        setWarnings([...warnings, ...outcome.warnings]);
         // Remember the loaded blob on EVERY restore, not only when its view
         // state is applied: a startup restore that trusts the local mirror
         // skips the apply, and a later save must still read-modify-write the
@@ -481,7 +532,11 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       const result = await loadWorkspaceV4(path);
       // Explicit open: the `.ltw` is the whole truth — close what is open, then
       // replay the manifest. The mirror does not participate (see restore.ts).
-      await closeAllSessions();
+      // Armed like a switch: the teardown empties the analyses store, and a
+      // backend flush landing between that and the replay below would write
+      // the emptiness into the outgoing workspace's file.
+      await beginWorkspaceSwitch().catch(() => undefined);
+      await teardownWorkspace();
       // The opened `.ltw` gets its OWN list entry (React's `addWorkspaceEntry`),
       // never the active entry re-pointed at it: that re-point dropped the
       // previously active workspace from the list while leaving its
@@ -507,21 +562,31 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
         ]);
       }
       setActiveId(id);
-      await applyRestore(planExplicitOpen(result.sessions), result.sessionData, result.layout, result.editorTabs);
+      await applyRestore(
+        planExplicitOpen(result.sessions),
+        result.sessionData,
+        result.layout,
+        result.editorTabs,
+        result.analyses,
+      );
       pushEnvelope();
       persistAppState();
     };
 
     /**
-     * Read a workspace's `.ltw` purely for its layout blob, replaying nothing.
-     * `undefined` when there is no candidate or the read failed — the value
-     * `applyRestore` treats as "leave the remembered blob alone".
+     * Read a workspace's `.ltw` for its workspace-owned shell — the layout
+     * blob and the analyses — replaying no sessions. `layout: undefined` when
+     * there is no candidate or the read failed (the value `applyRestore`
+     * treats as "leave the remembered blob alone"), and `analyses: null` for
+     * the same cases (leave the backend store alone).
      */
-    const loadBlobOnly = async (ws: WorkspaceIdentity): Promise<unknown> => {
+    const loadShellOnly = async (
+      ws: WorkspaceIdentity,
+    ): Promise<{ layout: unknown; analyses: AnalysisArtifact[] | null }> => {
       const candidate = ws.filePath ?? ws.autoSavePath ?? null;
-      if (!candidate) return undefined;
+      if (!candidate) return { layout: undefined, analyses: null };
       const result = await loadWorkspaceV4(candidate).catch(() => null);
-      return result ? result.layout : undefined;
+      return result ? { layout: result.layout, analyses: result.analyses } : { layout: undefined, analyses: null };
     };
 
     const startupRestore = async (): Promise<void> => {
@@ -548,11 +613,13 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
         // The `.ltw` manifest is deliberately not replayed — but its layout
         // blob still has to be read, or the first save after a double-click
         // start writes `{ solid: … }` alone and strips React's keys from the
-        // file. A failed read passes `undefined`, which leaves the remembered
-        // blob alone rather than nulling it.
-        const blobSource = await loadBlobOnly(ws);
+        // file; and its analyses are the workspace's, not the manifest's, so
+        // they come back too (the double-clicked file joins this workspace,
+        // it does not replace it). A failed read passes `undefined`/`null`,
+        // which leaves the remembered blob and the backend store alone.
+        const shell = await loadShellOnly(ws);
         if (disposed) return;
-        await applyRestore({ ...plan, loads }, [], blobSource, []);
+        await applyRestore({ ...plan, loads }, [], shell.layout, [], shell.analyses);
         pushEnvelope();
         return;
       }
@@ -572,6 +639,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
         result?.sessionData ?? [],
         result?.layout ?? null,
         result?.editorTabs ?? [],
+        result?.analyses ?? null,
       );
       pushEnvelope();
     };
@@ -589,7 +657,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       // down, so a flush in flight cannot write the outgoing workspace's shell
       // into the incoming one.
       await beginWorkspaceSwitch().catch(() => undefined);
-      await closeAllSessions();
+      await teardownWorkspace();
       setActiveId(id);
       persistAppState();
       const candidate = target.filePath ?? target.autoSavePath ?? null;
@@ -610,7 +678,13 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       // silently landing on an empty workspace hides a missing `.ltw`.
       const result = await loadWorkspaceV4(candidate);
       if (disposed) return;
-      await applyRestore(planExplicitOpen(result.sessions), result.sessionData, result.layout, result.editorTabs);
+      await applyRestore(
+        planExplicitOpen(result.sessions),
+        result.sessionData,
+        result.layout,
+        result.editorTabs,
+        result.analyses,
+      );
       pushEnvelope();
     };
 
@@ -644,7 +718,7 @@ export function createWorkspaceStore(deps: WorkspaceStoreDeps): WorkspaceStore {
       // backend's suppression window before anything closes, so a flush in
       // flight can't write the outgoing workspace's shell into the new one.
       await beginWorkspaceSwitch().catch(() => undefined);
-      await closeAllSessions();
+      await teardownWorkspace();
       installFreshWorkspace();
     };
 
