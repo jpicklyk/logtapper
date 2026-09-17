@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LoadResult } from '@bridge/types';
-import type { Bookmark, BookmarkUpdateEvent } from '@bridge/types';
+import type { Bookmark, BookmarkUpdateEvent, WorkspaceRestoredEvent } from '@bridge/types';
 import { CacheManager, DataSourceRegistry, createViewerController } from '../viewer';
 import type { ViewerController } from '../viewer';
 // `'../app'` also matches `App.tsx` on a case-insensitive filesystem and TS
@@ -15,9 +15,11 @@ vi.mock('@bridge/events', () => ({
   onBridgeSessionClosed: vi.fn(() => Promise.resolve(() => {})),
   onFileIndexProgress: vi.fn(() => Promise.resolve(() => {})),
   onFileIndexComplete: vi.fn(() => Promise.resolve(() => {})),
-  // Never called directly — every test injects its own `listen` — but the
-  // store destructures the real export as its default at import time.
+  // Never called directly — every test injects its own `listen` /
+  // `listenRestored` — but the store destructures the real exports as its
+  // defaults at import time.
   onBookmarkUpdate: vi.fn(() => Promise.resolve(() => {})),
+  onWorkspaceRestored: vi.fn(() => Promise.resolve(() => {})),
 }));
 
 const bridgeCommands = vi.hoisted(() => ({
@@ -84,6 +86,23 @@ function makeListen() {
   return { listen, unlisten, emit: (payload: BookmarkUpdateEvent) => handler?.(payload) };
 }
 
+/** Fake `onWorkspaceRestored`: same shape as `makeListen`, for the restore path. */
+function makeListenRestored() {
+  let handler: ((payload: WorkspaceRestoredEvent) => void) | null = null;
+  const unlisten = vi.fn();
+  const listen = vi.fn((cb: (payload: WorkspaceRestoredEvent) => void) => {
+    handler = cb;
+    return Promise.resolve(unlisten);
+  });
+  return { listen, unlisten, emit: (payload: WorkspaceRestoredEvent) => handler?.(payload) };
+}
+
+function restoredEvent(sessionId: string, bookmarkCount: number): WorkspaceRestoredEvent {
+  return {
+    sessionId, bookmarkCount, analysisCount: 0, activeProcessorIds: [], disabledProcessorIds: [], source: 'workspace',
+  };
+}
+
 function makeCommands(): BookmarksCommands {
   return {
     listBookmarks: vi.fn(() => Promise.resolve([])),
@@ -104,6 +123,7 @@ let controller: ViewerController;
 let sessionStore: SessionStore;
 let commands: BookmarksCommands;
 let listen: ReturnType<typeof makeListen>;
+let listenRestored: ReturnType<typeof makeListenRestored>;
 let store: BookmarksStore;
 
 beforeEach(() => {
@@ -116,7 +136,14 @@ beforeEach(() => {
   sessionStore = createSessionStore({ cacheManager, registry, controller });
   commands = makeCommands();
   listen = makeListen();
-  store = createBookmarksStore({ sessions: sessionStore, controller, commands, listen: listen.listen as never });
+  listenRestored = makeListenRestored();
+  store = createBookmarksStore({
+    sessions: sessionStore,
+    controller,
+    commands,
+    listen: listen.listen as never,
+    listenRestored: listenRestored.listen as never,
+  });
 });
 
 afterEach(() => {
@@ -328,6 +355,69 @@ describe('createBookmarksStore', () => {
       sessionStore.add(load('s1'));
       await flush();
       expect(commands.listBookmarks).toHaveBeenCalledWith('s1');
+    });
+  });
+
+  // A workspace restore reopens the session first and pushes its saved
+  // bookmarks into the backend afterwards (`restore_workspace_session` runs
+  // once every load has settled), so the first-focus fetch has already
+  // answered "none". `workspace-restored` is the backend saying they landed.
+  describe('workspace restore', () => {
+    it('re-fetches a focused session whose saved bookmarks landed after its first fetch', async () => {
+      sessionStore.add(load('s1'));
+      await flush();
+      expect(commands.listBookmarks).toHaveBeenCalledTimes(1);
+      expect(store.list('s1')).toEqual([]);
+
+      const b = bookmark('b1');
+      (commands.listBookmarks as ReturnType<typeof vi.fn>).mockResolvedValue([b]);
+      listenRestored.emit(restoredEvent('s1', 1));
+      await flush();
+
+      expect(commands.listBookmarks).toHaveBeenCalledTimes(2);
+      expect(store.list('s1')).toEqual([b]);
+    });
+
+    it('keeps a bookmark created while the re-fetch is in flight', async () => {
+      sessionStore.add(load('s1'));
+      await flush();
+      let resolveList!: (v: Bookmark[]) => void;
+      (commands.listBookmarks as ReturnType<typeof vi.fn>).mockImplementation(
+        () => new Promise<Bookmark[]>((res) => { resolveList = res; }),
+      );
+      listenRestored.emit(restoredEvent('s1', 1));
+      const live = bookmark('live');
+      listen.emit(updateEvent('created', live));
+      resolveList([bookmark('restored')]);
+      await flush();
+      expect(store.list('s1').map((b) => b.id).sort()).toEqual(['live', 'restored']);
+    });
+
+    it('ignores a restore that landed no bookmarks for the session', async () => {
+      sessionStore.add(load('s1'));
+      await flush();
+      listenRestored.emit(restoredEvent('s1', 0));
+      await flush();
+      expect(commands.listBookmarks).toHaveBeenCalledTimes(1);
+    });
+
+    it('does nothing for a session this UI has not focused yet — its first focus fetches after the restore', async () => {
+      listenRestored.emit(restoredEvent('s2', 3));
+      await flush();
+      expect(commands.listBookmarks).not.toHaveBeenCalled();
+
+      const b = bookmark('b2', { sessionId: 's2' });
+      (commands.listBookmarks as ReturnType<typeof vi.fn>).mockResolvedValue([b]);
+      sessionStore.add(load('s2'));
+      await flush();
+      expect(commands.listBookmarks).toHaveBeenCalledTimes(1);
+      expect(store.list('s2')).toEqual([b]);
+    });
+
+    it('unlistens the restore subscription on dispose', async () => {
+      store.dispose();
+      await flush();
+      expect(listenRestored.unlisten).toHaveBeenCalledTimes(1);
     });
   });
 

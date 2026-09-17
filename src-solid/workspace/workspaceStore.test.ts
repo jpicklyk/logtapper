@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSignal } from 'solid-js';
-import type { AppStateFile, LoadWorkspaceV4Result, WorkspaceEntry } from '@bridge/types';
+import type {
+  AnalysisArtifact,
+  AppStateFile,
+  Bookmark,
+  LoadWorkspaceV4Result,
+  WorkspaceEntry,
+} from '@bridge/types';
 import {
   SOLID_MIRROR_KEY,
   createWorkspaceStore,
@@ -29,6 +35,7 @@ const syncWorkspaceEnvelopeMock = vi.fn<(o: Record<string, unknown>) => Promise<
 const renameMock = vi.fn<(r: unknown) => Promise<WorkspaceEntry>>();
 const deleteMock = vi.fn<(r: unknown) => Promise<void>>();
 const restoreSessionMock = vi.fn<(o: unknown) => Promise<void>>();
+const setWorkspaceAnalysesMock = vi.fn<(a: AnalysisArtifact[]) => Promise<void>>();
 const startupFileMock = vi.fn<() => Promise<string | null>>();
 
 vi.mock('@bridge/commands', () => ({
@@ -42,6 +49,7 @@ vi.mock('@bridge/commands', () => ({
   renameWorkspace: (r: unknown) => renameMock(r),
   deleteWorkspace: (r: unknown) => deleteMock(r),
   restoreWorkspaceSession: (o: unknown) => restoreSessionMock(o),
+  setWorkspaceAnalyses: (a: AnalysisArtifact[]) => setWorkspaceAnalysesMock(a),
   getStartupFile: () => startupFileMock(),
 }));
 
@@ -183,6 +191,7 @@ beforeEach(() => {
   beginSwitchMock.mockResolvedValue();
   syncWorkspaceEnvelopeMock.mockResolvedValue(undefined);
   restoreSessionMock.mockResolvedValue();
+  setWorkspaceAnalysesMock.mockResolvedValue();
   startupFileMock.mockResolvedValue(null);
   loadWorkspaceV4Mock.mockResolvedValue(ltw());
 });
@@ -873,6 +882,206 @@ describe('startupRestore', () => {
     await store.startupRestore();
     expect(fakes.opened).toEqual([]);
     expect(loadWorkspaceV4Mock).not.toHaveBeenCalled();
+  });
+});
+
+// ── workspace artifacts: analyses and bookmarks ──────────────────────────────
+//
+// Repro for the 2026-09-17 data loss. Analyses are workspace-owned: the
+// backend's `AppState::analyses` is what EVERY save snapshots into the `.ltw`'s
+// top-level `analyses.json` — this store's `saveWorkspace`, the backend's
+// debounced flush after a bookmark or chain edit, the exit flush. A restore
+// that reads the file but never pushes its analyses back into that store
+// leaves it empty after a restart, and the next save of any kind writes the
+// emptiness over the file. React's `restoreCore` pushed them with
+// `setWorkspaceAnalyses`; the Solid port had dropped the call.
+//
+// Bookmarks are session-owned (`sessions/{idx}/bookmarks.json`) and travel
+// with `restore_workspace_session`, paired to the session each manifest entry
+// produced — pinned here alongside, since both are what "the workspace came
+// back" means to a user.
+
+describe('workspace-owned analyses cross the restore', () => {
+  const art = (id: string): AnalysisArtifact =>
+    ({ id, title: `Analysis ${id}`, createdAt: 1, sections: [] }) as AnalysisArtifact;
+  const ids = (a: AnalysisArtifact[]): string => a.map((x) => x.id).join(',');
+
+  /** Records the order of the calls a restore interleaves, so a test can pin
+   *  "analyses land before any session reopens" and "the outgoing workspace is
+   *  cleared before the incoming one is read". */
+  function recordOrder(fakes: Fakes): string[] {
+    const order: string[] = [];
+    setWorkspaceAnalysesMock.mockImplementation((a) => {
+      order.push(`analyses:${ids(a)}`);
+      return Promise.resolve();
+    });
+    beginSwitchMock.mockImplementation(() => {
+      order.push('begin-switch');
+      return Promise.resolve();
+    });
+    loadWorkspaceV4Mock.mockImplementation((p) => {
+      order.push(`load:${p}`);
+      return Promise.resolve(ltw({
+        sessions: [manifestSession('in.log')], sessionData: [emptySessionData()], analyses: [art('in')],
+      }));
+    });
+    const realOpen = fakes.actions.openPath;
+    fakes.actions.openPath = (p) => {
+      order.push(`open:${p}`);
+      return realOpen(p);
+    };
+    return order;
+  }
+
+  it('startup restore pushes the .ltw analyses into the backend store before reopening any session', async () => {
+    getAppStateMock.mockResolvedValue(appState([entry('a', { autoSavePath: 'C:/appdata/a.ltw' })], 'a'));
+    const fakes = makeFakes();
+    const order = recordOrder(fakes);
+    const store = build(fakes);
+    await store.hydrate();
+    await store.startupRestore();
+    expect(order).toEqual(['load:C:/appdata/a.ltw', 'analyses:in', 'open:in.log']);
+  });
+
+  it('a CLI startup file joins the workspace, so its analyses still come back even though the manifest is not replayed', async () => {
+    getAppStateMock.mockResolvedValue(appState([entry('a', { ltwPath: 'C:/a.ltw' })], 'a'));
+    startupFileMock.mockResolvedValue('D:/dropped.log');
+    const fakes = makeFakes();
+    const order = recordOrder(fakes);
+    const store = build(fakes);
+    await store.hydrate();
+    await store.startupRestore();
+    expect(order).toEqual(['load:C:/a.ltw', 'analyses:in', 'open:D:/dropped.log']);
+  });
+
+  it('touches the store neither at startup with no candidate nor when the startup-time read fails', async () => {
+    getAppStateMock.mockResolvedValue(appState([entry('a')], 'a'));
+    const fakes = makeFakes();
+    const store = build(fakes);
+    await store.hydrate();
+    await store.startupRestore();
+    expect(setWorkspaceAnalysesMock).not.toHaveBeenCalled();
+
+    getAppStateMock.mockResolvedValue(appState([entry('b', { ltwPath: 'C:/b.ltw' })], 'b'));
+    loadWorkspaceV4Mock.mockRejectedValue(new Error('unreadable'));
+    const second = build(makeFakes());
+    await second.hydrate();
+    await second.startupRestore();
+    expect(setWorkspaceAnalysesMock).not.toHaveBeenCalled();
+  });
+
+  it('an explicit open clears the outgoing analyses inside the switch window, then installs the file\'s', async () => {
+    const fakes = makeFakes();
+    const order = recordOrder(fakes);
+    const store = build(fakes);
+    await store.hydrate();
+    await fakes.actions.openPath('stale.log');
+    order.length = 0;
+    await store.openWorkspace('C:/ws/in.ltw');
+    expect(order).toEqual(['load:C:/ws/in.ltw', 'begin-switch', 'analyses:', 'analyses:in', 'open:in.log']);
+  });
+
+  it('a switch clears the outgoing analyses after arming the switch and before reading the target, then installs the target\'s', async () => {
+    getAppStateMock.mockResolvedValue(
+      appState([entry('a', { ltwPath: 'C:/a.ltw' }), entry('b', { ltwPath: 'C:/b.ltw' })], 'a'),
+    );
+    const fakes = makeFakes();
+    const order = recordOrder(fakes);
+    const store = build(fakes);
+    await store.hydrate();
+    await fakes.actions.openPath('a1.log');
+    order.length = 0;
+    await store.switchWorkspace('b');
+    expect(order).toEqual(['begin-switch', 'analyses:', 'load:C:/b.ltw', 'analyses:in', 'open:in.log']);
+  });
+
+  it('switching into a workspace that has no .ltw yet leaves the store cleared', async () => {
+    getAppStateMock.mockResolvedValue(appState([entry('a', { ltwPath: 'C:/a.ltw' }), entry('b')], 'a'));
+    const fakes = makeFakes();
+    const store = build(fakes);
+    await store.hydrate();
+    await store.switchWorkspace('b');
+    expect(setWorkspaceAnalysesMock).toHaveBeenCalledTimes(1);
+    expect(setWorkspaceAnalysesMock).toHaveBeenCalledWith([]);
+    expect(loadWorkspaceV4Mock).not.toHaveBeenCalled();
+  });
+
+  it('"New workspace" clears the store so the old analyses cannot land in the new file', async () => {
+    const fakes = makeFakes();
+    const store = build(fakes);
+    await store.hydrate();
+    await store.newWorkspace();
+    expect(setWorkspaceAnalysesMock).toHaveBeenCalledTimes(1);
+    expect(setWorkspaceAnalysesMock).toHaveBeenCalledWith([]);
+  });
+
+  it('a failed analyses restore is a warning naming the failure; the sessions still reopen', async () => {
+    getAppStateMock.mockResolvedValue(appState([entry('a', { ltwPath: 'C:/a.ltw' })], 'a'));
+    loadWorkspaceV4Mock.mockResolvedValue(ltw({
+      sessions: [manifestSession('a.log')], sessionData: [emptySessionData()], analyses: [art('x')],
+    }));
+    setWorkspaceAnalysesMock.mockRejectedValue(new Error('backend unavailable'));
+    const fakes = makeFakes();
+    const store = build(fakes);
+    await store.hydrate();
+    await expect(store.startupRestore()).resolves.toBeUndefined();
+    expect(fakes.opened).toEqual(['a.log']);
+    expect(store.warnings()).toEqual([
+      'Failed to restore workspace analyses: Error: backend unavailable',
+    ]);
+  });
+});
+
+describe('session-owned bookmarks cross the restore', () => {
+  it('forwards each manifest entry\'s bookmarks and processor ids to restore_workspace_session, paired to the session it produced', async () => {
+    const crash = {
+      id: 'bm-1', sessionId: 'stale-id-from-last-run', lineNumber: 41, label: 'crash site',
+      note: '', createdBy: 'User', createdAt: 1,
+    } as Bookmark;
+    const wifi = { ...crash, id: 'bm-2', lineNumber: 90, label: 'wifi drop' } as Bookmark;
+    loadWorkspaceV4Mock.mockResolvedValue(ltw({
+      sessions: [manifestSession('a.log'), manifestSession('b.log')],
+      sessionData: [
+        { bookmarks: [crash], analyses: [], activeProcessorIds: ['wifi-state'], disabledProcessorIds: [] },
+        { bookmarks: [wifi], analyses: [], activeProcessorIds: [], disabledProcessorIds: ['battery'] },
+      ],
+    }));
+    const fakes = makeFakes();
+    const store = build(fakes);
+    await store.hydrate();
+    await store.openWorkspace('C:/ws/two.ltw');
+
+    expect(fakes.opened).toEqual(['a.log', 'b.log']);
+    expect(restoreSessionMock).toHaveBeenCalledTimes(2);
+    expect(restoreSessionMock).toHaveBeenCalledWith({
+      sessionId: 'sess-1', bookmarks: [crash], analyses: [], activeProcessorIds: ['wifi-state'], disabledProcessorIds: [],
+    });
+    expect(restoreSessionMock).toHaveBeenCalledWith({
+      sessionId: 'sess-2', bookmarks: [wifi], analyses: [], activeProcessorIds: [], disabledProcessorIds: ['battery'],
+    });
+  });
+
+  it('a manifest entry that fails to reopen keeps its bookmarks off every other session', async () => {
+    const orphan = {
+      id: 'bm-1', sessionId: 'x', lineNumber: 1, label: 'x', note: '', createdBy: 'User', createdAt: 1,
+    } as Bookmark;
+    loadWorkspaceV4Mock.mockResolvedValue(ltw({
+      sessions: [manifestSession('E:/usb/gone.log'), manifestSession('b.log')],
+      sessionData: [
+        { bookmarks: [orphan], analyses: [], activeProcessorIds: [], disabledProcessorIds: [] },
+        emptySessionData(),
+      ],
+    }));
+    const fakes = makeFakes();
+    const realOpen = fakes.actions.openPath;
+    fakes.actions.openPath = (path) =>
+      path === 'E:/usb/gone.log' ? Promise.reject(new Error('os error 3')) : realOpen(path);
+    const store = build(fakes);
+    await store.hydrate();
+    await store.openWorkspace('C:/ws/two.ltw');
+
+    expect(restoreSessionMock).toHaveBeenCalledTimes(1);
+    expect(restoreSessionMock).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'sess-1', bookmarks: [] }));
   });
 });
 

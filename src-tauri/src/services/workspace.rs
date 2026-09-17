@@ -1205,6 +1205,76 @@ mod tests {
         assert_eq!(cached.workspace_id, "ws-1");
     }
 
+    /// The two workspace artifacts persist over different channels — analyses
+    /// are workspace-owned (top-level `analyses.json`, snapshotted from
+    /// `AppState::analyses`), bookmarks are session-owned
+    /// (`sessions/{idx}/bookmarks.json`, snapshotted per open session) — and a
+    /// load hands them back from those two places. Pin the whole cycle at the
+    /// service layer: what the services put in the store is what a save
+    /// writes and what a load returns, on both channels. (The frontend half —
+    /// pushing the loaded list back into the store — is pinned in
+    /// `src-solid/workspace/workspaceStore.test.ts`.)
+    #[test]
+    fn auto_save_persists_store_analyses_and_session_bookmarks_and_load_returns_both() {
+        use crate::core::bookmark::CreatedBy;
+        use crate::services::testing::fixture_session;
+
+        let mut session = fixture_session("sess-1", 3);
+        session.file_path = Some("C:/logs/sess-1.log".to_string());
+        let (ctx, _tmp) = test_ctx().with_session_object(session).build();
+
+        let artifact = crate::services::analyses::publish(
+            &ctx,
+            Some("sess-1".to_string()),
+            "Crash analysis".to_string(),
+            vec![],
+        )
+        .expect("publish");
+        let bookmark = crate::services::bookmarks::create(
+            &ctx,
+            "sess-1".to_string(),
+            1,
+            "crash site".to_string(),
+            String::new(),
+            CreatedBy::User,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("bookmark");
+
+        let path = auto_save(
+            &ctx,
+            AutoSaveWorkspaceOptions {
+                workspace_id: "ws-1".to_string(),
+                workspace_name: "Round trip".to_string(),
+                editor_tabs: vec![],
+                layout: None,
+                pipeline_chain: vec![],
+                disabled_chain_ids: vec![],
+            },
+        )
+        .expect("auto-save");
+
+        let loaded = load(&ctx, &path).expect("load");
+        assert_eq!(
+            loaded.analyses.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(),
+            vec![artifact.id.as_str()],
+            "the store's analyses land in the top-level analyses.json"
+        );
+        assert_eq!(loaded.sessions.len(), 1, "the open session is in the manifest");
+        assert_eq!(
+            loaded.session_data[0].bookmarks.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(),
+            vec![bookmark.id.as_str()],
+            "the session's bookmarks land in its sessions/0/bookmarks.json"
+        );
+        assert!(
+            loaded.session_data[0].analyses.is_empty(),
+            "a current file carries analyses at workspace level only"
+        );
+    }
+
     #[test]
     fn auto_save_lands_under_the_app_data_workspaces_dir() {
         let (ctx, tmp) = test_ctx().build();

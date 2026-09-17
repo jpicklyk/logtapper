@@ -48,8 +48,14 @@ import {
   updateBookmark as updateBookmarkCmd,
   deleteBookmark as deleteBookmarkCmd,
 } from '@bridge/commands';
-import { onBookmarkUpdate } from '@bridge/events';
-import type { Bookmark, BookmarkCategory, BookmarkUpdateEvent, CreatedBy } from '@bridge/types';
+import { onBookmarkUpdate, onWorkspaceRestored } from '@bridge/events';
+import type {
+  Bookmark,
+  BookmarkCategory,
+  BookmarkUpdateEvent,
+  CreatedBy,
+  WorkspaceRestoredEvent,
+} from '@bridge/types';
 import { exportBookmarksAsMarkdown } from '@bookmarks';
 // `'../app'` also matches `App.tsx` on a case-insensitive filesystem and TS
 // refuses the program (TS1149) — always import the barrel via `/index`.
@@ -137,6 +143,8 @@ export interface BookmarksStoreDeps {
   controller: ViewerController;
   /** Injected for tests; defaults to the real `onBookmarkUpdate`. */
   listen?: typeof onBookmarkUpdate;
+  /** Injected for tests; defaults to the real `onWorkspaceRestored`. */
+  listenRestored?: typeof onWorkspaceRestored;
   /** Injected for tests; defaults to the real bridge commands. */
   commands?: Partial<BookmarksCommands>;
 }
@@ -233,6 +241,7 @@ function createSessionBookmarksState(): SessionBookmarksState {
 export function createBookmarksStore(deps: BookmarksStoreDeps): BookmarksStore {
   const commands: BookmarksCommands = { ...DEFAULT_COMMANDS, ...deps.commands };
   const listenFn = deps.listen ?? onBookmarkUpdate;
+  const listenRestoredFn = deps.listenRestored ?? onWorkspaceRestored;
   const { sessions, controller } = deps;
 
   return createRoot((disposeRoot) => {
@@ -241,6 +250,7 @@ export function createBookmarksStore(deps: BookmarksStoreDeps): BookmarksStore {
     const fetchedIds = new Set<string>();
     let disposed = false;
     let unlisten: UnlistenFn | null = null;
+    let unlistenRestored: UnlistenFn | null = null;
 
     // `states` is a plain Map, invisible to Solid: every *read* of it goes
     // through this tick so a consuming memo re-runs when a session's state
@@ -266,12 +276,9 @@ export function createBookmarksStore(deps: BookmarksStoreDeps): BookmarksStore {
 
     const [retryTick, setRetryTick] = createSignal(0);
 
-    // Fetch once per session id, the first time it is focused — mirrors
-    // `sectionsStore.ts`'s fetch effect exactly.
-    createEffect(() => {
-      retryTick();
-      const id = sessions.focusedId();
-      if (!id || disposed || fetchedIds.has(id)) return;
+    /** One `listBookmarks` for `id`, merged into its state (`mergeFetched`
+     *  keeps anything an event applied while the call was in flight). */
+    const fetchFor = (id: string): void => {
       fetchedIds.add(id);
       const state = ensureState(id);
       state.setLoading(true);
@@ -292,6 +299,31 @@ export function createBookmarksStore(deps: BookmarksStoreDeps): BookmarksStore {
         .finally(() => {
           if (!disposed) state.setLoading(false);
         });
+    };
+
+    // Fetch once per session id, the first time it is focused — mirrors
+    // `sectionsStore.ts`'s fetch effect exactly.
+    createEffect(() => {
+      retryTick();
+      const id = sessions.focusedId();
+      if (!id || disposed || fetchedIds.has(id)) return;
+      fetchFor(id);
+    });
+
+    // A workspace restore reopens a session first and pushes its saved
+    // bookmarks into the backend afterwards (`restore_workspace_session`, once
+    // every load has settled) — so the first-focus fetch above has usually
+    // already answered "none" by the time they land. The backend announces
+    // that landing with `workspace-restored`, which carries no bookmark
+    // bodies, only a count: re-fetch the session whose fetch is now stale. A
+    // session this UI has not focused yet needs nothing — its first focus
+    // fetches after the restore.
+    listenRestoredFn((event: WorkspaceRestoredEvent) => {
+      if (disposed || event.bookmarkCount === 0 || !fetchedIds.has(event.sessionId)) return;
+      fetchFor(event.sessionId);
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlistenRestored = fn;
     });
 
     // ── Session cleanup ──────────────────────────────────────────────────
@@ -454,6 +486,7 @@ export function createBookmarksStore(deps: BookmarksStoreDeps): BookmarksStore {
       if (disposed) return;
       disposed = true;
       unlisten?.();
+      unlistenRestored?.();
       states.clear();
       disposeRoot();
     };
