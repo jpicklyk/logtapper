@@ -278,12 +278,16 @@ describe('createAnalysesStore', () => {
       await flush();
       expect(failing.error()).toContain('bridge down');
 
-      (commands.listAnalyses as ReturnType<typeof vi.fn>).mockResolvedValueOnce([artifact('a1')]);
+      // Built once: `artifact()` stamps `createdAt: Date.now()`, so a second
+      // `artifact('a1')` in the assertion below differs whenever the flush
+      // crosses a millisecond boundary — which it did under a loaded run.
+      const a1 = artifact('a1');
+      (commands.listAnalyses as ReturnType<typeof vi.fn>).mockResolvedValueOnce([a1]);
       failing.retry();
       await flush();
       // A stale message used to survive every later success, forever.
       expect(failing.error()).toBeNull();
-      expect(failing.list()).toEqual([artifact('a1')]);
+      expect(failing.list()).toEqual([a1]);
       failing.dispose();
     });
   });
