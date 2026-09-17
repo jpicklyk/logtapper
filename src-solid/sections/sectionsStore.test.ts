@@ -58,7 +58,7 @@ function section(name: string, startLine: number, endLine: number, parentIndex?:
 }
 
 function makePane(): PaneHandle & { jumpToLine: ReturnType<typeof vi.fn> } {
-  const handle: PaneHandle = { jumpToLine: vi.fn(), focus: vi.fn(), setSelection: vi.fn() };
+  const handle: PaneHandle = { jumpToLine: vi.fn(), flashLine: vi.fn(), focus: vi.fn(), setSelection: vi.fn() };
   return handle as PaneHandle & { jumpToLine: ReturnType<typeof vi.fn> };
 }
 

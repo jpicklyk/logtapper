@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { Index, Show, batch, createEffect, createMemo, createSignal, on, onCleanup, onMount } from 'solid-js';
+import { Index, Show, batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, untrack } from 'solid-js';
 import type { JSX } from 'solid-js';
 import type { DataSource } from '@viewport/DataSource';
 import { buildCopyText, writeClipboard } from '@viewport/copyText';
@@ -35,7 +35,7 @@ import styles from './LogViewer.module.css';
  * conversion lives here on purpose:
  *
  *  - **Absolute** — a backend file line. Everything outside the viewer speaks
- *    this: `PaneHandle.jumpToLine` / `setSelection`, `controller.setCursor`,
+ *    this: `PaneHandle.jumpToLine` / `flashLine` / `setSelection`, `controller.setCursor`,
  *    `onCursorChange`, and therefore every analyzer, search hit, bookmark,
  *    section, analysis, device-state transition and agent navigation.
  *  - **Rendered** — a row index in whatever the data source currently shows.
@@ -51,6 +51,16 @@ import styles from './LogViewer.module.css';
  */
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+
+/**
+ * How long a jump target keeps its `data-flash` marker. Longer than the
+ * stylesheet's `row-flash` animation so the animation always completes before
+ * the attribute — and with it the animation — is removed.
+ */
+export const FLASH_MS = 1600;
+
+/** See `Row`'s `flash` prop: the alternating value that restarts the animation. */
+export type FlashPhase = 'a' | 'b';
 
 /**
  * Row height comes from the `--viewer-row-h` custom property on `<html>` (a user
@@ -275,6 +285,7 @@ export function LogViewer(props: LogViewerProps) {
       () => {
         selection.clear();
         setCursorLine(null);
+        clearFlash();
       },
       { defer: true },
     ),
@@ -354,7 +365,45 @@ export function LogViewer(props: LogViewerProps) {
   const jumpToLine = (absLine: number) => {
     const rendered = toRendered(absLine);
     if (rendered == null) return; // empty line set — nothing is renderable
+    // A programmatic jump parks the keyboard cursor on the target row, exactly
+    // as a click there would: the row gets the `data-active` marker, and the
+    // next ArrowDown steps from the line the user was just shown, not from the
+    // top of the viewport.
+    setCursorLine(rendered);
     jumpToRendered(rendered);
+  };
+
+  // ── One-shot flash on a jump target ──────────────────────────────────────
+  // `phase` alternates on every flash so a second flash on the *same* row gets
+  // a different `data-flash` value, i.e. a different animation-name, which is
+  // what restarts a CSS animation on an element that is not re-created. The
+  // timer clears it after the animation has run, so a row that scrolls back
+  // into the window later does not replay it.
+  const [flash, setFlash] = createSignal<{ row: number; phase: FlashPhase } | null>(null);
+  let flashTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearFlash = () => {
+    if (flashTimer != null) clearTimeout(flashTimer);
+    flashTimer = null;
+    setFlash(null);
+  };
+  onCleanup(clearFlash);
+
+  const flashLine = (absLine: number) => {
+    const rendered = toRendered(absLine);
+    if (rendered == null) return;
+    const phase: FlashPhase = untrack(flash)?.phase === 'a' ? 'b' : 'a';
+    if (flashTimer != null) clearTimeout(flashTimer);
+    setFlash({ row: rendered, phase });
+    flashTimer = setTimeout(() => {
+      flashTimer = null;
+      setFlash(null);
+    }, FLASH_MS);
+  };
+
+  /** The `flash` prop for a rendered row: its phase while it is the flash target, else `null`. */
+  const flashFor = (row: number): FlashPhase | null => {
+    const f = flash();
+    return f && f.row === row ? f.phase : null;
   };
 
   // Consume the deferred scroll target after a rebase.
@@ -390,6 +439,7 @@ export function LogViewer(props: LogViewerProps) {
     onCleanup(
       controller.attachPane(paneId(), {
         jumpToLine,
+        flashLine,
         focus: () => container?.focus(),
         setSelection: (range) => {
           if (!range) {
@@ -430,7 +480,18 @@ export function LogViewer(props: LogViewerProps) {
       if (line == null) return;
       const absolute = toAbsolute(line);
       const sid = props.sessionId;
-      if (sid != null) props.controller?.setCursor(sid, absolute);
+      const controller = props.controller;
+      if (sid != null && controller) {
+        // A controller-driven jump publishes its cursor (with `source`) and
+        // *then* parks this pane's cursor on the same line: echoing that back
+        // would replace the attributed cursor with an unattributed copy and
+        // fire every cursor consumer twice. Only a cursor the viewer moved
+        // itself (click, arrow keys) is news to the controller.
+        const held = untrack(controller.cursor);
+        if (!(held && held.sessionId === sid && held.line === absolute)) {
+          controller.setCursor(sid, absolute);
+        }
+      }
       props.onCursorChange?.(absolute);
     }),
   );
@@ -593,6 +654,7 @@ export function LogViewer(props: LogViewerProps) {
                   selection.selection.selected.has(vb.virtualBase() + relIndex())
                 }
                 active={cursorLine() === vb.virtualBase() + relIndex()}
+                flash={flashFor(vb.virtualBase() + relIndex())}
                 onLineClick={handleLineClick}
               />
             )}

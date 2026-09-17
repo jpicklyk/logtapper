@@ -5,7 +5,7 @@ import { createSignal } from 'solid-js';
 import type { HighlightSpan } from '@bridge/generated/HighlightSpan';
 import type { ViewLine } from '@bridge/generated/ViewLine';
 import type { DataSource } from '@viewport/DataSource';
-import { LogViewer } from './LogViewer';
+import { FLASH_MS, LogViewer } from './LogViewer';
 import { createViewerController, DEFAULT_PANE_ID } from './controller';
 
 vi.mock('@viewport/copyText', () => ({
@@ -535,6 +535,76 @@ describe('LogViewer + ViewerController', () => {
     controller.dispose();
   });
 
+  it('parks the cursor on a controller jump target and does not echo it back unattributed', () => {
+    const controller = createViewerController({ focusSession: vi.fn() });
+    const onCursorChange = vi.fn();
+    const seen: unknown[] = [];
+    controller.onCursorChange((c) => seen.push(c));
+    const src = makeSource(100);
+    const { container } = render(() => (
+      <LogViewer
+        dataSource={src}
+        totalLineCount={100}
+        sessionId={SID}
+        controller={controller}
+        onCursorChange={onCursorChange}
+      />
+    ));
+
+    controller.scrollToLine(SID, 12, { source: 'user' });
+
+    expect(activeLine(container)).toBe(12);
+    // One cursor change, and it is the attributed one the controller published.
+    expect(seen).toEqual([{ sessionId: SID, line: 12, source: 'user' }]);
+    expect(controller.cursor()).toEqual({ sessionId: SID, line: 12, source: 'user' });
+    expect(onCursorChange).toHaveBeenCalledTimes(1);
+    expect(onCursorChange).toHaveBeenCalledWith(12);
+
+    // A plain jump (no highlight) moves the cursor but selects nothing.
+    expect(container.querySelector('[data-selected]')).toBeNull();
+    expect(container.querySelector('[data-flash]')).toBeNull();
+    controller.dispose();
+  });
+
+  it('a highlight jump selects the landing row and flashes it until FLASH_MS', () => {
+    vi.useFakeTimers();
+    try {
+      const controller = createViewerController({ focusSession: vi.fn() });
+      const src = makeSource(100);
+      const { container } = render(() => (
+        <LogViewer dataSource={src} totalLineCount={100} sessionId={SID} controller={controller} />
+      ));
+      const at = (n: number) =>
+        rows(container).find((r) => r.getAttribute('data-line') === String(n))!;
+
+      controller.scrollToLine(SID, 12, { highlight: true, source: 'analysis' });
+
+      expect(at(12).hasAttribute('data-selected')).toBe(true);
+      expect(at(12).hasAttribute('data-active')).toBe(true);
+      expect(at(12).getAttribute('data-flash')).toBe('a');
+      expect(container.querySelectorAll('[data-flash]')).toHaveLength(1);
+
+      // Flashing the same row again alternates the phase so the animation restarts.
+      controller.scrollToLine(SID, 12, { highlight: true, source: 'user' });
+      expect(at(12).getAttribute('data-flash')).toBe('b');
+
+      // The flash is one-shot; the selection and cursor stay.
+      vi.advanceTimersByTime(FLASH_MS);
+      expect(container.querySelector('[data-flash]')).toBeNull();
+      expect(at(12).hasAttribute('data-selected')).toBe(true);
+      expect(at(12).hasAttribute('data-active')).toBe(true);
+
+      // A later jump elsewhere moves the flash — the old row does not keep it.
+      controller.scrollToLine(SID, 3, { highlight: true, source: 'user' });
+      expect(at(3).getAttribute('data-flash')).toBe('a');
+      expect(at(12).hasAttribute('data-flash')).toBe(false);
+      expect(at(12).hasAttribute('data-selected')).toBe(false);
+      controller.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('activates its pane on pointer-down (S1: split-pane focus)', () => {
     const controller = createViewerController({ focusSession: vi.fn() });
     const focusPane = vi.spyOn(controller, 'focusPane');
@@ -695,6 +765,22 @@ describe('LogViewer with a line set active', () => {
     controller.scrollToLine(SID, ABS[100] + 3);
 
     expect(el.scrollTop).toBe(101 * ROW_H + ROW_H - VIEWPORT_H);
+    controller.dispose();
+  });
+
+  it('flashes and selects the rendered row that holds an absolute highlight target', () => {
+    const { container, controller, onCursorChange } = mountFiltered();
+
+    controller.scrollToLine(SID, ABS[5], { highlight: true, source: 'user' });
+
+    // Row 5, not row ABS[5]: the marker lands on the row the bookmark's line renders as.
+    expect(at(container, 5).getAttribute('data-flash')).toBe('a');
+    expect(at(container, 5).hasAttribute('data-selected')).toBe(true);
+    expect(at(container, 5).hasAttribute('data-active')).toBe(true);
+    expect(container.querySelectorAll('[data-flash]')).toHaveLength(1);
+    // The cursor the pane reports out is still the absolute line.
+    expect(onCursorChange).toHaveBeenCalledWith(ABS[5]);
+    expect(controller.cursor()).toMatchObject({ sessionId: SID, line: ABS[5], source: 'user' });
     controller.dispose();
   });
 

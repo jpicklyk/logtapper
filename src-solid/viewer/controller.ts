@@ -56,6 +56,12 @@ export interface PaneHandle {
    * `ViewerController.lineNumbers(sessionId)`.
    */
   jumpToLine(line: number): void;
+  /**
+   * Draw the eye to an **absolute backend line number** a jump just landed on:
+   * a one-shot flash on its row. Called after `jumpToLine` for a jump with
+   * `highlight`, so the row is already in the window when the flash starts.
+   */
+  flashLine(line: number): void;
   /** Focus the pane's scroll container so keyboard navigation lands there. */
   focus(): void;
   /**
@@ -66,7 +72,12 @@ export interface PaneHandle {
 }
 
 export interface ScrollToLineOptions {
-  /** Reserved for the caller's own highlight bookkeeping; recorded on the cursor. */
+  /**
+   * Make the landing visible: the pane flashes the target row, and — unless
+   * `select` names a range — the target line is selected, so the jump reads
+   * like a click on that line (bookmarks, analysis evidence, search hits,
+   * agent navigation). Recorded on the cursor.
+   */
   highlight?: boolean;
   /** Inclusive line range to select once the jump lands. */
   select?: [number, number];
@@ -92,8 +103,9 @@ export interface ViewerControllerDeps {
 
 export interface ViewerController {
   /**
-   * Focus the session (when its pane is showing another one), jump, optionally
-   * select, and record the cursor — in that order.
+   * Focus the session (when its pane is showing another one), record the
+   * cursor, jump, select (the given range, or the target line itself for a
+   * `highlight` jump) and flash — in that order.
    */
   scrollToLine(sessionId: string, line: number, opts?: ScrollToLineOptions): void;
 
@@ -316,18 +328,26 @@ export function createViewerController(deps: ViewerControllerDeps): ViewerContro
       if (boundSessions.get(paneId) !== sessionId) deps.focusSession(sessionId);
 
       activePaneId = paneId;
-      const handle = panes.get(paneId);
-      if (handle) {
-        handle.jumpToLine(line);
-        if (opts?.select) handle.setSelection(opts.select);
-      }
 
+      // The cursor is published *before* the pane moves: `jumpToLine` parks the
+      // pane's own cursor on the target row, and the pane echoes its cursor
+      // back through `setCursor` — but skips the echo when the controller
+      // already holds that position. Emitting first is what makes that skip
+      // hit, so consumers see one cursor change per jump, with `source`.
       emitCursor({
         sessionId,
         line,
         ...(opts?.source !== undefined ? { source: opts.source } : {}),
         ...(opts?.highlight !== undefined ? { highlight: opts.highlight } : {}),
       });
+
+      const handle = panes.get(paneId);
+      if (handle) {
+        handle.jumpToLine(line);
+        const select = opts?.select ?? (opts?.highlight ? [line, line] : undefined);
+        if (select) handle.setSelection(select);
+        if (opts?.highlight) handle.flashLine(line);
+      }
     };
 
     const dispose = (): void => {

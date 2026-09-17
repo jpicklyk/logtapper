@@ -131,6 +131,49 @@
   color: var(--accent, #58a6ff);
 }
 
+/* ── Jump-target flash ────────────────────────────────────────────────── */
+/* A controller jump with `highlight` (bookmark, analysis evidence, search hit,
+   agent navigation) puts `data-flash` on the landing row for `FLASH_MS`. The
+   wash is a pseudo-element so it layers over — rather than replaces — the level
+   and selection backgrounds the row already carries. The two phases are
+   identical; they exist so a second flash on the same row changes the
+   animation-name, which is what restarts a CSS animation on a node that is not
+   re-created. */
+
+.row[data-flash]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--accent, #58a6ff);
+  box-shadow: inset 0 0 0 1px var(--accent, #58a6ff);
+  opacity: 0;
+}
+
+.row[data-flash='a']::after { animation: row-flash-a 1.4s ease-out; }
+.row[data-flash='b']::after { animation: row-flash-b 1.4s ease-out; }
+
+@keyframes row-flash-a {
+  0%   { opacity: 0.5; }
+  20%  { opacity: 0.5; }
+  100% { opacity: 0; }
+}
+
+@keyframes row-flash-b {
+  0%   { opacity: 0.5; }
+  20%  { opacity: 0.5; }
+  100% { opacity: 0; }
+}
+
+/* Reduced motion: the selection wash and the accent cursor border still mark
+   the landing row; only the pulse is dropped. */
+@media (prefers-reduced-motion: reduce) {
+  .row[data-flash='a']::after,
+  .row[data-flash='b']::after {
+    animation: none;
+  }
+}
+
 /* ── Skeleton placeholder ─────────────────────────────────────────────── */
 
 .row[data-skeleton] {
