@@ -89,6 +89,7 @@ export type { MatchedLineEntry } from './MatchedLineEntry';
 export type { MatchedLineInfo } from './MatchedLineInfo';
 export type { McpAgentAccess } from './McpAgentAccess';
 export type { McpBundleInfo } from './McpBundleInfo';
+export type { McpHttpInfo } from './McpHttpInfo';
 export type { McpOpenAllowlist } from './McpOpenAllowlist';
 export type { McpStatus } from './McpStatus';
 export type { NavRequest } from './NavRequest';

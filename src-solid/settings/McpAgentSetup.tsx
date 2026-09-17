@@ -1,19 +1,26 @@
 /** @jsxImportSource solid-js */
-import { Show, createSignal, onCleanup, onMount } from 'solid-js';
+import { Show, createEffect, createSignal, onCleanup, onMount } from 'solid-js';
 import { save as saveFileDialog } from '@tauri-apps/plugin-dialog';
 import { writeClipboard } from '@viewport/copyText';
+import { DEFAULT_MCP_HTTP_PORT } from './settingsStore';
 import type { SettingsStore } from './settingsStore';
 import styles from './settings.module.css';
 
-// ── MCP agent setup (C1, ported from the React SettingsPanel) ──────────────
+// ── MCP agent setup ─────────────────────────────────────────────────────────
 //
-// Two clients, two mechanisms:
+// One server, three ways to reach it:
 //
-//   Claude Desktop — installs the bundled .mcpb, which carries its own copy of
-//     the server. Nothing here depends on where LogTapper was installed.
-//   Claude Code — launches the `logtapper-mcp` sidecar by absolute path, so the
-//     path has to be discoverable. The app is the only thing that reliably
-//     knows it, which is why it is surfaced here rather than documented.
+//   HTTP (any harness) — while the bridge is on, the app runs its own MCP
+//     server at a fixed localhost URL. Claude Code, Cursor, VS Code and every
+//     other client that speaks Streamable HTTP connects there. Nothing to
+//     install, nothing to update: the server is the one shipped with the app.
+//   Claude Desktop — installs the bundled .mcpb, a small relay that forwards
+//     to that URL. Claude Desktop extensions are stdio-only, and its cloud
+//     connectors cannot reach localhost, so the relay is the adapter for that
+//     one host. Installed once; it does not change with LogTapper releases.
+//   stdio by path — the `logtapper-mcp` binary launched directly, for clients
+//     that cannot do HTTP. The path differs per install, which is why the app
+//     surfaces it here rather than documenting it.
 //
 // Failures (install/save rejecting) are NOT shown as a local note — they go
 // through `store.installMcpBundle`/`store.saveMcpBundle`, which route the
@@ -31,7 +38,17 @@ export function claudeCodeCommandFor(path: string): string {
   return `claude mcp add logtapper --scope user -- "${path}"`;
 }
 
-type CopyKey = 'path' | 'code' | 'desktop';
+/** `claude mcp add` for the HTTP endpoint — no path, so no quoting concerns. */
+export function claudeCodeHttpCommandFor(url: string): string {
+  return `claude mcp add --transport http --scope user logtapper ${url}`;
+}
+
+/** The `mcpServers` shape Cursor, Windsurf and Claude-style configs share for a URL server. */
+export function httpConfigFor(url: string): string {
+  return JSON.stringify({ mcpServers: { logtapper: { url } } }, null, 2);
+}
+
+type CopyKey = 'url' | 'http-code' | 'http-json' | 'path' | 'code' | 'desktop';
 
 export interface McpAgentSetupProps {
   store: SettingsStore;
@@ -40,6 +57,23 @@ export interface McpAgentSetupProps {
 export function McpAgentSetup(props: McpAgentSetupProps) {
   const [copied, setCopied] = createSignal<CopyKey | null>(null);
   const [note, setNote] = createSignal<string | null>(null);
+  // The port field edits a draft; Apply pushes it to the store, whose rejection
+  // (validation, or the backend refusing) lands in the panel's error banner.
+  const [portDraft, setPortDraft] = createSignal<string>('');
+  // Follow the store's port (initially, and after an Apply lands) so the draft
+  // never shows a stale number — a tracked scope, so the reactivity rule holds.
+  createEffect(() => setPortDraft(String(props.store.mcpHttpPort())));
+  const draftPort = (): number | null => {
+    const n = Number(portDraft());
+    return /^\d+$/.test(portDraft()) && Number.isInteger(n) ? n : null;
+  };
+  const portDirty = (): boolean => draftPort() !== props.store.mcpHttpPort();
+  const applyPort = (): void => {
+    const port = draftPort();
+    if (port === null) return;
+    const mcp = props.store;
+    mcp.setMcpHttpPort(port).catch(() => undefined); // rejection already recorded in store.error()
+  };
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
   let noteTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -90,10 +124,100 @@ export function McpAgentSetup(props: McpAgentSetupProps) {
       .catch(() => undefined); // rejection already recorded in store.error()
   };
 
+  const PortEditor = () => (
+    <div class={styles.mcpAgentPathRow}>
+      <label class={styles.labelHint} for="mcp-http-port">Port</label>
+      <input
+        id="mcp-http-port"
+        class={styles.input}
+        type="number"
+        inputmode="numeric"
+        min="1024"
+        max="65535"
+        value={portDraft()}
+        onInput={(e) => setPortDraft(e.currentTarget.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && portDirty() && draftPort() !== null) applyPort(); }}
+      />
+      <button type="button" class={styles.linkBtn} disabled={!portDirty() || draftPort() === null} onClick={applyPort}>
+        Apply port
+      </button>
+    </div>
+  );
+
   return (
     <Show when={props.store.mcpAgentResolved()}>
       <div class={styles.mcpAgentSetup} data-testid="mcp-agent-setup">
         <div class={styles.mcpAgentSetupTitle}>Connect an AI agent</div>
+
+        <div class={styles.mcpAgentClient}>
+          <div class={styles.mcpAgentClientName}>Any MCP client (HTTP)</div>
+          <Show
+            when={props.store.mcpHttpEndpoint()}
+            fallback={
+              <Show
+                when={props.store.mcpSidecarPath()}
+                fallback={
+                  <div class={styles.labelHint}>
+                    No bundled server binary found — expected in installed builds only. From a
+                    source checkout, run
+                    {' '}
+                    <code class={styles.mcpAgentCode}>node --experimental-strip-types mcp-server/src/index.ts --http 40405</code>
+                    {' '}
+                    and connect to
+                    {' '}
+                    <code class={styles.mcpAgentCode}>http://127.0.0.1:40405/mcp</code>.
+                    See docs/mcp for the full setup guide.
+                  </div>
+                }
+              >
+                <div class={styles.labelHint}>
+                  {props.store.mcpHttpError()
+                    ? `The MCP server did not start: ${props.store.mcpHttpError()}. If the port is taken, choose another below.`
+                    : props.store.mcpStatus()?.running
+                      ? 'Starting the MCP server…'
+                      : 'Enable the MCP bridge above — the HTTP endpoint starts and stops with it.'}
+                </div>
+                <PortEditor />
+              </Show>
+            }
+          >
+            {(url) => (
+              <>
+                <div class={styles.labelHint}>
+                  Point your client at this URL. It always reaches the server that shipped with this
+                  LogTapper, so there is nothing to reinstall after an update.
+                </div>
+                <div class={styles.mcpAgentPathRow}>
+                  <code class={styles.mcpAgentPath} title={url()}>
+                    {url()}
+                  </code>
+                  <button type="button" class={styles.linkBtn} onClick={() => copy('url', url())}>
+                    {copied() === 'url' ? 'Copied' : 'Copy URL'}
+                  </button>
+                </div>
+                <PortEditor />
+                <div class={styles.mcpAgentActions}>
+                  <button
+                    type="button"
+                    class={styles.button}
+                    title="claude mcp add --transport http --scope user logtapper <url>"
+                    onClick={() => copy('http-code', claudeCodeHttpCommandFor(url()))}
+                  >
+                    {copied() === 'http-code' ? 'Copied' : 'Copy claude mcp add command'}
+                  </button>
+                  <button
+                    type="button"
+                    class={styles.linkBtn}
+                    title="mcpServers block with a url — Cursor, Windsurf and similar"
+                    onClick={() => copy('http-json', httpConfigFor(url()))}
+                  >
+                    {copied() === 'http-json' ? 'Copied' : 'Copy JSON config'}
+                  </button>
+                </div>
+              </>
+            )}
+          </Show>
+        </div>
 
         <Show when={props.store.mcpBundleInfo()}>
           {(bundle) => (
@@ -101,9 +225,16 @@ export function McpAgentSetup(props: McpAgentSetupProps) {
               <div class={styles.mcpAgentClientName}>Claude Desktop</div>
               <div class={styles.labelHint}>
                 {bundle().installable
-                  ? 'Installs a self-contained extension — no file paths to configure.'
-                  : 'Save the extension bundle, then install it in Claude Desktop: Developer → Extensions → Install Extension…'}
+                  ? 'Installs a small relay extension that forwards to the URL above. Install it once — it does not change with LogTapper releases.'
+                  : 'Save the relay extension, then install it in Claude Desktop: Developer → Extensions → Install Extension… Install it once — it does not change with LogTapper releases.'}
               </div>
+              <Show when={props.store.mcpHttpPort() !== DEFAULT_MCP_HTTP_PORT}>
+                <div class={styles.labelHint}>
+                  The port is not the default, so the bundle's built-in address is wrong for this machine: in Claude
+                  Desktop, open the LogTapper extension's settings and set <strong>LogTapper MCP URL</strong> to the URL
+                  above. The saved bundle file is never rewritten.
+                </div>
+              </Show>
               <div class={styles.mcpAgentActions}>
                 <Show when={bundle().installable}>
                   <button type="button" class={styles.button} onClick={handleInstall}>
@@ -119,53 +250,43 @@ export function McpAgentSetup(props: McpAgentSetupProps) {
           )}
         </Show>
 
-        <div class={styles.mcpAgentClient}>
-          <div class={styles.mcpAgentClientName}>Claude Code</div>
-          <Show
-            when={props.store.mcpSidecarPath()}
-            fallback={
+        <Show when={props.store.mcpSidecarPath()}>
+          {(sidecarPath) => (
+            <div class={styles.mcpAgentClient}>
+              <div class={styles.mcpAgentClientName}>Launch by path (stdio)</div>
               <div class={styles.labelHint}>
-                No bundled server binary found — expected in installed builds only. From a
-                source checkout, run
-                {' '}
-                <code class={styles.mcpAgentCode}>node --experimental-strip-types mcp-server/src/index.ts</code>.
-                See docs/mcp for the full setup guide.
+                For clients that cannot connect over HTTP. The path changes with the install
+                location, so re-register after moving LogTapper.
               </div>
-            }
-          >
-            {(sidecarPath) => (
-              <>
-                <div class={styles.labelHint}>Register the bundled server, then start a new session.</div>
-                <div class={styles.mcpAgentPathRow}>
-                  <code class={styles.mcpAgentPath} title={sidecarPath()}>
-                    {sidecarPath()}
-                  </code>
-                  <button type="button" class={styles.linkBtn} onClick={() => copy('path', sidecarPath())}>
-                    {copied() === 'path' ? 'Copied' : 'Copy path'}
-                  </button>
-                </div>
-                <div class={styles.mcpAgentActions}>
-                  <button
-                    type="button"
-                    class={styles.button}
-                    title="claude mcp add logtapper --scope user -- <path>"
-                    onClick={() => copy('code', claudeCodeCommandFor(sidecarPath()))}
-                  >
-                    {copied() === 'code' ? 'Copied' : 'Copy claude mcp add command'}
-                  </button>
-                  <button
-                    type="button"
-                    class={styles.linkBtn}
-                    title="JSON block for claude_desktop_config.json"
-                    onClick={() => copy('desktop', desktopConfigFor(sidecarPath()))}
-                  >
-                    {copied() === 'desktop' ? 'Copied' : 'Copy JSON config'}
-                  </button>
-                </div>
-              </>
-            )}
-          </Show>
-        </div>
+              <div class={styles.mcpAgentPathRow}>
+                <code class={styles.mcpAgentPath} title={sidecarPath()}>
+                  {sidecarPath()}
+                </code>
+                <button type="button" class={styles.linkBtn} onClick={() => copy('path', sidecarPath())}>
+                  {copied() === 'path' ? 'Copied' : 'Copy path'}
+                </button>
+              </div>
+              <div class={styles.mcpAgentActions}>
+                <button
+                  type="button"
+                  class={styles.linkBtn}
+                  title="claude mcp add logtapper --scope user -- <path>"
+                  onClick={() => copy('code', claudeCodeCommandFor(sidecarPath()))}
+                >
+                  {copied() === 'code' ? 'Copied' : 'Copy claude mcp add command (by path)'}
+                </button>
+                <button
+                  type="button"
+                  class={styles.linkBtn}
+                  title="mcpServers block with a command — claude_desktop_config.json and similar"
+                  onClick={() => copy('desktop', desktopConfigFor(sidecarPath()))}
+                >
+                  {copied() === 'desktop' ? 'Copied' : 'Copy JSON config (by path)'}
+                </button>
+              </div>
+            </div>
+          )}
+        </Show>
       </div>
     </Show>
   );

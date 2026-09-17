@@ -34,6 +34,8 @@ function fakeStore(): SettingsStore {
     exportThemeToFile: vi.fn(noop),
     sources: () => [] as Source[], refreshSources: vi.fn(), addSource: vi.fn(noop), removeSource: vi.fn(noop),
     mcpSidecarPath: () => null as string | null, mcpBundleInfo: () => null as McpBundleInfo | null,
+    mcpHttpEndpoint: () => null as string | null, mcpHttpError: () => null as string | null,
+    mcpHttpPort: () => 40405, setMcpHttpPort: vi.fn(() => Promise.resolve()),
     mcpAgentResolved: () => true, refreshMcpAgentSetup: vi.fn(),
     installMcpBundle: vi.fn(noop), saveMcpBundle: vi.fn(noop),
     error: () => null, clearError: vi.fn(), dispose: vi.fn(),

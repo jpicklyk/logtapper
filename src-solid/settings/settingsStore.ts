@@ -5,7 +5,7 @@ import { createRoot, createSignal, untrack } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import * as cmds from '@bridge/commands';
 import type {
-  AnonymizerConfig, AnonymizerTestResult, FileAssocEntry, McpBundleInfo, McpOpenAllowlist, McpStatus, Source, ThemeSummary, UserTheme,
+  AnonymizerConfig, AnonymizerTestResult, FileAssocEntry, McpBundleInfo, McpHttpInfo, McpOpenAllowlist, McpStatus, Source, ThemeSummary, UserTheme,
 } from '@bridge/types';
 import { validateUserTheme } from '../theme';
 export type SettingsCommands = Pick<typeof cmds,
@@ -13,7 +13,7 @@ export type SettingsCommands = Pick<typeof cmds,
   | 'setFileAssociation' | 'openDefaultAppsSettings' | 'getMcpOpenAllowlist' | 'setMcpOpenAllowlist' | 'setAgentRawAccess'
   | 'startMcpBridge' | 'stopMcpBridge' | 'listThemes' | 'readTheme' | 'writeTheme' | 'deleteTheme' | 'readTextFile'
   | 'writeTextFile' | 'listSources' | 'addSource' | 'removeSource'
-  | 'getMcpSidecarPath' | 'getMcpBundlePath' | 'openMcpBundle' | 'saveMcpBundle'>;
+  | 'getMcpSidecarPath' | 'getMcpBundlePath' | 'getMcpHttpInfo' | 'setMcpHttpPort' | 'openMcpBundle' | 'saveMcpBundle'>;
 export interface SettingsStoreDeps {
   /** A2's bridge-status accessor (`presenceStore.status`) — read-only here. */
   mcpStatus: Accessor<McpStatus | null>;
@@ -36,6 +36,10 @@ export interface SettingsStoreDeps {
  *  and writes only `mcpBridgeEnabled` in it, read-modify-write, so the two UIs agree on whether
  *  the bridge auto-starts and neither drops the other's keys. */
 export const SHARED_SETTINGS_KEY = 'logtapper_settings';
+/** Mirrors the backend's `MCP_HTTP_PORT`; only a saved value that differs is pushed to it on load. */
+export const DEFAULT_MCP_HTTP_PORT = 40405;
+/** The backend gives a spawn ~0.75 s to prove it stays up before reporting a URL; re-read after that. */
+const SPAWN_REPORT_DELAY_MS = 1500;
 
 function readSharedSettings(storage: Pick<Storage, 'getItem'> | undefined): Record<string, unknown> {
   try {
@@ -72,6 +76,16 @@ export interface SettingsStore {
    *  the whole block's first paint — same "render nothing until settled" contract as the
    *  React component it ports. */
   mcpSidecarPath: Accessor<string | null>; mcpBundleInfo: Accessor<McpBundleInfo | null>;
+  /** The MCP-over-HTTP URL, `null` while the bridge is off (the app spawns and
+   *  kills that server with the bridge), when the build ships no sidecar, or when
+   *  the last start failed — then `mcpHttpError` carries the sidecar's reason.
+   *  Re-read after every bridge toggle and again 1.5 s later, because the backend
+   *  supervises the spawn on a thread and only reports the URL once the server
+   *  has stayed up for a moment. */
+  mcpHttpEndpoint: Accessor<string | null>; mcpHttpError: Accessor<string | null>;
+  /** The configured port (persisted here, applied to the backend on load and on
+   *  change). `setMcpHttpPort` rejects with the backend's validation message. */
+  mcpHttpPort: Accessor<number>; setMcpHttpPort(port: number): Promise<void>;
   mcpAgentResolved: Accessor<boolean>; refreshMcpAgentSetup(): void;
   /** Both route their rejection through `error()` via `mutate` — the caller (a UI
    *  action handler) only needs a success continuation; the failure is already
@@ -86,13 +100,14 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
   const mcpStatus = deps.mcpStatus;
   const refreshMcpStatus = deps.refreshMcpStatus;
   const storage = deps.storage ?? (typeof localStorage === 'undefined' ? undefined : localStorage);
-  const writeBridgePreference = (enabled: boolean): void => {
+  const writeSharedSetting = (key: string, value: unknown): void => {
     try {
-      storage?.setItem(SHARED_SETTINGS_KEY, JSON.stringify({ ...readSharedSettings(storage), mcpBridgeEnabled: enabled }));
+      storage?.setItem(SHARED_SETTINGS_KEY, JSON.stringify({ ...readSharedSettings(storage), [key]: value }));
     } catch {
-      // a full or unavailable storage must never fail the toggle itself
+      // a full or unavailable storage must never fail the change itself
     }
   };
+  const writeBridgePreference = (enabled: boolean): void => writeSharedSetting('mcpBridgeEnabled', enabled);
   return createRoot((disposeRoot) => {
     const [mcpBridgePending, setMcpBridgePending] = createSignal(false);
     const [agentRawAccessPending, setAgentRawAccessPending] = createSignal(false);
@@ -105,7 +120,25 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
     const [sources, setSources] = createSignal<Source[]>([]);
     const [mcpSidecarPath, setMcpSidecarPath] = createSignal<string | null>(null);
     const [mcpBundleInfo, setMcpBundleInfo] = createSignal<McpBundleInfo | null>(null);
+    const [mcpHttpInfo, setMcpHttpInfo] = createSignal<McpHttpInfo | null>(null);
+    const mcpHttpEndpoint = (): string | null => mcpHttpInfo()?.url ?? null;
+    const mcpHttpError = (): string | null => mcpHttpInfo()?.error ?? null;
+    const savedPort = readSharedSettings(storage).mcpHttpPort;
+    const [mcpHttpPort, setMcpHttpPortSignal] = createSignal(
+      typeof savedPort === 'number' && Number.isInteger(savedPort) ? savedPort : DEFAULT_MCP_HTTP_PORT,
+    );
     const [mcpAgentResolved, setMcpAgentResolved] = createSignal(false);
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    /** Silent like the other agent-setup reads: an absent endpoint is a normal answer. */
+    const refreshMcpHttpInfo = (): void => {
+      c.getMcpHttpInfo().then((info) => { if (!disposed) setMcpHttpInfo(info); }, () => undefined);
+    };
+    /** Now, and again once the backend's spawn supervisor has had time to report. */
+    const refreshMcpHttpInfoSoon = (): void => {
+      refreshMcpHttpInfo();
+      const t = setTimeout(() => { timers.delete(t); if (!disposed) refreshMcpHttpInfo(); }, SPAWN_REPORT_DELAY_MS);
+      timers.add(t);
+    };
     const [error, setError] = createSignal<string | null>(null);
     const [mcpBridgeEnabled, setMcpBridgeEnabledSignal] = createSignal(readSharedSettings(storage).mcpBridgeEnabled === true);
     let disposed = false;
@@ -137,13 +170,25 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
         .then(() => persistBridgePreference(enabled))
         // Re-read `McpStatus` rather than wait out A2's ≤5 s poll: until it lands the
         // UI cannot say whether the bridge is actually up (M6).
-        .finally(() => { if (!disposed) setMcpBridgePending(false); refreshMcpStatus?.(); });
+        .finally(() => { if (!disposed) setMcpBridgePending(false); refreshMcpStatus?.(); refreshMcpHttpInfoSoon(); });
     };
+    const setMcpHttpPort = (port: number): Promise<void> =>
+      mutate(c.setMcpHttpPort(port)).then(() => {
+        if (disposed) return;
+        setMcpHttpPortSignal(port);
+        writeSharedSetting('mcpHttpPort', port);
+        refreshMcpHttpInfoSoon();
+      });
     // Same launch behaviour as the React shell (`useAppShellSetup.ts`): the bridge starts on
     // its own when the saved preference says so, so an agent finds it without a manual toggle.
     // Untracked: a one-time read of the seeded preference at construction, not a subscription.
+    // The saved port is applied before the bridge starts so the server never
+    // comes up on the default and restarts a moment later.
     if (untrack(mcpBridgeEnabled)) {
-      c.startMcpBridge().catch(fail);
+      const port = untrack(mcpHttpPort);
+      const start = (): void => { c.startMcpBridge().then(refreshMcpHttpInfoSoon, fail); };
+      if (port === DEFAULT_MCP_HTTP_PORT) start();
+      else c.setMcpHttpPort(port).then(start, fail);
     }
     const setAgentRawAccess = (enabled: boolean): Promise<void> => {
       setAgentRawAccessPending(true);
@@ -213,16 +258,17 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
      *  missing sidecar or bundle in a source checkout is the normal, silent case
      *  (rendered as the "no bundled server" hint), not an error worth the banner. */
     const refreshMcpAgentSetup = (): void => {
-      Promise.allSettled([c.getMcpSidecarPath(), c.getMcpBundlePath()]).then(([sidecar, bundle]) => {
+      Promise.allSettled([c.getMcpSidecarPath(), c.getMcpBundlePath(), c.getMcpHttpInfo()]).then(([sidecar, bundle, http]) => {
         if (disposed) return;
         if (sidecar.status === 'fulfilled') setMcpSidecarPath(sidecar.value);
         if (bundle.status === 'fulfilled') setMcpBundleInfo(bundle.value);
+        if (http.status === 'fulfilled') setMcpHttpInfo(http.value);
         setMcpAgentResolved(true);
       });
     };
     const installMcpBundle = (): Promise<void> => mutate(c.openMcpBundle());
     const saveMcpBundleFn = (dest: string): Promise<void> => mutate(c.saveMcpBundle(dest));
-    const dispose = (): void => { disposed = true; disposeRoot(); };
+    const dispose = (): void => { disposed = true; for (const t of timers) clearTimeout(t); timers.clear(); disposeRoot(); };
     return {
       mcpStatus, mcpBridgePending, setMcpBridgeEnabled, mcpBridgeEnabled, agentRawAccessPending, setAgentRawAccess,
       allowlist, refreshAllowlist, addAllowDir, removeAllowDir, setAllowAll,
@@ -232,7 +278,7 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
       themes, refreshThemes, readTheme: c.readTheme, saveTheme, deleteTheme: deleteThemeFn,
       importThemeFromFile, exportThemeToFile,
       sources, refreshSources, addSource: addSourceFn, removeSource: removeSourceFn,
-      mcpSidecarPath, mcpBundleInfo, mcpAgentResolved, refreshMcpAgentSetup,
+      mcpSidecarPath, mcpBundleInfo, mcpHttpEndpoint, mcpHttpError, mcpHttpPort, setMcpHttpPort, mcpAgentResolved, refreshMcpAgentSetup,
       installMcpBundle, saveMcpBundle: saveMcpBundleFn,
       error, clearError, dispose,
     };

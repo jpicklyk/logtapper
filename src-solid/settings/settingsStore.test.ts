@@ -20,6 +20,40 @@ describe('settingsStore', () => {
     store.dispose();
   });
 
+  it('applies a saved non-default MCP port before auto-starting the bridge', async () => {
+    const calls: string[] = [];
+    const setMcpHttpPort = vi.fn((port: number) => { calls.push(`port:${port}`); return Promise.resolve(); });
+    const startMcpBridge = vi.fn(() => { calls.push('start'); return Promise.resolve(); });
+    const storage = memoryStorage({ logtapper_settings: JSON.stringify({ mcpBridgeEnabled: true, mcpHttpPort: 41000 }) });
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { startMcpBridge, setMcpHttpPort }, storage });
+    expect(store.mcpHttpPort()).toBe(41000);
+    await vi.waitFor(() => expect(startMcpBridge).toHaveBeenCalledTimes(1));
+    expect(calls).toEqual(['port:41000', 'start']);
+    store.dispose();
+  });
+
+  it('setMcpHttpPort persists the port beside the bridge preference and re-reads the endpoint', async () => {
+    const setMcpHttpPort = vi.fn(() => Promise.resolve());
+    const getMcpHttpInfo = vi.fn(() => Promise.resolve({ url: 'http://127.0.0.1:41000/mcp', port: 41000, error: null }));
+    const storage = memoryStorage({ logtapper_settings: JSON.stringify({ mcpBridgeEnabled: false, density: 'compact' }) });
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { setMcpHttpPort, getMcpHttpInfo }, storage });
+    await store.setMcpHttpPort(41000);
+    expect(setMcpHttpPort).toHaveBeenCalledWith(41000);
+    expect(store.mcpHttpPort()).toBe(41000);
+    expect(JSON.parse(storage.getItem('logtapper_settings')!)).toEqual({ mcpBridgeEnabled: false, density: 'compact', mcpHttpPort: 41000 });
+    await vi.waitFor(() => expect(store.mcpHttpEndpoint()).toBe('http://127.0.0.1:41000/mcp'));
+    store.dispose();
+  });
+
+  it('a rejected port change reaches error() and leaves the port untouched', async () => {
+    const setMcpHttpPort = vi.fn(() => Promise.reject(new Error('Port 80 is privileged; choose 1024 or higher')));
+    const store = createSettingsStore({ mcpStatus: noStatus(), commands: { setMcpHttpPort }, storage: memoryStorage({}) });
+    await expect(store.setMcpHttpPort(80)).rejects.toThrow();
+    expect(store.error()).toContain('privileged');
+    expect(store.mcpHttpPort()).toBe(40405);
+    store.dispose();
+  });
+
   it('leaves the bridge alone at construction when the preference is off, absent, or malformed', () => {
     for (const raw of [JSON.stringify({ mcpBridgeEnabled: false }), undefined, '{not json', '[]']) {
       const startMcpBridge = vi.fn(() => Promise.resolve());

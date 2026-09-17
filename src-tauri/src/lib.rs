@@ -639,6 +639,8 @@ pub fn run() {
             commands::mcp::save_mcp_bundle,
             commands::mcp::start_mcp_bridge,
             commands::mcp::stop_mcp_bridge,
+            commands::mcp::get_mcp_http_info,
+            commands::mcp::set_mcp_http_port,
             // Shared focus context + agent navigation requests (B1)
             commands::focus::set_focus,
             commands::focus::get_focus,
@@ -668,6 +670,9 @@ pub fn run() {
                         log::info!("[autosave] pending mutation(s) on exit; flushing synchronously");
                         workspace::autosave::flush_now_blocking(app_handle);
                     }
+                    // The HTTP MCP sidecar has its own parent-pid watchdog, but
+                    // a clean quit should not leave it to notice on its own.
+                    commands::mcp::stop_mcp_http_server(&state);
                 }
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Opened { urls } => {
