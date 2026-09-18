@@ -90,7 +90,7 @@ guard against drift:
 - `route_table_probe_every_route_resolves_through_the_live_router` (in
   `tests/bridge_http.rs`) — actually drives the real `router()` via
   `tower::ServiceExt::oneshot` for every `ROUTES` entry and asserts none 404/405s. Also
-  pins the **total route count** (currently 84).
+  pins the **total route count** (the test is the source of truth for the number).
 
 **To add a route:** append one line to `ROUTES`, one `.route(...)` call to `router()` in
 the same relative position, update both pinned literals in the same change, and add the
