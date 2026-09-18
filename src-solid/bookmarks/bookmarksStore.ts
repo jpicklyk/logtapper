@@ -47,9 +47,11 @@ import {
   createBookmark as createBookmarkCmd,
   updateBookmark as updateBookmarkCmd,
   deleteBookmark as deleteBookmarkCmd,
+  anonymizeText as anonymizeTextCmd,
 } from '@bridge/commands';
 import { onBookmarkUpdate, onWorkspaceRestored } from '@bridge/events';
 import type {
+  AnonymizerMode,
   Bookmark,
   BookmarkCategory,
   BookmarkUpdateEvent,
@@ -129,6 +131,7 @@ export interface BookmarksCommands {
   createBookmark: typeof createBookmarkCmd;
   updateBookmark: typeof updateBookmarkCmd;
   deleteBookmark: typeof deleteBookmarkCmd;
+  anonymizeText: typeof anonymizeTextCmd;
 }
 
 const DEFAULT_COMMANDS: BookmarksCommands = {
@@ -136,6 +139,7 @@ const DEFAULT_COMMANDS: BookmarksCommands = {
   createBookmark: createBookmarkCmd,
   updateBookmark: updateBookmarkCmd,
   deleteBookmark: deleteBookmarkCmd,
+  anonymizeText: anonymizeTextCmd,
 };
 
 export interface BookmarksStoreDeps {
@@ -147,6 +151,10 @@ export interface BookmarksStoreDeps {
   listenRestored?: typeof onWorkspaceRestored;
   /** Injected for tests; defaults to the real bridge commands. */
   commands?: Partial<BookmarksCommands>;
+  /** `settingsStore.anonymizerMode` — read only to label the markdown export's
+   *  header; whether the text IS redacted is the backend's `anonymize_text`
+   *  decision. Optional so a host without a settings store still builds. */
+  anonymizerMode?: Accessor<AnonymizerMode>;
 }
 
 export interface CreateBookmarkInput {
@@ -186,8 +194,9 @@ export interface BookmarksStore {
   remove(bookmarkId: string): Promise<void>;
   /** Markdown for `sessionId`'s current bookmarks, via the reused pure
    *  `exportBookmarksAsMarkdown`. The caller decides what to do with it
-   *  (the panel copies it to the clipboard). */
-  exportMarkdown(sessionId: string): string;
+   *  (the panel copies it to the clipboard). Async because the result is
+   *  passed through the backend's anonymize_text for that session first. */
+  exportMarkdown(sessionId: string): Promise<string>;
   /** Route a clicked bookmark through the controller: `scrollToLine` with the
    *  bookmark's own `sessionId`, highlighting the range when it has one. The
    *  panel and the create dialog never touch `ViewerController` directly. */
@@ -461,12 +470,20 @@ export function createBookmarksStore(deps: BookmarksStoreDeps): BookmarksStore {
       });
     };
 
-    const exportMarkdown = (sessionId: string): string => {
+    const exportMarkdown = (sessionId: string): Promise<string> => {
       const entry = sessions.byId(sessionId);
-      // `totalLines` was copied from the React call site but
-      // `exportBookmarksAsMarkdown` never reads it — `ExportContext.sourceName`
-      // is the only field with an effect.
-      return exportBookmarksAsMarkdown(list(sessionId), { sourceName: entry?.load.sourceName });
+      const mode = deps.anonymizerMode?.();
+      // The clipboard is an External pathway: snippets were captured from the
+      // cache (raw under External, already tokenized under All), so the
+      // rendered document goes through `anonymize_text` for *this* session —
+      // the backend returns it unchanged when the mode says raw, and reuses
+      // the session's anonymizer so token numbers match the viewer/exports.
+      // One code path for all three modes; the header flag only labels it.
+      const markdown = exportBookmarksAsMarkdown(list(sessionId), {
+        sourceName: entry?.load.sourceName,
+        anonymized: mode !== undefined && mode !== 'none',
+      });
+      return commands.anonymizeText(sessionId, markdown);
     };
 
     const jumpTo = (bookmark: Bookmark): void => {

@@ -32,6 +32,7 @@ const bridgeCommands = vi.hoisted(() => ({
   createBookmark: vi.fn(),
   updateBookmark: vi.fn(),
   deleteBookmark: vi.fn(),
+  anonymizeText: vi.fn(),
 }));
 vi.mock('@bridge/commands', () => bridgeCommands);
 
@@ -109,6 +110,9 @@ function makeCommands(): BookmarksCommands {
     createBookmark: vi.fn(),
     updateBookmark: vi.fn(),
     deleteBookmark: vi.fn(),
+    // The identity transform by default — what the backend returns when the
+    // mode says the External pathway is raw.
+    anonymizeText: vi.fn((_sessionId: string, text: string) => Promise.resolve(text)),
   };
 }
 
@@ -442,18 +446,73 @@ describe('createBookmarksStore', () => {
     });
   });
 
-  describe('exportMarkdown (pure module reuse)', () => {
-    it('matches exportBookmarksAsMarkdown\'s own output for the same inputs', async () => {
+  describe('exportMarkdown (pure module reuse, anonymized on the way out)', () => {
+    // Both renders stamp `**Exported:**` with the wall clock; under a loaded
+    // full-suite run they can land a millisecond apart, so compare without it.
+    const withoutExportedAt = (md: string): string => md.replace(/^\*\*Exported:\*\* .*$/m, '');
+
+    it('matches exportBookmarksAsMarkdown\'s own output for the same inputs, passed through anonymizeText', async () => {
       const { exportBookmarksAsMarkdown } = await import('@bookmarks');
       sessionStore.add(load('s1', { sourceName: 'app.log' }));
       const b = bookmark('b1', { lineNumber: 41, label: 'Boot complete' });
       listen.emit(updateEvent('created', b));
       const expected = exportBookmarksAsMarkdown([b], { sourceName: 'app.log', totalLines: 100 });
-      // Both renders stamp `**Exported:**` with the wall clock; under a loaded
-      // full-suite run they can land a millisecond apart, so compare without it.
-      const withoutExportedAt = (md: string): string => md.replace(/^\*\*Exported:\*\* .*$/m, '');
-      expect(withoutExportedAt(store.exportMarkdown('s1'))).toBe(withoutExportedAt(expected));
-      expect(store.exportMarkdown('s1')).toMatch(/^\*\*Exported:\*\* \d{4}-\d{2}-\d{2}T/m);
+      const rendered = await store.exportMarkdown('s1');
+      expect(withoutExportedAt(rendered)).toBe(withoutExportedAt(expected));
+      expect(rendered).toMatch(/^\*\*Exported:\*\* \d{4}-\d{2}-\d{2}T/m);
+      // No mode accessor: the header carries no anonymized marker.
+      expect(rendered).not.toContain('**Anonymized:**');
+      // The clipboard is an External pathway — the rendered document went
+      // through the session's anonymizer, whatever the mode.
+      expect(commands.anonymizeText).toHaveBeenCalledTimes(1);
+      expect(commands.anonymizeText).toHaveBeenCalledWith('s1', expect.stringContaining('# Bookmark Timeline'));
+    });
+
+    it('returns what anonymizeText returns, and marks the header when the mode redacts', async () => {
+      const anonymizeText = vi.fn((_sid: string, text: string) => Promise.resolve(text.replace('a@b.com', '<EMAIL-1>')));
+      const modeStore = createBookmarksStore({
+        sessions: sessionStore,
+        controller,
+        commands: { ...commands, anonymizeText },
+        listen: listen.listen as never,
+        listenRestored: listenRestored.listen as never,
+        anonymizerMode: () => 'external',
+      });
+      sessionStore.add(load('s1', { sourceName: 'app.log' }));
+      listen.emit(updateEvent('created', bookmark('b1', { lineNumber: 3, label: 'login', note: 'user a@b.com' })));
+      const rendered = await modeStore.exportMarkdown('s1');
+      expect(rendered).toContain('**Anonymized:** yes');
+      expect(rendered).toContain('<EMAIL-1>');
+      expect(rendered).not.toContain('a@b.com');
+      modeStore.dispose();
+    });
+
+    it('does not mark the header under mode None', async () => {
+      const noneStore = createBookmarksStore({
+        sessions: sessionStore,
+        controller,
+        commands,
+        listen: listen.listen as never,
+        listenRestored: listenRestored.listen as never,
+        anonymizerMode: () => 'none',
+      });
+      sessionStore.add(load('s1'));
+      listen.emit(updateEvent('created', bookmark('b1')));
+      expect(await noneStore.exportMarkdown('s1')).not.toContain('**Anonymized:**');
+      noneStore.dispose();
+    });
+
+    it('rejects (nothing to copy) when anonymizeText rejects', async () => {
+      const failing = createBookmarksStore({
+        sessions: sessionStore,
+        controller,
+        commands: { ...commands, anonymizeText: vi.fn(() => Promise.reject(new Error('Forbidden'))) },
+        listen: listen.listen as never,
+        listenRestored: listenRestored.listen as never,
+      });
+      sessionStore.add(load('s1'));
+      await expect(failing.exportMarkdown('s1')).rejects.toThrow('Forbidden');
+      failing.dispose();
     });
   });
 

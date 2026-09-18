@@ -57,7 +57,7 @@ function fakeStore(overrides: {
     create: vi.fn(() => Promise.resolve(bookmark('new'))),
     update: vi.fn(() => Promise.resolve(bookmark('x'))),
     remove: vi.fn(overrides.remove ?? (() => Promise.resolve())),
-    exportMarkdown: vi.fn(() => '# Bookmark Timeline'),
+    exportMarkdown: vi.fn(() => Promise.resolve('# Bookmark Timeline')),
     jumpTo: vi.fn((_b: Bookmark) => undefined),
     cursorLine: vi.fn(() => cursor),
     dispose: vi.fn(),
@@ -118,14 +118,28 @@ describe('BookmarksPanel', () => {
     expect(screen.getByText('L42–46')).toBeTruthy();
   });
 
-  it('"Export markdown" copies the store\'s markdown to the clipboard', async () => {
+  it('"Export markdown" copies the store\'s (anonymized) markdown to the clipboard once it resolves', async () => {
     const groups: CategoryGroup[] = [{ id: 'custom', label: 'Other', count: 1, bookmarks: [bookmark('b1')] }];
     const store = fakeStore({ groups });
     render(() => <BookmarksPanel store={store} sessions={fakeSessions('s1')} />);
     fireEvent.click(screen.getByTitle(/copy bookmarks as markdown/i));
     expect(store.exportMarkdown).toHaveBeenCalledWith('s1');
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('# Bookmark Timeline');
+    // Nothing reaches the clipboard before the store's promise settles.
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
     expect(await screen.findByText('Copied!')).toBeTruthy();
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('# Bookmark Timeline');
+  });
+
+  it('a rejected export writes nothing and lands in the panel\'s alert', async () => {
+    const groups: CategoryGroup[] = [{ id: 'custom', label: 'Other', count: 1, bookmarks: [bookmark('b1')] }];
+    const store = fakeStore({ groups });
+    store.exportMarkdown.mockImplementation(() => Promise.reject(new Error('Forbidden')));
+    render(() => <BookmarksPanel store={store} sessions={fakeSessions('s1')} />);
+    fireEvent.click(screen.getByTitle(/copy bookmarks as markdown/i));
+    const alert = await screen.findByTestId('bookmarks-action-error');
+    expect(alert.textContent).toContain('Forbidden');
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+    expect(screen.queryByText('Copied!')).toBeNull();
   });
 
   it('"Bookmark selection" opens the create dialog pre-filled from store.cursorLine', () => {

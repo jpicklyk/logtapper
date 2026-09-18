@@ -46,6 +46,8 @@ function makeDataSource(
     fill: (offset: number, count: number) => {
       for (let i = offset; i < offset + count; i++) resident.add(i);
     },
+    /** Drop everything resident — what `CacheManager.clearSession` does to the real source. */
+    evict: () => resident.clear(),
   };
 }
 
@@ -279,6 +281,28 @@ describe('createCacheBinding', () => {
 
       expect(h.binding.cacheVersion()).toBe(before + 1);
       expect(h.forceFetch).toHaveBeenCalledTimes(1);
+      h.dispose();
+    });
+
+    it('refetches the UNMOVED window when the bump follows a cache clear (a pure content refresh)', async () => {
+      const src = makeDataSource();
+      const h = mount({ dataSource: src.ds, revision: true });
+      await flush(); // the initial viewport + prefetch fills land
+      expect(src.getLines).toHaveBeenCalled();
+      src.getLines.mockClear();
+      h.reportScroll.mockClear();
+
+      // The anonymizer mode entering/leaving `All`: the cache is emptied under
+      // a stable source and window, then the revision bumps. The scheduler has
+      // consumed its pending range, so `forceFetch` alone would run nothing —
+      // the binding must re-report the current window to get the refetch.
+      src.evict();
+      h.bumpRevision();
+      await flush();
+
+      expect(h.reportScroll).toHaveBeenCalledWith(0, 19, 1000);
+      expect(src.getLines).toHaveBeenCalled();
+      expect(src.getLines.mock.calls[0]).toEqual([0, 20]);
       h.dispose();
     });
 

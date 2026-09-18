@@ -3,6 +3,12 @@ import type { Bookmark } from '../bridge/types';
 export interface ExportContext {
   sourceName?: string;
   totalLines?: number;
+  /**
+   * The rendered markdown is (about to be) passed through the anonymizer, so
+   * the header says so and a reader does not take tokens for literal values.
+   * The caller decides from the anonymizer mode; this module only prints it.
+   */
+  anonymized?: boolean;
 }
 
 export function exportBookmarksAsMarkdown(
@@ -17,6 +23,7 @@ export function exportBookmarksAsMarkdown(
   if (context.sourceName) lines.push(`**Source:** ${context.sourceName}`);
   lines.push(`**Bookmarks:** ${sorted.length}`);
   lines.push(`**Exported:** ${new Date().toISOString()}`);
+  if (context.anonymized) lines.push('**Anonymized:** yes — PII is replaced by tokens such as <EMAIL-1>');
   lines.push('');
   lines.push('---');
   lines.push('');

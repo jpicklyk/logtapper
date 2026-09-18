@@ -3,6 +3,7 @@ import { Index, Show, batch, createEffect, createMemo, createSignal, on, onClean
 import type { JSX } from 'solid-js';
 import type { DataSource } from '@viewport/DataSource';
 import { buildCopyText, writeClipboard } from '@viewport/copyText';
+import { anonymizeText } from '@bridge/commands';
 import { absoluteLineToFilteredIndex } from '@viewer';
 import { createCacheBinding } from './cacheBinding';
 import { DEFAULT_PANE_ID } from './controller';
@@ -106,6 +107,9 @@ export interface LogViewerProps {
    * controller.
    */
   onActivate?: () => void;
+  /** A failure the viewer cannot render itself (today: the copy-to-clipboard
+   *  redaction rejecting). `App.tsx` wires `actions.reportError`. */
+  onError?: (message: string) => void;
   class?: string;
 }
 
@@ -562,7 +566,20 @@ export function LogViewer(props: LogViewerProps) {
       // synchronously, so it never outlives this handler.
       const src = props.dataSource;
       const text = buildCopyText(sel, (n) => src.getLine(n)?.raw);
-      if (text != null) writeClipboard(text);
+      if (text == null) return;
+      // The clipboard is an External pathway: what the cache holds is raw
+      // under mode External (and already tokenized under All), so the
+      // assembled text goes through the backend's `anonymize_text` for this
+      // session before it is written. One code path for every mode — the
+      // command returns its input unchanged when the mode says raw — and a
+      // rejection writes nothing rather than the raw text. A bare viewer with
+      // no session (tests) has nothing to redact against.
+      // Both read once here, in the handler — a `.catch` is not a tracked scope.
+      const sid = props.sessionId;
+      const onError = props.onError;
+      (sid != null ? anonymizeText(sid, text) : Promise.resolve(text))
+        .then(writeClipboard)
+        .catch((e: unknown) => onError?.(`Copy failed: ${String(e)}`));
     };
     const onWindowKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'Alt') container?.classList.remove(styles.altMode);

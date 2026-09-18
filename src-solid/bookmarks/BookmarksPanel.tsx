@@ -211,13 +211,20 @@ export function BookmarksPanel(props: BookmarksPanelProps): JSX.Element {
   const handleExport = (): void => {
     const sid = sessionId();
     if (!sid) return;
-    const markdown = props.store.exportMarkdown(sid);
-    writeClipboard(markdown);
-    setExportStatus('copied');
-    // Without the cleanup above, closing the drawer inside the window left this
-    // timer writing into a disposed signal.
-    if (copiedTimer !== undefined) clearTimeout(copiedTimer);
-    copiedTimer = setTimeout(() => setExportStatus('idle'), COPIED_MS);
+    // Async since the store passes the markdown through the anonymizer for the
+    // session; a rejection must not leak the raw text to the clipboard, so
+    // nothing is written and the failure lands in the panel's alert.
+    props.store
+      .exportMarkdown(sid)
+      .then((markdown) => {
+        writeClipboard(markdown);
+        setExportStatus('copied');
+        // Without the cleanup above, closing the drawer inside the window left this
+        // timer writing into a disposed signal.
+        if (copiedTimer !== undefined) clearTimeout(copiedTimer);
+        copiedTimer = setTimeout(() => setExportStatus('idle'), COPIED_MS);
+      })
+      .catch((e: unknown) => setActionError(`Could not export bookmarks: ${String(e)}`));
   };
 
   const openCreate = (): void => {
