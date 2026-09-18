@@ -1,10 +1,10 @@
 /** @jsxImportSource solid-js */
 // @vitest-environment jsdom
 import { createSignal } from 'solid-js';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { cleanup, render } from '@solidjs/testing-library';
 import type { ActivityEntry, FocusContext, McpStatus, NavRequest } from '@bridge/types';
-import { COLLAPSED_STORAGE_KEY, PresencePanel } from './PresencePanel';
+import { PresencePanel } from './PresencePanel';
 import { createAgentState } from './agentState';
 import type { NavTarget, PresenceStore } from './presenceStore';
 
@@ -96,16 +96,15 @@ function navRequest(id: number, overrides: Partial<NavRequest> = {}): NavRequest
   };
 }
 
-beforeEach(() => localStorage.clear());
-
 describe('<PresencePanel> — orb stage', () => {
-  it('leads the expanded panel with the orb stage, carrying the collapse control', () => {
+  it('leads the panel with the orb stage and no panel-local collapse control', () => {
     const { container } = render(() => <PresencePanel store={fakeStore().store} />);
     const stage = container.querySelector('[data-testid="agent-stage"]');
     expect(stage).toBeTruthy();
     expect(stage!.querySelector('[class*="orb"]')).toBeTruthy();
     expect(container.querySelector('header')).toBeNull();
-    expect(stage!.querySelector('button')?.textContent).toBe('Collapse');
+    // Hiding the panel is the shell's per-region collapse, not a button here.
+    expect(stage!.querySelector('button')).toBeNull();
     // The stage is the panel's first block, so it sits at the pane's top edge.
     const panel = container.querySelector('section[aria-label="Agent presence"]')!;
     expect(panel.firstElementChild).toBe(stage);
@@ -279,42 +278,3 @@ describe('<PresencePanel> — feed and placeholders', () => {
   });
 });
 
-describe('<PresencePanel> — collapse', () => {
-  it('collapses to a pill, expands again, and persists the choice', () => {
-    const { store } = fakeStore();
-    const first = render(() => <PresencePanel store={store} now={() => NOW} />);
-    expect(first.container.querySelector('[data-collapsed="false"]')).toBeTruthy();
-
-    const collapse = [...first.container.querySelectorAll('button')].find(
-      (b) => b.textContent === 'Collapse',
-    ) as HTMLButtonElement;
-    collapse.click();
-
-    expect(first.container.querySelector('[data-collapsed="true"]')).toBeTruthy();
-    expect(first.container.textContent).toContain('Agent · idle');
-    expect(first.container.querySelector('[data-testid="activity-feed"]')).toBeNull();
-    expect(localStorage.getItem(COLLAPSED_STORAGE_KEY)).toBe('true');
-
-    // The pill expands again.
-    (first.container.querySelector('button') as HTMLButtonElement).click();
-    expect(first.container.querySelector('[data-testid="activity-feed"]')).toBeTruthy();
-    first.unmount();
-  });
-
-  it('starts collapsed when localStorage says so', () => {
-    localStorage.setItem(COLLAPSED_STORAGE_KEY, 'true');
-    const { store } = fakeStore();
-    const { container } = render(() => <PresencePanel store={store} now={() => NOW} />);
-    expect(container.querySelector('[data-collapsed="true"]')).toBeTruthy();
-  });
-
-  it('survives storage that throws', () => {
-    const spy = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-      throw new Error('blocked');
-    });
-    const { store } = fakeStore();
-    const { container } = render(() => <PresencePanel store={store} now={() => NOW} />);
-    expect(container.querySelector('[data-collapsed="false"]')).toBeTruthy();
-    spy.mockRestore();
-  });
-});
