@@ -133,7 +133,10 @@ const result = await runPipeline(sessionId, null);          // null = "resolve f
 ```
 
 `runPipeline`'s `processorIds` argument is `string[] | null`, and its `anonymize` argument
-is gone (the backend decides via `services::policy::should_anonymize`). **Push
+is gone (the backend decides via `services::policy::should_anonymize` — the anonymizer
+mode, `AnonymizerConfig.mode`; likewise `ExportAllOptions` carries no `anonymize` and there
+is no per-stream anonymize command. `anonymizeText(sessionId, text)` is the one frontend
+redaction hook, for text assembled locally that is about to leave the tool). **Push
 `setSessionPipelineMeta` immediately before every run, not only on the override path** —
 `usePipelineWiring` debounces its own push by 500ms, and editing the chain then hitting Run
 inside that window would otherwise resolve against the *previous* chain server-side. The

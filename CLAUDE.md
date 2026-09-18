@@ -73,10 +73,12 @@ the error table), `src-tauri/src/processors/CLAUDE.md` (pre-filter, source types
 - **Every service call carries a `services::Caller`** (`Ui` from a Tauri command, `Agent` from
   the bridge) and `services::policy` is the single place identity becomes a decision. Never
   branch on transport ("am I in `mcp_bridge/`").
-- **Agents read anonymized text** unless the one `Ui`-only setting `agent_raw_access` says
-  otherwise; no session state and no pipeline chain participates, and nothing else may write
-  it. The `.lts` export's per-export anonymize checkbox is the only `Ui`-side redaction and is
-  ignored for an `Agent` caller.
+- **Agents read anonymized text** unless the anonymizer mode is `None` or `agent_raw_access`
+  is on; both are `Ui`-only persisted settings (`AnonymizerConfig::mode`, `agent_raw_access`)
+  and nothing else may write them. No session state and no pipeline chain participates.
+  `Ui` redaction is decided per pathway (`services::policy::should_anonymize_for`): in-app
+  surfaces only under `All`, everything that leaves the tool (export, stream save, clipboard)
+  under `All`/`External` — there are no per-surface checkboxes.
 - **Agents cannot mutate their own gates**: the open-file allowlist, the anonymizer config,
   raw access, marketplace sources. Denied and nonexistent paths are indistinguishable so an
   agent cannot probe the filesystem.

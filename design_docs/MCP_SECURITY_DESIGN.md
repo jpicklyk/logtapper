@@ -3,8 +3,11 @@
 > **Status:** Partially resolved by the Phase 1 service-layer migration (see "Service-layer
 > era" at the end). Issue 1 is fixed. Issues 2 and 3 are re-verified against the current
 > code below — 2 is unchanged, 3's security-critical half (PII) is now fixed and its
-> general half is unchanged. This file is otherwise historical: it documents the reasoning
-> that led to the current design, not just a list of remaining bugs.
+> general half is unchanged. The 2026-09-18 section at the end records the anonymizer
+> *mode* (All / External / None), which subsumed every per-surface `Ui` checkbox and
+> added a second `Ui`-only way to hand agents raw text. This file is otherwise
+> historical: it documents the reasoning that led to the current design, not just a list
+> of remaining bugs.
 
 ---
 
@@ -62,8 +65,8 @@ Agent anonymization is now one global, persisted, UI-only setting and nothing el
 - The UI surface is one checkbox: Settings → General → MCP Integration, "Allow agents to
   read raw (un-anonymized) log text", off by default, with an inline warning when on.
 - The per-session `mcp_anonymize` map, the `set_mcp_anonymize` command and the frontend
-  chain mirror are deleted. `Ui` reads are still never redacted (the human is looking at
-  their own machine).
+  chain mirror are deleted. `Ui` reads were never redacted at this point (the human is
+  looking at their own machine); the 2026-09-18 mode later made that a choice (`all`).
 
 See `services::policy` doc comments and `src-tauri/src/services/CLAUDE.md`.
 
@@ -157,7 +160,7 @@ revisit A/B later.
 
 | # | Issue | Status | Risk level | Effort to fix |
 |---|---|---|---|---|
-| 1 | PII anonymization defaults to off | **Resolved** — anonymized by default, one persisted UI-only `agent_raw_access` opt-out (`services::policy::should_anonymize`) | was Medium | done |
+| 1 | PII anonymization defaults to off | **Resolved** — anonymized by default, two persisted UI-only opt-outs: `agent_raw_access` and the anonymizer mode `none` (`services::policy::should_anonymize_for`; see the 2026-09-18 section) | was Medium | done |
 | 2 | MCP anonymization coupled to pipeline chain | **Resolved** — chain mirror, `set_mcp_anonymize` and the per-session map deleted | was Medium (it disabled Issue 1's default) | done |
 | 3 | Query path reads pre-transform data | **Open** (view mismatch); PII half resolved via Issue 1's fix | Low (was Low–Medium) | Moderate–Large for the view-mismatch half |
 
@@ -203,3 +206,63 @@ What changed as a result, relevant to the issues above:
 
 See root `CLAUDE.md`'s "Security model" section for the current-state summary, and
 `src-tauri/src/services/CLAUDE.md` for the policy gates themselves.
+
+---
+
+## 2026-09-18 — The anonymizer mode: All / External / None
+
+Until now redaction had two writers with two shapes: the caller gate (`Agent` redacted
+unless `agent_raw_access`) and a scattering of per-surface `Ui` checkboxes — the `.lts`
+export dialog's "Anonymize PII", the stream panel's "Anonymize PII while streaming" (its own
+`stream_anonymizers` slot and `set_stream_anonymize` command), and a planned third on the
+analysis hand-off. Each checkbox was a separate decision in a separate place, and one
+pathway had none at all: `stream::save_live_capture` wrote the retained capture raw.
+
+They are replaced by one persisted master switch, `AnonymizerConfig::mode`
+(`all` | `external` | `none`, default `external`), decided in one function,
+`services::policy::should_anonymize_for(ctx, Pathway)`:
+
+| mode       | `Ui`, in-app (`Internal`) | `Ui`, leaving the tool (`External`) | `Agent`                    |
+|------------|---------------------------|-------------------------------------|----------------------------|
+| `all`      | redacted                  | redacted                            | redacted unless raw access |
+| `external` | raw                       | redacted                            | redacted unless raw access |
+| `none`     | raw                       | raw                                 | raw                        |
+
+Every raw-text pathway names its `Pathway` once at the decision site (viewer/search/filter
+pages, pipeline result lines, stream events and the in-chain `__pii_anonymizer` are
+`Internal`; `.lts` export, stream save and the new `anonymize_text` command are `External`)
+and inherits the table — a new surface never grows its own checkbox or re-derives the rule.
+
+**Why "None means none", agents included, is acceptable.** `none` widens what an agent
+sees, which is exactly the class of change Issues 1 and 2 above closed. It is acceptable for
+the same reason `agent_raw_access` is: it is a `Ui`-only persisted setting (the mode lives in
+`anonymizer_config.json`, written only by `settings::set_anonymizer_config`, which already
+sits behind `policy::deny_agent_gate_mutation` — an agent asking to change the mode is
+`Forbidden`, pinned by a test), and the app shows a persistent, visible warning while it is
+in force. `services::settings::agent_access` computes `effective_agent_raw = mode == none ||
+agent_raw_access` **once**, in the backend, and both `McpStatus` (the presence pill) and `GET
+/mcp/settings/agent_access` (the agent's own view) report it, so the two can never disagree
+about whether agents are reading raw text. Nothing an agent controls — request bodies,
+session state, the pipeline chain — participates; the old `ExportAllOptions.anonymize` field
+is gone and an old client still sending it is ignored.
+
+**Defaults preserve the prior posture.** A config file written before the field existed
+parses as `external`: agents redacted, the viewer raw. The one behavioural change is that a
+`Ui` `.lts` export and a stream save are now redacted by default (previously raw unless the
+checkbox was ticked / always raw), which is the safer direction for files that leave the
+machine; the archive's manifest records `anonymized: true` so a re-import can badge the
+session instead of passing redacted logs off as raw.
+
+**`anonymize_text(session_id, text)`.** The frontend assembles some outbound text itself
+(copy to clipboard, bookmark Markdown) from its line cache, which under `external` holds raw
+text. This `Ui`-only command redacts such text under the `External` decision with the
+*session's* cached anonymizer, so tokens match the viewer and the export. **`Agent` →
+`Forbidden`, and there is no bridge route**: an agent has no clipboard, every text it can
+obtain is already redacted on the read path, and a route here would be a second redaction
+entry point to keep in step with the first for no caller that needs it.
+
+The per-stream anonymizer is gone entirely. In-chain anonymization is the
+`__pii_anonymizer` transformer, appended by `resolve_effective_chain` /
+`resolve_stream_chain` under the `Internal` decision; it rewrites the view lines a pane
+receives, while the stream source retains the raw capture, so a save under
+`all`/`external` redacts from raw and never re-tokenizes an already-tokenized line.

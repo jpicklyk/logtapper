@@ -62,10 +62,12 @@ working state between calls; a new long-running route belongs in `classify_reque
 `Run` list.
 
 **Agent anonymization is decided in `services::policy`, never here.** A bridge caller is
-always `Caller::Agent`, so every raw-line route is redacted unless the user persisted the
-`agent_raw_access` opt-out (Settings → General → MCP Integration). `GET
-/mcp/settings/agent_access` reads that flag; there is deliberately **no write route** for
-it — `routes/settings.rs`'s module doc explains why, and nothing may add one.
+always `Caller::Agent`, so every raw-line route is redacted unless the anonymizer mode is
+`None` or the user persisted the `agent_raw_access` opt-out (Settings → General → MCP
+Integration). `GET /mcp/settings/agent_access` reports both plus the backend-computed
+`effectiveAgentRaw`; there is deliberately **no write route** for either —
+`routes/settings.rs`'s module doc explains why, and nothing may add one. The Ui-only
+`anonymize_text` command (clipboard redaction) likewise has no route.
 
 `require_local`'s `is_trusted_request` (in `middleware.rs`) checks Host (must be exactly
 `127.0.0.1:40404` or `localhost:40404`), Origin (must be absent — a real MCP client never
