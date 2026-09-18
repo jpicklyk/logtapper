@@ -16,7 +16,7 @@
  *
  * This is also the app's one surface for every other ADB streaming bridge
  * call the L1 task-scope names: device listing, package PID resolution,
- * live anonymize/processor/tracker/transformer updates, and saving the
+ * live processor/tracker/transformer updates, and saving the
  * retained capture to a file. `stream/StreamControlsPanel.tsx` is its UI;
  * `app/benchDriver.ts`'s `window.__benchApp.startStream` is its other
  * caller — `App.tsx` builds exactly one instance and hands it to both, so a
@@ -60,7 +60,6 @@ export type StreamCommands = Pick<
   typeof cmds,
   | 'listAdbDevices'
   | 'getPackagePids'
-  | 'setStreamAnonymize'
   | 'updateStreamProcessors'
   | 'updateStreamTrackers'
   | 'updateStreamTransformers'
@@ -140,7 +139,6 @@ export interface LiveStreamStore {
    */
   stopIfCurrent(sessionId: string): Promise<void>;
 
-  setAnonymize(sessionId: string, enabled: boolean): Promise<void>;
   updateProcessors(sessionId: string, processorIds: string[]): Promise<void>;
   updateTrackers(sessionId: string, trackerIds: string[]): Promise<void>;
   updateTransformers(sessionId: string, transformerIds: string[]): Promise<void>;
@@ -287,7 +285,6 @@ export function createLiveStreamStore(deps: LiveStreamStoreDeps): LiveStreamStor
       stop: session.stop,
       stopIfCurrent,
 
-      setAnonymize: (sessionId, enabled) => c.setStreamAnonymize(sessionId, enabled),
       updateProcessors: (sessionId, processorIds) => c.updateStreamProcessors(sessionId, processorIds),
       updateTrackers: (sessionId, trackerIds) => c.updateStreamTrackers(sessionId, trackerIds),
       updateTransformers: (sessionId, transformerIds) => c.updateStreamTransformers(sessionId, transformerIds),

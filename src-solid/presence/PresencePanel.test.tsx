@@ -24,6 +24,8 @@ function fakeStore(overrides: Partial<McpStatus> = {}) {
     port: 40404,
     idleSecs: 1,
     agentRawAccess: false,
+    anonymizerMode: 'external',
+    effectiveAgentRaw: false,
     ...overrides,
   });
   const [entries, setEntries] = createSignal<readonly ActivityEntry[]>([]);

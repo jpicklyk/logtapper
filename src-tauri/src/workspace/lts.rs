@@ -20,6 +20,13 @@ pub struct LtsManifest {
     pub sessions: Vec<LtsManifestSession>,
     /// Milliseconds since UNIX epoch.
     pub saved_at: i64,
+    /// `true` when every session's source text in this archive was written
+    /// through the PII anonymizer (`services::export::run` under anonymizer
+    /// mode `All`/`External`, or an agent export). Lets a re-import badge the
+    /// session instead of passing redacted logs off as raw. Additive:
+    /// archives written before this field existed read as `false`.
+    #[serde(default)]
+    pub anonymized: bool,
 }
 
 /// Per-session metadata recorded in the top-level manifest.
@@ -101,12 +108,27 @@ pub struct LtsData {
     pub editor_tabs: Vec<LtsEditorTab>,
 }
 
+/// Write a `.lts` zip file (current format: `LTS_FORMAT_VERSION` = 3) to `dest`
+/// whose manifest says the source text is raw. [`write_lts_with`] is the
+/// full form; this is the shape every raw writer (workspace save, tests) uses.
+pub fn write_lts(
+    dest: &Path,
+    sessions: &[LtsSessionData],
+    processor_yamls: &[(String, String, String)], // (id, filename, yaml_content)
+    editor_tabs: &[LtsEditorTab],
+) -> Result<(), String> {
+    write_lts_with(dest, sessions, processor_yamls, editor_tabs, false)
+}
+
 /// Write a `.lts` zip file (current format: `LTS_FORMAT_VERSION` = 3) to `dest`.
 ///
 /// # Arguments
 /// * `dest` — output path for the zip file
 /// * `sessions` — slice of per-session data to embed
 /// * `processor_yamls` — `(id, filename, yaml_content)` tuples for each processor to embed
+/// * `editor_tabs` — editor tabs to embed as `editor-tabs.json`
+/// * `anonymized` — recorded in the manifest (see [`LtsManifest::anonymized`]);
+///   the caller has already redacted `source_bytes` when this is `true`
 ///
 /// # Zip layout
 /// ```text
@@ -118,11 +140,12 @@ pub struct LtsData {
 /// processors/{filename}.yaml               (Deflated)
 /// processors/processor-manifest.json       (Deflated)
 /// ```
-pub fn write_lts(
+pub fn write_lts_with(
     dest: &Path,
     sessions: &[LtsSessionData],
     processor_yamls: &[(String, String, String)], // (id, filename, yaml_content)
     editor_tabs: &[LtsEditorTab],
+    anonymized: bool,
 ) -> Result<(), String> {
     let manifest_sessions: Vec<LtsManifestSession> = sessions
         .iter()
@@ -136,6 +159,7 @@ pub fn write_lts(
         format_version: LTS_FORMAT_VERSION,
         sessions: manifest_sessions,
         saved_at: super::now_ms(),
+        anonymized,
     };
 
     // Written atomically: content lands in a sibling `.lts.tmp` file first and
@@ -519,6 +543,27 @@ mod tests {
         assert!(sess.session_meta.active_processor_ids.is_empty());
         assert!(loaded.processor_manifest.processors.is_empty());
         assert!(loaded.processor_yamls.is_empty());
+        assert!(!loaded.manifest.anonymized, "the plain writer records raw source text");
+    }
+
+    /// The manifest's `anonymized` flag round-trips, and an archive written
+    /// before the field existed (no key at all) reads as raw.
+    #[test]
+    fn lts_manifest_anonymized_flag_roundtrips_and_defaults_to_false() {
+        let tmp = tempfile::NamedTempFile::new().expect("tmpfile");
+        let zip_path = tmp.path().to_path_buf();
+        drop(tmp);
+
+        let sessions = vec![make_session("redacted.log", b"<EMAIL-1>\n".to_vec(), vec![], vec![], LtsSessionMeta::default())];
+        write_lts_with(&zip_path, &sessions, &[], &[], true).expect("write_lts_with");
+        let loaded = read_lts(&zip_path).expect("read_lts");
+        assert!(loaded.manifest.anonymized);
+
+        let legacy: LtsManifest = serde_json::from_str(
+            r#"{"formatVersion":3,"sessions":[],"savedAt":1}"#,
+        )
+        .expect("a pre-flag manifest still parses");
+        assert!(!legacy.anonymized);
     }
 
     /// Source bytes written with Stored compression survive the round-trip byte-for-byte.
@@ -618,6 +663,7 @@ mod tests {
                     source_size: 5,
                 }],
                 saved_at: 12345,
+                anonymized: false,
             };
 
             let out_file = File::create(&zip_path).expect("create zip");
@@ -811,6 +857,7 @@ mod tests {
                 format_version: LTS_FORMAT_VERSION,
                 sessions: vec![],
                 saved_at: 12345,
+                anonymized: false,
             };
             let proc_manifest = LtsProcessorManifest {
                 processors: vec![LtsProcessorEntry {
@@ -861,6 +908,7 @@ mod tests {
                 format_version: LTS_FORMAT_VERSION,
                 sessions: vec![],
                 saved_at: 12345,
+                anonymized: false,
             };
             let proc_manifest = LtsProcessorManifest {
                 processors: vec![LtsProcessorEntry {

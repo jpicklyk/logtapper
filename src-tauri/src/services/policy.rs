@@ -8,8 +8,10 @@
 //! Three gates:
 //!
 //! - [`authorize_open`] — may this caller open this path?
-//! - [`should_anonymize`] — must this caller's view of this session be redacted?
-//! - [`redact_line`] — the single choke point every raw-text response goes through.
+//! - [`should_anonymize_for`] — must raw text on this [`Pathway`] be redacted
+//!   for this caller? ([`should_anonymize`] is its `Internal` shorthand.)
+//! - [`redact_line`] / [`redact_lines`] — the choke points every raw-text
+//!   response goes through.
 //!
 //! The anonymization helpers below (`anonymize_session_text`,
 //! `anonymize_scan_line`, `truncate_str`) were moved here from `mcp_bridge.rs`
@@ -18,15 +20,20 @@
 //! tests — it is the difference between an agent seeing a redacted log and an
 //! agent seeing a user's email address.
 //!
-//! **Anonymization is a single global decision, not a per-session one.** An
-//! agent is anonymized unless `AppState::agent_raw_access` is `true` — one
-//! persisted, UI-only opt-out (`services::settings::set_agent_raw_access`).
-//! The per-session `mcp_anonymize` map this replaced was mirrored from each
-//! session's pipeline chain by the frontend, which meant the default chain
-//! silently turned agent anonymization *off*.
+//! **Anonymization is a single global decision, not a per-session one.** Two
+//! persisted, `Ui`-only settings feed it: the anonymizer *mode*
+//! (`AnonymizerConfig::mode` — `All` / `External` / `None`, written only by
+//! `services::settings::set_anonymizer_config`) and the agent raw-access
+//! opt-out (`AppState::agent_raw_access`, written only by
+//! `services::settings::set_agent_raw_access`). Nothing a session carries —
+//! above all its pipeline chain — participates. (The per-session
+//! `mcp_anonymize` map this replaced was mirrored from each session's chain by
+//! the frontend, which meant the default chain silently turned agent
+//! anonymization *off*.)
 
 use std::path::PathBuf;
 
+use crate::anonymizer::config::AnonymizerMode;
 use crate::anonymizer::LogAnonymizer;
 use crate::commands::AppState;
 
@@ -202,7 +209,7 @@ pub fn deny_agent_gate_mutation(ctx: &ServiceCtx, what: &str) -> Result<(), Serv
 ///
 /// `false` — the default, and the value on a missing/corrupt settings file —
 /// means agents are anonymized. Kept private: every decision about raw text
-/// goes through [`should_anonymize`], and the *setting* is read/written
+/// goes through [`should_anonymize_for`], and the *setting* is read/written
 /// through `services::settings`.
 fn agent_raw_access_enabled(state: &AppState) -> bool {
     *state
@@ -211,44 +218,113 @@ fn agent_raw_access_enabled(state: &AppState) -> bool {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Must this caller's view of log text be redacted?
+/// Read the persisted anonymizer mode (`AnonymizerConfig::mode`).
 ///
-/// - `Ui` → `false`, always. The user is looking at their own machine's logs
-///   in their own app.
-/// - `Agent` → `!agent_raw_access`. Anonymized by default; raw only when the
-///   user explicitly opted out in Settings → General → MCP Integration.
+/// Every decision about raw text goes through [`should_anonymize_for`]; the
+/// *setting* is read/written through `services::settings` (the config is the
+/// one persisted document, and `set_anonymizer_config` is its one `Ui`-only
+/// writer).
+pub fn anonymizer_mode(state: &AppState) -> AnonymizerMode {
+    state
+        .anonymizer_config
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .mode
+}
+
+/// Where raw text is headed, as far as the anonymizer is concerned.
 ///
-/// `session_id` is accepted (and ignored) so every raw-text call site keeps
-/// naming the session it is about — the decision is deliberately global, so
-/// nothing a session carries (its pipeline chain above all) can change what an
-/// agent is allowed to see.
+/// Every service that hands out raw log text names its pathway once, at the
+/// decision site, and inherits the mode table from there — a new surface
+/// never re-derives the rule. The classification is about the *destination*,
+/// not the transport: a `Ui` viewer page is `Internal`; an `.lts` export, a
+/// stream save-to-file or the clipboard is `External` even though the same
+/// `Ui` caller asked for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pathway {
+    /// Stays inside the app: viewer pages, search/filter results, pipeline
+    /// result lines, stream batches to a pane, the in-chain anonymizer of a
+    /// `Ui`-started stream.
+    Internal,
+    /// Leaves the tool: `.lts` export, stream save-to-file, clipboard /
+    /// bookmark Markdown (`services::settings::anonymize_text`), analysis
+    /// hand-off exports.
+    External,
+}
+
+/// Must raw text on `pathway` be redacted for this caller?
 ///
-/// `services::export` is the one caller that does NOT use this function to
-/// decide a `Ui` export's redaction: `.lts` export has its own explicit,
-/// per-export "Anonymize PII" checkbox (`ExportAllOptions::anonymize`,
-/// `services::export::should_anonymize_export`) — ticking it calls
-/// [`anonymize_session_text`] directly rather than going through this
-/// caller-only decision, since a `Ui` caller always resolves to `false` here.
-/// An `Agent` export still funnels through this function unchanged; the
-/// checkbox is silently ignored for that caller.
-pub fn should_anonymize(ctx: &ServiceCtx, _session_id: &str) -> bool {
+/// The one place mode + identity become a redaction decision:
+///
+/// | mode       | `Ui` Internal | `Ui` External | `Agent` (either pathway)   |
+/// |------------|---------------|---------------|----------------------------|
+/// | `All`      | yes           | yes           | yes, unless raw access     |
+/// | `External` | no            | yes           | yes, unless raw access     |
+/// | `None`     | no            | no            | no                         |
+///
+/// An agent is outside the tool by definition, so its pathway never matters;
+/// `None` means none everywhere — agents included — which is acceptable only
+/// because both inputs are persisted `Ui`-only settings with a persistent,
+/// visible warning in the app (the same consent class as `agent_raw_access`).
+pub fn should_anonymize_for(ctx: &ServiceCtx, pathway: Pathway) -> bool {
+    let mode = anonymizer_mode(ctx.state());
     match ctx.caller() {
-        Caller::Ui => false,
-        Caller::Agent { .. } => !agent_raw_access_enabled(ctx.state()),
+        Caller::Agent { .. } => {
+            mode != AnonymizerMode::None && !agent_raw_access_enabled(ctx.state())
+        }
+        Caller::Ui => match pathway {
+            Pathway::Internal => mode == AnonymizerMode::All,
+            Pathway::External => mode != AnonymizerMode::None,
+        },
     }
 }
 
-/// The single choke point for raw log text leaving the backend.
+/// Must this caller's in-app view of log text be redacted?
+///
+/// The [`Pathway::Internal`] shorthand of [`should_anonymize_for`] — every
+/// read path (lines, search, filters, pipeline results, stream events, the
+/// in-chain `__pii_anonymizer`) is `Internal`, so the existing call sites keep
+/// this signature. `session_id` is accepted (and ignored) so every raw-text
+/// call site keeps naming the session it is about — the decision is
+/// deliberately global, so nothing a session carries (its pipeline chain above
+/// all) can change what an agent is allowed to see.
+pub fn should_anonymize(ctx: &ServiceCtx, _session_id: &str) -> bool {
+    should_anonymize_for(ctx, Pathway::Internal)
+}
+
+/// The single choke point for raw log text leaving the backend, one line at a
+/// time.
 ///
 /// Every service that returns line text — lines, search, pipeline matched
 /// lines, insights, section previews, stream batches, filters, export — routes
-/// through here. Anonymize first, truncate second: see [`anonymize_scan_line`]
-/// for why that order is load-bearing.
+/// through here or [`redact_lines`]. Anonymize first, truncate second: see
+/// [`anonymize_scan_line`] for why that order is load-bearing.
 pub fn redact_line(ctx: &ServiceCtx, session_id: &str, raw: &str, max_chars: usize) -> String {
     if !should_anonymize(ctx, session_id) {
         return truncate_str(raw, max_chars);
     }
     anonymize_scan_line(ctx.state(), session_id, raw, max_chars)
+}
+
+/// [`redact_line`] for a whole page: same decision, same
+/// anonymize-then-truncate order, but the anonymizer's locks are taken once
+/// per call instead of once per line (see [`anonymize_session_lines`]). Every
+/// element of `lines` is redacted in place, in order — order matters, because
+/// token numbering follows first sight.
+///
+/// Never call this while holding `sessions`; collect the raw text, drop that
+/// lock, then redact — the same rule as `redact_line`.
+pub fn redact_lines(ctx: &ServiceCtx, session_id: &str, lines: &mut [String], max_chars: usize) {
+    if should_anonymize(ctx, session_id) {
+        anonymize_session_lines(ctx.state(), session_id, lines);
+    }
+    if max_chars != usize::MAX {
+        for line in lines.iter_mut() {
+            if line.chars().count() > max_chars {
+                *line = truncate_str(line, max_chars);
+            }
+        }
+    }
 }
 
 /// Apply `session_id`'s anonymizer to `raw`, unconditionally.
@@ -267,6 +343,25 @@ pub fn redact_line(ctx: &ServiceCtx, session_id: &str, raw: &str, max_chars: usi
 /// function (via [`anonymize_scan_line`] / [`redact_line`]) — `sessions` is
 /// never held while this function's own locks are acquired.
 pub fn anonymize_session_text(state: &AppState, session_id: &str, raw: &str) -> String {
+    let mut one = [raw.to_string()];
+    anonymize_session_lines(state, session_id, &mut one);
+    let [out] = one;
+    out
+}
+
+/// Apply `session_id`'s anonymizer to every element of `lines`, in place and
+/// in order, unconditionally — the batch form of [`anonymize_session_text`].
+///
+/// Acquires `anonymizer_config` then `mcp_anonymizers` **once** for the whole
+/// batch: a viewer page under `All` redacts a few hundred lines per scroll,
+/// and per-line locking (plus a per-line clone of the detector config) was
+/// the cost that made the single-line helper unsuitable for that path. Same
+/// cached per-session `LogAnonymizer`, same token numbering, same lock-order
+/// rule (never nested under `sessions`).
+pub fn anonymize_session_lines(state: &AppState, session_id: &str, lines: &mut [String]) {
+    if lines.is_empty() {
+        return;
+    }
     let config = state
         .anonymizer_config
         .lock()
@@ -279,7 +374,9 @@ pub fn anonymize_session_text(state: &AppState, session_id: &str, raw: &str) -> 
     let anon = anon_map
         .entry(session_id.to_string())
         .or_insert_with(|| LogAnonymizer::from_config(&config));
-    anon.anonymize(raw).0
+    for line in lines.iter_mut() {
+        *line = anon.anonymize(line).0;
+    }
 }
 
 /// Truncate a string to at most `max_chars` characters, appending "..." if cut.
@@ -321,30 +418,87 @@ mod tests {
     use super::*;
     use crate::services::testing::test_ctx;
 
-    // ── should_anonymize (the agent raw-access rule) ────────────────────────
-    // Replaces the per-session `mcp_anonymize` fail-closed map: anonymization
-    // for agents is ON unless the user persisted the `agent_raw_access`
-    // opt-out. No session-level state — above all no pipeline chain — can
-    // change what an agent is allowed to see.
+    // ── should_anonymize_for (mode × pathway × caller) ──────────────────────
+    // The whole truth table, one row per cell. Agents: anonymized unless the
+    // mode is `None` or the user persisted the `agent_raw_access` opt-out —
+    // their pathway never matters. Ui: `Internal` only under `All`,
+    // `External` under anything but `None`. No session-level state — above
+    // all no pipeline chain — participates.
 
-    #[test]
-    fn agent_is_anonymized_by_default() {
-        let (ctx, _tmp) = test_ctx().agent("mcp").build();
-        assert!(should_anonymize(&ctx, "s1"));
+    fn decide(caller_is_agent: bool, raw_access: bool, mode: AnonymizerMode, pathway: Pathway) -> bool {
+        let mut b = test_ctx().anonymizer_mode(mode).agent_raw_access(raw_access);
+        if caller_is_agent {
+            b = b.agent("mcp");
+        }
+        let (ctx, _tmp) = b.build();
+        should_anonymize_for(&ctx, pathway)
     }
 
     #[test]
-    fn agent_is_anonymized_for_a_session_that_was_never_seen() {
-        // There is nothing to "signal" any more — an unknown session id is
-        // exactly as redacted as a known one.
-        let (ctx, _tmp) = test_ctx().agent("mcp").build();
-        assert!(should_anonymize(&ctx, "never-seen"));
+    fn mode_table_ui_internal() {
+        assert!(decide(false, false, AnonymizerMode::All, Pathway::Internal), "All: the viewer is anonymized");
+        assert!(!decide(false, false, AnonymizerMode::External, Pathway::Internal), "External: the viewer is raw");
+        assert!(!decide(false, false, AnonymizerMode::None, Pathway::Internal));
     }
 
     #[test]
-    fn agent_gets_raw_text_only_when_raw_access_is_enabled() {
-        let (ctx, _tmp) = test_ctx().agent("mcp").agent_raw_access(true).build();
-        assert!(!should_anonymize(&ctx, "s1"));
+    fn mode_table_ui_external() {
+        assert!(decide(false, false, AnonymizerMode::All, Pathway::External));
+        assert!(decide(false, false, AnonymizerMode::External, Pathway::External), "External: what leaves the tool is anonymized");
+        assert!(!decide(false, false, AnonymizerMode::None, Pathway::External), "None means none — exports too");
+    }
+
+    #[test]
+    fn mode_table_agent_without_raw_access() {
+        for pathway in [Pathway::Internal, Pathway::External] {
+            assert!(decide(true, false, AnonymizerMode::All, pathway));
+            assert!(decide(true, false, AnonymizerMode::External, pathway));
+            assert!(!decide(true, false, AnonymizerMode::None, pathway), "None means none — agents included");
+        }
+    }
+
+    #[test]
+    fn mode_table_agent_with_raw_access() {
+        // The opt-out wins in every mode; the pathway still never matters.
+        for pathway in [Pathway::Internal, Pathway::External] {
+            for mode in [AnonymizerMode::All, AnonymizerMode::External, AnonymizerMode::None] {
+                assert!(!decide(true, true, mode, pathway), "{mode:?}/{pathway:?}: raw access must yield raw text");
+            }
+        }
+    }
+
+    #[test]
+    fn ui_raw_access_flag_is_irrelevant_to_a_ui_caller() {
+        // `agent_raw_access` is about agents; it neither widens nor narrows
+        // what the user's own app shows or exports.
+        assert!(decide(false, true, AnonymizerMode::All, Pathway::Internal));
+        assert!(decide(false, true, AnonymizerMode::External, Pathway::External));
+        assert!(!decide(false, true, AnonymizerMode::External, Pathway::Internal));
+    }
+
+    #[test]
+    fn the_default_mode_is_external() {
+        // A fresh state (no config file) behaves exactly as before the mode
+        // existed: Ui raw in-app, agents redacted.
+        let (ui, _t1) = test_ctx().build();
+        assert!(!should_anonymize(&ui, "s1"));
+        assert!(should_anonymize_for(&ui, Pathway::External));
+        let (agent, _t2) = test_ctx().agent("mcp").build();
+        assert!(should_anonymize(&agent, "s1"));
+    }
+
+    #[test]
+    fn should_anonymize_is_the_internal_shorthand() {
+        for mode in [AnonymizerMode::All, AnonymizerMode::External, AnonymizerMode::None] {
+            for agent in [false, true] {
+                let mut b = test_ctx().anonymizer_mode(mode);
+                if agent {
+                    b = b.agent("mcp");
+                }
+                let (ctx, _tmp) = b.build();
+                assert_eq!(should_anonymize(&ctx, "any"), should_anonymize_for(&ctx, Pathway::Internal));
+            }
+        }
     }
 
     #[test]
@@ -353,24 +507,64 @@ mod tests {
         // disagree between two sessions sharing the same bridge traffic.
         let (ctx, _tmp) = test_ctx().agent("mcp").build();
         assert!(should_anonymize(&ctx, "sess-a"));
-        assert!(should_anonymize(&ctx, "sess-b"));
+        assert!(should_anonymize(&ctx, "never-seen"));
 
         let (raw_ctx, _tmp2) = test_ctx().agent("mcp").agent_raw_access(true).build();
         assert!(!should_anonymize(&raw_ctx, "sess-a"));
-        assert!(!should_anonymize(&raw_ctx, "sess-b"));
+        assert!(!should_anonymize(&raw_ctx, "never-seen"));
+    }
+
+    // ── anonymize_session_text / anonymize_session_lines (the mechanism) ────
+    // Unconditional: the decision belongs to `should_anonymize_for`, and
+    // `redact_line` / `redact_lines` are the places that pair the two.
+
+    #[test]
+    fn anonymize_session_lines_matches_the_per_line_helper() {
+        // Same anonymizer, same numbering: a page redacted in one lock must be
+        // byte-identical to the same lines redacted one call at a time.
+        let per_line_state = AppState::new();
+        let batch_state = AppState::new();
+        let lines = vec![
+            "a user@example.com".to_string(),
+            "b 10.0.0.1 then user@example.com".to_string(),
+            "c nothing here".to_string(),
+            "d other@example.org".to_string(),
+        ];
+        let expected: Vec<String> = lines
+            .iter()
+            .map(|l| anonymize_session_text(&per_line_state, "s", l))
+            .collect();
+        let mut batch = lines.clone();
+        anonymize_session_lines(&batch_state, "s", &mut batch);
+        assert_eq!(batch, expected);
+        assert!(!batch.iter().any(|l| l.contains("@example")), "{batch:?}");
+        assert_eq!(batch[2], "c nothing here");
     }
 
     #[test]
-    fn ui_is_never_anonymized_in_either_state() {
-        let (ctx, _tmp) = test_ctx().build();
-        assert!(!should_anonymize(&ctx, "s1"));
-        let (ctx, _tmp) = test_ctx().agent_raw_access(true).build();
-        assert!(!should_anonymize(&ctx, "s1"));
+    fn anonymize_session_lines_shares_numbering_with_later_single_calls() {
+        let state = AppState::new();
+        let mut batch = vec!["first user@example.com".to_string()];
+        anonymize_session_lines(&state, "s", &mut batch);
+        let token = batch[0].split_whitespace().last().unwrap().to_string();
+        let later = anonymize_session_text(&state, "s", "again user@example.com");
+        assert!(later.ends_with(&token), "numbering drifted between batch and single: {later} vs {token}");
     }
 
-    // ── anonymize_session_text (the mechanism) ──────────────────────────────
-    // Unconditional: the decision belongs to `should_anonymize`, and
-    // `redact_line` is the one place that pairs the two.
+    #[test]
+    fn redact_lines_truncates_after_anonymizing_and_leaves_ui_text_alone() {
+        let (agent, _t1) = test_ctx().agent("mcp").build();
+        let long = format!("{} user@example.com", "p".repeat(489));
+        let mut lines = vec![long.clone(), "short".to_string()];
+        redact_lines(&agent, "s1", &mut lines, 500);
+        assert!(!lines[0].contains("user@"), "anonymize first, then cut: {}", lines[0]);
+        assert_eq!(lines[1], "short");
+
+        let (ui, _t2) = test_ctx().build();
+        let mut lines = vec![long.clone()];
+        redact_lines(&ui, "s1", &mut lines, usize::MAX);
+        assert_eq!(lines[0], long, "External mode: the Ui's in-app text is untouched");
+    }
 
     #[test]
     fn anonymize_session_text_always_redacts() {

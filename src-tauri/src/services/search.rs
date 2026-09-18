@@ -19,9 +19,12 @@
 //!
 //! ## Redaction
 //!
-//! [`hits`] puts every returned string through
-//! [`policy::redact_line`](crate::services::policy::redact_line) *after* the
-//! `sessions` lock has been dropped: anonymize first, truncate second.
+//! [`hits`] puts every returned line through
+//! [`lines::redact_view_lines`](crate::services::lines::redact_view_lines)
+//! *after* the `sessions` lock has been dropped: anonymize first, truncate
+//! second, one anonymizer lock per page. Matching itself is on raw text — an
+//! `Internal`-pathway caller under anonymizer mode `All` finds an email by
+//! searching for it and sees the hit as `<EMAIL-1>`.
 //! [`summary`] returns no line text, so there is nothing to redact — only line
 //! numbers, level names and tags.
 //!
@@ -46,7 +49,7 @@ use crate::services::lines::{
     MCP_SCAN_CHUNK_SIZE, MCP_SCAN_LINE_CAP, NO_SOURCES, capped_range_end, contains_ignore_case,
     scan_chunk_bounds, scan_window_capped,
 };
-use crate::services::policy::redact_line;
+use crate::services::lines::redact_view_lines;
 use crate::services::wire::{SearchHit, SearchHits};
 use crate::services::{ServiceCtx, ServiceError, lock_svc};
 
@@ -357,8 +360,8 @@ pub fn hits(ctx: &ServiceCtx, req: &SearchHitsRequest) -> Result<SearchHits, Ser
 
         {
             // `sessions` guard scope. Every string collected here is RAW;
-            // `redact_line` takes the anonymizer's own locks and must not be
-            // called while `sessions` is held.
+            // `redact_view_lines` takes the anonymizer's own locks and must
+            // not be called while `sessions` is held.
             let sessions = lock_svc(&ctx.state().sessions, "sessions")?;
             // A session removed mid-scan is not an error — it truncates the
             // results, which is what `truncated` is for.
@@ -454,21 +457,24 @@ pub fn hits(ctx: &ServiceCtx, req: &SearchHitsRequest) -> Result<SearchHits, Ser
         };
 
     // Redaction happens here, after the last `sessions` acquisition above has
-    // been released — anonymize first, truncate second (`redact_line`).
-    for hit in &mut collected {
-        if req.redact_match_line_first {
-            redact_view_line(ctx, &req.session_id, &mut hit.line, req.max_line_chars);
-        }
-        for line in &mut hit.context_before {
-            redact_view_line(ctx, &req.session_id, line, req.max_line_chars);
-        }
-        if !req.redact_match_line_first {
-            redact_view_line(ctx, &req.session_id, &mut hit.line, req.max_line_chars);
-        }
-        for line in &mut hit.context_after {
-            redact_view_line(ctx, &req.session_id, line, req.max_line_chars);
-        }
-    }
+    // been released — anonymize first, truncate second, one anonymizer lock
+    // for the whole page (`redact_view_lines`). The lines are handed over in
+    // the order `redact_match_line_first` dictates, because token numbering
+    // follows first sight.
+    let ordered = collected.iter_mut().flat_map(|hit| {
+        let SearchHit { line, context_before, context_after, .. } = hit;
+        let (first, second) = if req.redact_match_line_first {
+            (Some(line), None)
+        } else {
+            (None, Some(line))
+        };
+        first
+            .into_iter()
+            .chain(context_before.iter_mut())
+            .chain(second)
+            .chain(context_after.iter_mut())
+    });
+    redact_view_lines(ctx, &req.session_id, ordered, req.max_line_chars, None);
 
     Ok(SearchHits {
         session_id: req.session_id.clone(),
@@ -533,15 +539,6 @@ fn indexed_view_line(
         is_context,
         raw,
     }
-}
-
-/// Anonymize then truncate one line in place. `message` mirrors `raw` on this
-/// path (the parser was never consulted), so it is replaced rather than
-/// redacted a second time.
-fn redact_view_line(ctx: &ServiceCtx, session_id: &str, line: &mut ViewLine, max_chars: usize) {
-    let redacted = redact_line(ctx, session_id, &line.raw, max_chars);
-    line.message = redacted.clone();
-    line.raw = redacted;
 }
 
 // ---------------------------------------------------------------------------

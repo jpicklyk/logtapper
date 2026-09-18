@@ -110,7 +110,7 @@ Key points:
 `start_adb_stream`'s orchestration (child process spawn, the injected `LineSourceFactory`
 seam, batching, continuous state, the `stream_epochs` epoch-guard invariant, cancellation)
 lives in `services::stream`. `commands/adb.rs` is the thin adapter layer over it —
-`start_adb_stream`, `stop_adb_stream`, `flush_batch`, `set_stream_anonymize`,
+`start_adb_stream`, `stop_adb_stream`, `flush_batch`,
 `update_stream_{processors,trackers,transformers}`, `get_stream_status`.
 
 What's still true regardless of which layer you're in:

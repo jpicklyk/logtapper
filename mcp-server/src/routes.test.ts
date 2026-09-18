@@ -443,3 +443,39 @@ describe("logtapper_chain", () => {
     expect(text).toContain("INVALID_ARGUMENT");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Anonymizer mode — the agent's redaction is decided by the user's mode plus
+// the raw-access setting, in the backend. The server neither sends a
+// redaction flag nor reinterprets the settings payload.
+// ---------------------------------------------------------------------------
+
+describe("anonymizer mode", () => {
+  it("logtapper_export 'run' sends no anonymize flag — nothing in the body can influence redaction", async () => {
+    const result = await client.callTool({
+      name: "logtapper_export",
+      arguments: { action: "run", dest_path: "C:\\out\\all.lts" },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(recordedCalls).toHaveLength(1);
+    expect(recordedCalls[0].body).toEqual({
+      destPath: "C:\\out\\all.lts",
+      includeBookmarks: true,
+      includeAnalyses: true,
+      includeProcessors: true,
+      editorTabs: [],
+    });
+  });
+
+  it("logtapper_settings 'agent_access' passes the mode and effectiveAgentRaw through verbatim", async () => {
+    const payload = { agentRawAccess: false, anonymizerMode: "none", effectiveAgentRaw: true };
+    queuedResponse = { status: 200, body: payload };
+
+    const result = await client.callTool({ name: "logtapper_settings", arguments: { action: "agent_access" } });
+
+    expect(result.isError).not.toBe(true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(JSON.parse(text)).toEqual(payload);
+  });
+});

@@ -22,7 +22,6 @@ function fakeStore(overrides: { devices?: AdbDevice[]; status?: StreamSessionSta
   const store: LiveStreamStore & {
     start: ReturnType<typeof vi.fn>;
     stop: ReturnType<typeof vi.fn>;
-    setAnonymize: ReturnType<typeof vi.fn>;
     saveCapture: ReturnType<typeof vi.fn>;
     refreshDevices: ReturnType<typeof vi.fn>;
   } = {
@@ -47,7 +46,6 @@ function fakeStore(overrides: { devices?: AdbDevice[]; status?: StreamSessionSta
       return Promise.resolve();
     }),
     stopIfCurrent: vi.fn(() => Promise.resolve()),
-    setAnonymize: vi.fn(() => Promise.resolve()),
     updateProcessors: vi.fn(() => Promise.resolve()),
     updateTrackers: vi.fn(() => Promise.resolve()),
     updateTransformers: vi.fn(() => Promise.resolve()),
@@ -133,43 +131,13 @@ describe('StreamControlsPanel', () => {
     expect(store.saveCapture).not.toHaveBeenCalled();
   });
 
-  it('toggling anonymize while streaming calls setAnonymize for the active session', async () => {
-    const store = fakeStore({
-      status: { phase: 'streaming', sessionId: 's1', sourceName: 'emulator-5554', sourceType: 'Logcat', totalLines: 5 },
-    });
-    render(() => <StreamControlsPanel store={store} />);
-
-    fireEvent.click(screen.getByLabelText(/anonymize pii while streaming/i));
-
-    await vi.waitFor(() => expect(store.setAnonymize).toHaveBeenCalledWith('s1', true));
-  });
-
-  // M1: ticking the box before Start set only the local signal —
-  // `toggleAnonymize` returns early with no session, and neither
-  // `StreamStartOptions` nor `start_adb_stream` carries the flag. The capture
-  // then streamed raw PII while the checkbox read "on": the one place the UI
-  // and the backend's redaction state disagreed.
-  it('applies an anonymize tick made before Start once the session exists', async () => {
+  // The per-stream "Anonymize PII while streaming" checkbox is gone: in-chain
+  // anonymization follows the global anonymizer mode, decided in the backend.
+  // PR3 (e64bc7a9) puts a mode status line where it was.
+  it('renders no per-stream anonymize checkbox', () => {
     const store = fakeStore({ devices: [DEVICE] });
     render(() => <StreamControlsPanel store={store} />);
-
-    fireEvent.click(screen.getByLabelText(/anonymize pii while streaming/i));
-    expect(store.setAnonymize).not.toHaveBeenCalled(); // nothing to apply to yet
-
-    fireEvent.click(screen.getByRole('button', { name: /start capture/i }));
-
-    await vi.waitFor(() => expect(store.setAnonymize).toHaveBeenCalledWith('s1', true));
-    expect(store.setAnonymize).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not touch anonymize on Start when the box was never ticked', async () => {
-    const store = fakeStore({ devices: [DEVICE] });
-    render(() => <StreamControlsPanel store={store} />);
-
-    fireEvent.click(screen.getByRole('button', { name: /start capture/i }));
-
-    await vi.waitFor(() => expect(store.start).toHaveBeenCalledTimes(1));
-    expect(store.setAnonymize).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText(/anonymize/i)).toBeNull();
   });
 
   it('surfaces a devicesError message', () => {

@@ -19,9 +19,14 @@ pub struct McpStatus {
     /// None = bridge has never received a request (Claude Code not connected).
     pub idle_secs: Option<u32>,
     /// `true` when the user has opted agents out of PII anonymization
-    /// (Settings → General → MCP Integration). Surfaced here so the status
-    /// pill can warn that agents are reading raw log text.
+    /// (Settings → General → MCP Integration).
     pub agent_raw_access: bool,
+    /// The anonymizer master switch (`AnonymizerConfig::mode`).
+    pub anonymizer_mode: crate::anonymizer::config::AnonymizerMode,
+    /// `anonymizer_mode == None || agent_raw_access`, computed by
+    /// `services::settings::agent_access` — the one value the presence pill
+    /// keys its "agents read raw text" warning off.
+    pub effective_agent_raw: bool,
 }
 
 /// Records which session is currently the focused pane session in the

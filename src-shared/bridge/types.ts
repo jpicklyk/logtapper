@@ -31,6 +31,7 @@ import type {
   AnalysisArtifact,
   AnalysisSection,
   AnonymizerConfig,
+  AnonymizerMode,
   AnonymizerTestResult,
   AppStateFile,
   Bookmark,
@@ -129,6 +130,7 @@ export type {
   AnalysisArtifact,
   AnalysisSection,
   AnonymizerConfig,
+  AnonymizerMode,
   AnonymizerTestResult,
   AppStateFile,
   Bookmark,
@@ -629,6 +631,4 @@ export interface ExportAllOptions {
   includeAnalyses: boolean;
   includeProcessors: boolean;
   editorTabs: LtsEditorTabPayload[];
-  /** Ui-only "Anonymize PII in exported log lines" opt-in; ignored for an agent caller. */
-  anonymize: boolean;
 }

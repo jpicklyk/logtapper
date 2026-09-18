@@ -913,7 +913,7 @@ async fn stream_status_is_a_pure_passthrough_of_the_service_value() {
         &http_value,
         &[
             "sessionId", "sourceName", "streaming", "totalLines", "byteCount", "firstTimestamp",
-            "lastTimestamp", "lostLineCount", "anonymize", "processorIds", "trackerIds",
+            "lastTimestamp", "lostLineCount", "processorIds", "trackerIds",
             "transformerIds", "latestEventSeq",
         ],
     );
@@ -1123,14 +1123,14 @@ async fn snapshot_mode_state_at_returns_the_full_dump_identically_via_the_ui_ada
 // `ExportAllOptions` is a request body, not a service return value, so it has
 // no second "service call" producer to compare against the HTTP route the
 // way every other section in this file does. What matters here instead: (a)
-// the new `anonymize` field round-trips through the live route exactly like
-// every other field, and (b) the generated `ExportAllOptions.ts` binding
-// actually mentions it — a rename or a forgotten `#[serde(rename_all =
-// "camelCase")]` on the new field would otherwise only surface as a frontend
-// type error, not a test failure here.
+// the body round-trips through the live route field for field, (b) the
+// generated `ExportAllOptions.ts` binding covers every key sent, and (c) the
+// per-export `anonymize` flag that used to live here is gone — an old client
+// still sending it must be ignored, never honoured, because redaction is the
+// anonymizer mode's decision (`policy::should_anonymize_for(External)`).
 
 #[tokio::test]
-async fn export_all_options_body_accepts_and_the_ts_binding_covers_the_anonymize_field() {
+async fn export_all_options_body_accepts_and_the_ts_binding_covers_every_field() {
     let (bridge_ctx, state, _sink, tmp) = support::ctx_only();
     state.sessions.lock().unwrap().insert("s1".to_string(), fixture_session("s1", 3));
     let router = mcp_bridge::router(bridge_ctx);
@@ -1142,7 +1142,6 @@ async fn export_all_options_body_accepts_and_the_ts_binding_covers_the_anonymize
         "includeAnalyses": false,
         "includeProcessors": false,
         "editorTabs": [],
-        "anonymize": true,
     });
 
     // The route's Caller is always Agent, so no `mcp_open_allowlist` entry
@@ -1151,18 +1150,14 @@ async fn export_all_options_body_accepts_and_the_ts_binding_covers_the_anonymize
     // job). A 403 still proves the body deserialized: a shape mismatch would
     // fail at 400 `INVALID_ARGUMENT` before the destination gate ever runs.
     let (status, resp) = send_json(&router, Method::POST, "/mcp/export", &trusted_headers(), &body).await;
-    assert_eq!(status, axum::http::StatusCode::FORBIDDEN, "{resp}: anonymize must not affect the destination gate");
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN, "{resp}");
     assert_eq!(resp["error"]["code"], "NOT_ALLOWED");
 
-    // The TS binding must mention every key this test sent, `anonymize`
-    // included.
     assert_ts_binding_covers_json_keys("ExportAllOptions", &body);
 }
 
 #[tokio::test]
-async fn export_all_options_omitting_anonymize_still_deserializes_serde_default() {
-    // Acceptance criterion 4: an old export payload without the field still
-    // works — `#[serde(default)]` on `ExportAllOptions::anonymize`.
+async fn export_all_options_legacy_anonymize_key_is_ignored_not_a_field() {
     let (bridge_ctx, state, _sink, tmp) = support::ctx_only();
     state.sessions.lock().unwrap().insert("s1".to_string(), fixture_session("s1", 3));
     let router = mcp_bridge::router(bridge_ctx);
@@ -1174,14 +1169,22 @@ async fn export_all_options_omitting_anonymize_still_deserializes_serde_default(
         "includeAnalyses": false,
         "includeProcessors": false,
         "editorTabs": [],
-        // `anonymize` deliberately omitted.
+        "anonymize": false,
     });
 
-    let (status, resp) = send_json(&router, Method::POST, "/mcp/export", &trusted_headers(), &body).await;
     // Same destination-gate refusal as above, NOT a 400 deserialization
-    // error — proving the missing field defaulted rather than failing.
-    assert_eq!(status, axum::http::StatusCode::FORBIDDEN, "{resp}: a legacy body (no `anonymize`) must still deserialize");
+    // error — the unknown key is dropped by serde rather than rejected.
+    let (status, resp) = send_json(&router, Method::POST, "/mcp/export", &trusted_headers(), &body).await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN, "{resp}: a legacy body (with `anonymize`) must still deserialize");
     assert_eq!(resp["error"]["code"], "NOT_ALLOWED");
+
+    // And the binding no longer offers the key to any client.
+    let ts = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../src-shared/bridge/generated/ExportAllOptions.ts"),
+    )
+    .expect("generated binding exists");
+    assert!(!ts.contains("anonymize"), "ExportAllOptions.ts must not carry the removed field: {ts}");
 }
 
 // ---------------------------------------------------------------------------

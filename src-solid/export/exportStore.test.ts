@@ -18,11 +18,10 @@ describe('exportStore', () => {
     expect(store.loading()).toBe(false);
     store.dispose();
   });
-  it('runExport sends the exact ExportAllOptions payload, including anonymize', async () => {
+  it('runExport sends the exact ExportAllOptions payload (no anonymize flag — the mode decides)', async () => {
     const exportAllSessions = vi.fn(() => Promise.resolve());
     const store = createExportStore({ commands: { exportAllSessions } });
     store.setOption('includeBookmarks', false);
-    store.setOption('anonymize', true);
     await store.runExport('D:/out/session.lts');
     const expected: ExportAllOptions = {
       destPath: 'D:/out/session.lts',
@@ -30,9 +29,9 @@ describe('exportStore', () => {
       includeAnalyses: true,
       includeProcessors: true,
       editorTabs: [],
-      anonymize: true,
     };
     expect(exportAllSessions).toHaveBeenCalledWith(expected);
+    expect(Object.keys((exportAllSessions.mock.calls as unknown[][])[0]?.[0] as object)).not.toContain('anonymize');
     expect(store.exporting()).toBe(false);
     store.dispose();
   });

@@ -116,32 +116,55 @@ indexer and the ADB reader task depend on landing on that runtime. Test doubles
   (export, workspace save, stream save) each independently built the identical
   allowlist+parent-containment+hygiene logic before this consolidation; if you're tempted
   to write a fourth copy, you're looking for this function.
-- **`should_anonymize(ctx, _session_id) -> bool`** — `Ui` → `false` always. `Agent` →
-  `!agent_raw_access`, i.e. **redacted by default**; raw only when the user ticked the
-  Settings → General → MCP Integration checkbox (`settings::set_agent_raw_access`,
-  `Ui`-only, persisted to `{app_data_dir}/mcp_agent_access.json`, loaded in `lib.rs::setup`
-  like the allowlist). The `session_id` parameter is accepted and ignored: the decision is
-  global on purpose, so nothing a session carries — above all its pipeline chain — can
-  widen what an agent sees. (The per-session `mcp_anonymize` map this replaced was
-  mirrored from `chain.includes('__pii_anonymizer')` by the frontend and therefore turned
-  agent anonymization *off* for the default chain.) An `Agent`'s `.lts` export still funnels
-  through this function, so it obeys the same rule as its bridge reads. A `Ui` export is
-  the one exception: it has its own explicit, per-export "Anonymize PII" checkbox
-  (`ExportAllOptions::anonymize`, `services::export::should_anonymize_export`) that calls
-  `anonymize_session_text` directly rather than going through this function — a `Ui` caller
-  always resolves to `false` here, so routing the checkbox through `should_anonymize` would
-  never redact anything.
-- **`redact_line(ctx, session_id, raw, max_chars) -> String`** — the single choke point for
-  raw log text leaving the backend. **Anonymize first, truncate second** — load-bearing
-  order, so a redaction token is never cut mid-token by the length cap. Every service
-  returning raw text routes through this: lines, search, pipeline matched lines, insights
-  message text, section previews, stream events, filters, export. Reuses the session's
+- **`should_anonymize_for(ctx, pathway) -> bool`** — the one place the anonymizer *mode*
+  (`AnonymizerConfig::mode`: `All` / `External` / `None`, default `External`, written only by
+  `settings::set_anonymizer_config`) and the caller's identity become a redaction decision.
+  `Pathway` is about the *destination* of the raw text, not the transport:
+
+  | mode       | `Ui`, `Internal` | `Ui`, `External` | `Agent` (either pathway)     |
+  |------------|------------------|------------------|------------------------------|
+  | `All`      | redacted         | redacted         | redacted unless raw access   |
+  | `External` | raw              | redacted         | redacted unless raw access   |
+  | `None`     | raw              | raw              | raw                          |
+
+  `Internal` = stays in the app: viewer pages (`lines`), search/filter results, pipeline
+  result lines, stream events to a pane, the in-chain `__pii_anonymizer` of a `Ui` stream
+  (`pipeline::resolve_effective_chain`, `stream::resolve_stream_chain`). `External` = leaves
+  the tool: `.lts` export (`export::run`), `stream::save_live_capture`, clipboard/bookmark
+  Markdown (`settings::anonymize_text`), analysis hand-off exports. **Every new raw-text
+  pathway names its `Pathway` at the decision site** — never re-derive the table locally,
+  and never add a per-surface checkbox. An agent is outside the tool by definition, so its
+  pathway never matters; `None` means none *everywhere*, agents included — acceptable only
+  because both inputs are `Ui`-only persisted settings with a persistent visible warning
+  (the same consent class as `agent_raw_access`). Raw access itself:
+  `settings::set_agent_raw_access`, persisted to `{app_data_dir}/mcp_agent_access.json`
+  (`AgentAccessFile`), loaded in `lib.rs::setup` like the allowlist.
+  `settings::agent_access` computes the wire view (`McpAgentAccess { agent_raw_access,
+  anonymizer_mode, effective_agent_raw }`) once for `GET /mcp/settings/agent_access` *and*
+  `McpStatus`, so the presence pill and the agent never disagree.
+- **`should_anonymize(ctx, _session_id) -> bool`** — the `Internal` shorthand; every read
+  path uses it. The `session_id` parameter is accepted and ignored: the decision is global
+  on purpose, so nothing a session carries — above all its pipeline chain — can widen what
+  an agent sees. (The per-session `mcp_anonymize` map this replaced was mirrored from
+  `chain.includes('__pii_anonymizer')` by the frontend and therefore turned agent
+  anonymization *off* for the default chain.)
+- **`redact_line(ctx, session_id, raw, max_chars) -> String`** / **`redact_lines(ctx,
+  session_id, &mut [String], max_chars)`** — the choke points for raw log text leaving the
+  backend. **Anonymize first, truncate second** — load-bearing order, so a redaction token
+  is never cut mid-token by the length cap. Every service returning raw text routes through
+  one of them: lines, search, pipeline matched lines, insights message text, section
+  previews, stream events, filters, export. Page-shaped services go through
+  `lines::redact_view_lines` (→ `redact_lines`), which takes the anonymizer's locks **once
+  per page** rather than once per line — under mode `All` this is the viewer's scroll path
+  — and recomputes search highlights against the redacted text. Both reuse the session's
   persistent `LogAnonymizer` (cached in `mcp_anonymizers`) so token numbering is stable
-  across calls (`anonymize_session_text` is the unconditional mechanism behind it — the
-  decision belongs to `should_anonymize`). Never call this while holding `sessions` —
-  collect the raw text, drop that lock, then redact (the
+  across calls (`anonymize_session_text` / `anonymize_session_lines` are the unconditional
+  mechanism behind them — the decision belongs to `should_anonymize_for`). Never call these
+  while holding `sessions` — collect the raw text, drop that lock, then redact (the
   `agent_raw_access`/`anonymizer_config`/`mcp_anonymizers` locks must never nest under
-  `sessions`).
+  `sessions`). Known limitations: search and filters *match* on raw text (under `All`,
+  searching for an email finds the line and shows `<EMAIL-1>`; searching for `<EMAIL-1>`
+  finds nothing); token numbering is per session per app run.
 - **`deny_agent_gate_mutation(ctx, what) -> Result<(), ServiceError>`** — an agent may
   never widen its own gate. Called first by `set_anonymizer_config`, `set_open_allowlist`,
   `set_agent_raw_access` (the sharpest case — it decides whether an agent sees PII at all,
@@ -218,7 +241,7 @@ indexing; these adjust for stream eviction transparently.
 test_ctx() -> TestCtxBuilder
   .caller(Caller) / .agent("name")
   .with_session(id, n) / .with_pii_session(id, n) / .with_session_object(s)
-  .allowlist(dir) / .agent_raw_access(bool)
+  .allowlist(dir) / .agent_raw_access(bool) / .anonymizer_mode(AnonymizerMode)
   .build() -> (ServiceCtx, TempDir)
   .build_recording() -> (ServiceCtx, Arc<RecordingSink>, TempDir)
 ```
@@ -292,7 +315,8 @@ test`, no extra flags, links against `services::testing`) — see
 - **`services::pipeline::resolve_effective_chain` is the only authority for "what
   processors run".** It resolves an explicit id list (bare→qualified, unknown = `InvalidArg`)
   or, for `None`/empty, `session_pipeline_meta[session].active − disabled` filtered to
-  installed/`@lts-` ids, then force-includes `__pii_anonymizer` when `should_anonymize`.
+  installed/`@lts-` ids, then force-includes `__pii_anonymizer` when `should_anonymize`
+  (the `Internal` pathway: a `Ui` chain only under mode `All`).
   A stream start with no `session_pipeline_meta` entry yet can't use the same "requested
   absent" branch (see `services::stream::resolve_stream_chain`) — but any explicit list,
   from any transport, must resolve through this function, never re-derived locally.

@@ -280,9 +280,8 @@ describe('createLiveStreamStore', () => {
     disposeSessions();
   });
 
-  it('pass-through commands (anonymize, processors, trackers, transformers, save, pids) carry their exact arguments', async () => {
+  it('pass-through commands (processors, trackers, transformers, save, pids) carry their exact arguments', async () => {
     const { sessions, dispose: disposeSessions } = makeSessionStore();
-    const setStreamAnonymize = vi.fn(() => Promise.resolve());
     const updateStreamProcessors = vi.fn(() => Promise.resolve());
     const updateStreamTrackers = vi.fn(() => Promise.resolve());
     const updateStreamTransformers = vi.fn(() => Promise.resolve());
@@ -294,7 +293,6 @@ describe('createLiveStreamStore', () => {
       registry: makeRegistry(),
       sessions,
       commands: {
-        setStreamAnonymize,
         updateStreamProcessors,
         updateStreamTrackers,
         updateStreamTransformers,
@@ -303,8 +301,6 @@ describe('createLiveStreamStore', () => {
       },
     });
 
-    await store.setAnonymize('s1', true);
-    expect(setStreamAnonymize).toHaveBeenCalledWith('s1', true);
 
     await store.updateProcessors('s1', ['p1']);
     expect(updateStreamProcessors).toHaveBeenCalledWith('s1', ['p1']);

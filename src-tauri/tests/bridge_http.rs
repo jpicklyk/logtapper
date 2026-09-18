@@ -960,11 +960,42 @@ mod wp12_settings {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["agentRawAccess"], json!(false), "agents are anonymized by default: {body}");
 
+        assert_eq!(body["anonymizerMode"], json!("external"), "{body}");
+        assert_eq!(body["effectiveAgentRaw"], json!(false), "{body}");
+
         let (router, state, _sink, _tmp) = app();
         *state.agent_raw_access.lock().unwrap() = true;
         let (status, body) = get(&router, "/mcp/settings/agent_access", &trusted_headers()).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["agentRawAccess"], json!(true), "the opt-out must be visible: {body}");
+        assert_eq!(body["effectiveAgentRaw"], json!(true), "{body}");
+    }
+
+    #[tokio::test]
+    async fn get_agent_access_route_reports_mode_none_as_effectively_raw() {
+        // The mode is the second input to "are agents raw": `None` alone
+        // flips `effectiveAgentRaw` while the opt-out itself stays false, so a
+        // client keys off the computed field, not the opt-out.
+        let (router, state, _sink, _tmp) = app();
+        state.anonymizer_config.lock().unwrap().mode = app_lib::anonymizer::config::AnonymizerMode::None;
+        let (status, body) = get(&router, "/mcp/settings/agent_access", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["agentRawAccess"], json!(false), "{body}");
+        assert_eq!(body["anonymizerMode"], json!("none"), "{body}");
+        assert_eq!(body["effectiveAgentRaw"], json!(true), "{body}");
+    }
+
+    #[tokio::test]
+    async fn raw_line_routes_are_raw_for_an_agent_under_mode_none() {
+        // "None means none" — the same exhaustiveness the anonymization matrix
+        // above pins for the opt-out, now for the mode.
+        let (router, state, _sink, _tmp) = app();
+        state.sessions.lock().unwrap().insert("s1".to_string(), fixture_session_with_pii("s1", 3));
+        state.anonymizer_config.lock().unwrap().mode = app_lib::anonymizer::config::AnonymizerMode::None;
+        let (status, body) = get(&router, "/mcp/sessions/s1/query?n=3", &trusted_headers()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let text = body.to_string();
+        assert!(text.contains("@example.com"), "None must reach every raw-line route: {text}");
     }
 
     #[test]
@@ -1004,11 +1035,31 @@ mod wp12_settings {
     }
 
     #[test]
-    fn mcp_status_carries_the_agent_raw_access_flag() {
+    fn mcp_status_carries_the_agent_raw_access_flag_and_the_effective_answer() {
+        use app_lib::anonymizer::config::AnonymizerMode;
         let (ctx, _tmp) = test_ctx().build();
-        assert!(!app_lib::services::sessions::mcp_status(&ctx).agent_raw_access);
+        let st = app_lib::services::sessions::mcp_status(&ctx);
+        assert!(!st.agent_raw_access);
+        assert_eq!(st.anonymizer_mode, AnonymizerMode::External);
+        assert!(!st.effective_agent_raw);
+
         settings::set_agent_raw_access(&ctx, true).unwrap();
-        assert!(app_lib::services::sessions::mcp_status(&ctx).agent_raw_access);
+        let st = app_lib::services::sessions::mcp_status(&ctx);
+        assert!(st.agent_raw_access);
+        assert!(st.effective_agent_raw);
+
+        // Same computation as `GET /mcp/settings/agent_access`: the pill and
+        // the agent can never disagree.
+        settings::set_agent_raw_access(&ctx, false).unwrap();
+        let mut cfg = settings::anonymizer_config(&ctx).unwrap();
+        cfg.mode = AnonymizerMode::None;
+        settings::set_anonymizer_config(&ctx, cfg).unwrap();
+        let st = app_lib::services::sessions::mcp_status(&ctx);
+        let access = settings::agent_access(&ctx).unwrap();
+        assert!(!st.agent_raw_access);
+        assert_eq!(st.anonymizer_mode, AnonymizerMode::None);
+        assert!(st.effective_agent_raw);
+        assert_eq!(st.effective_agent_raw, access.effective_agent_raw);
     }
 
     #[test]

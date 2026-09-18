@@ -17,6 +17,7 @@ export type { AnalysisArtifact } from './AnalysisArtifact';
 export type { AnalysisSection } from './AnalysisSection';
 export type { AnalysisUpdateEvent } from './AnalysisUpdateEvent';
 export type { AnonymizerConfig } from './AnonymizerConfig';
+export type { AnonymizerMode } from './AnonymizerMode';
 export type { AnonymizerTestResult } from './AnonymizerTestResult';
 export type { AppStateFile } from './AppStateFile';
 export type { AutoSaveWorkspaceOptions } from './AutoSaveWorkspaceOptions';

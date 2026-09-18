@@ -13,15 +13,37 @@
 //!
 //! [`flush_batch`] follows an extract → process (no locks held) → re-insert
 //! pattern. Every writer that clears or replaces a session's continuous stream
-//! state ([`stop`], [`set_anonymize`], [`update_processors`],
-//! [`update_trackers`], [`update_transformers`], and
-//! `services::sessions::close`) bumps or drops the session's `stream_epochs`
+//! state ([`stop`], [`update_processors`], [`update_trackers`],
+//! [`update_transformers`], and `services::sessions::close`) bumps or drops
+//! the session's `stream_epochs`
 //! stamp **while holding the `stream_epochs` lock**; `flush_batch` records the
 //! stamp at batch start and re-reads it under the same lock at every re-insert,
 //! dropping its now-stale state when the stamp changed or vanished. Lock order
 //! is always `stream_epochs` (outer) → the specific stream-state map (inner).
 //! See `AppState::stream_epochs` for the full contract — this module is the
 //! only reader of it and the invariant is moved here byte-for-byte.
+//!
+//! ## Anonymization
+//!
+//! Two independent points, both decided by `services::policy`:
+//!
+//! - **In-chain.** [`resolve_stream_chain`] appends `__pii_anonymizer` when
+//!   `policy::should_anonymize` (the `Internal` pathway) says so — a `Ui`
+//!   stream only under anonymizer mode `All`, an agent's under `All`/`External`.
+//!   The transformer rewrites the *view lines* each batch delivers (and what
+//!   reporters/trackers see); the stream source itself always retains the raw
+//!   capture, so a viewer page re-read through `services::lines` and a save
+//!   through [`save_live_capture`] are redacted (or not) at read time, by the
+//!   mode in force then — a stream captured under `All` reverts to raw in the
+//!   viewer after switching to `External`, exactly like a file session.
+//! - **On the way out.** [`events`] redacts an agent's drained batches
+//!   (`Internal`); [`save_live_capture`] redacts the written file when
+//!   `policy::should_anonymize_for(External)` says so — from the raw retained
+//!   lines, so a stream that also ran the in-chain anonymizer is never
+//!   double-tokenized.
+//!
+//! The per-stream "Anonymize PII while streaming" checkbox and its
+//! `set_anonymize` writer are gone: the mode is the one switch.
 //!
 //! ## Where the lines come from
 //!
@@ -40,7 +62,6 @@ use tokio::process::Command;
 use tokio_stream::{wrappers::ReceiverStream, StreamExt as _};
 use ts_rs::TS;
 
-use crate::anonymizer::LogAnonymizer;
 use crate::commands::files::LoadResult;
 use crate::commands::pipeline_core::{
     excluded_by_declared_source_types, ContinuousStates, PartitionedDefs, PipelineCore,
@@ -58,6 +79,7 @@ use crate::processors::reporter::schema::ReporterDef;
 use crate::processors::state_tracker::engine::build_defaults;
 
 use super::events::{RingSink, SeqItem, Sink};
+use super::policy::Pathway;
 use super::{lock_svc, pipeline, policy, ServiceCtx, ServiceError};
 
 // ---------------------------------------------------------------------------
@@ -197,8 +219,6 @@ pub struct StreamStatus {
     #[ts(type = "number | null")]
     pub last_timestamp: Option<i64>,
     pub lost_line_count: usize,
-    /// Whether a live anonymizer is attached to this stream.
-    pub anonymize: bool,
     /// Active continuous reporter ids.
     pub processor_ids: Vec<String>,
     /// Active continuous state-tracker ids.
@@ -579,8 +599,9 @@ pub async fn start_with_source(
 /// `resolve_effective_chain(None)` would reject every stream started without a
 /// chain. The empty chain is today's behaviour (no continuous state seeded) —
 /// but the PII gate still applies, exactly as `resolve_effective_chain` applies
-/// it, so an agent's stream is anonymized in-chain whether or not it named
-/// processors.
+/// it (the `Internal` pathway: `Ui` under mode `All`, an agent under
+/// `All`/`External`), so a stream is anonymized in-chain whether or not the
+/// caller named processors.
 fn resolve_stream_chain(
     ctx: &ServiceCtx,
     session_id: &str,
@@ -715,7 +736,6 @@ pub fn stop(ctx: &ServiceCtx, session_id: &str) -> Result<(), ServiceError> {
         .clear_stream_epoch_with(session_id, || {
             lock_or_err(&state.stream_processor_state, "stream_processor_state")?
                 .remove(session_id);
-            lock_or_err(&state.stream_anonymizers, "stream_anonymizers")?.remove(session_id);
             lock_or_err(&state.stream_transformer_state, "stream_transformer_state")?
                 .remove(session_id);
             lock_or_err(&state.stream_tracker_state, "stream_tracker_state")?.remove(session_id);
@@ -741,50 +761,6 @@ pub fn stop(ctx: &ServiceCtx, session_id: &str) -> Result<(), ServiceError> {
     ctx.journal("stream.stop", Some(session_id), "stream stopped");
 
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// set_anonymize
-// ---------------------------------------------------------------------------
-
-/// Enable or disable PII anonymization for a live ADB stream.
-///
-/// When enabled, a `LogAnonymizer` is created from the current config and
-/// applied to every incoming line in [`flush_batch`] before display and
-/// processing. The same anonymizer instance persists across batches so token
-/// numbering is consistent (e.g. `user@corp.com` always maps to `<EMAIL-1>`).
-pub fn set_anonymize(
-    ctx: &ServiceCtx,
-    session_id: &str,
-    enabled: bool,
-) -> Result<(), ServiceError> {
-    let state = ctx.state();
-
-    // Snapshot the config outside the epoch section (leaf lock, avoids nesting an
-    // unrelated lock under `stream_epochs`).
-    let config = if enabled {
-        Some(lock_svc(&state.anonymizer_config, "anonymizer_config")?.clone())
-    } else {
-        None
-    };
-
-    // Enable/disable the anonymizer and bump the epoch atomically, so an in-flight
-    // `flush_batch` cannot re-insert the extracted anonymizer after we disabled it
-    // (nor keep an old instance after we replaced it). See `AppState::stream_epochs`.
-    state
-        .bump_stream_epoch_with(session_id, || {
-            let mut sa = lock_or_err(&state.stream_anonymizers, "stream_anonymizers")?;
-            match config {
-                Some(cfg) => {
-                    sa.insert(session_id.to_string(), LogAnonymizer::from_config(&cfg));
-                }
-                None => {
-                    sa.remove(session_id);
-                }
-            }
-            Ok(())
-        })
-        .map_err(ServiceError::Internal)
 }
 
 // ---------------------------------------------------------------------------
@@ -976,8 +952,6 @@ pub fn status(ctx: &ServiceCtx, session_id: &str) -> Result<StreamStatus, Servic
     };
 
     let streaming = lock_svc(&state.stream_tasks, "stream_tasks")?.contains_key(session_id);
-    let anonymize =
-        lock_svc(&state.stream_anonymizers, "stream_anonymizers")?.contains_key(session_id);
     let processor_ids = sorted_ids(
         lock_svc(&state.stream_processor_state, "stream_processor_state")?
             .get(session_id)
@@ -1006,7 +980,6 @@ pub fn status(ctx: &ServiceCtx, session_id: &str) -> Result<StreamStatus, Servic
         first_timestamp,
         last_timestamp,
         lost_line_count,
-        anonymize,
         processor_ids,
         tracker_ids,
         transformer_ids,
@@ -1105,16 +1078,13 @@ pub fn events(
     })
 }
 
-/// Apply [`policy::redact_line`] to every line text carried by an event.
-/// Non-`Batch` variants carry no raw text and pass through untouched.
+/// Apply [`lines::redact_view_lines`](super::lines::redact_view_lines) to
+/// every line carried by an event — one anonymizer lock per batch. Non-`Batch`
+/// variants carry no raw text and pass through untouched.
 fn redact_event(ctx: &ServiceCtx, session_id: &str, ev: AdbStreamEvent) -> AdbStreamEvent {
     match ev {
         AdbStreamEvent::Batch(mut batch) => {
-            for line in &mut batch.lines {
-                line.raw = policy::redact_line(ctx, session_id, &line.raw, STREAM_LINE_CHARS);
-                line.message =
-                    policy::redact_line(ctx, session_id, &line.message, STREAM_LINE_CHARS);
-            }
+            super::lines::redact_view_lines(ctx, session_id, &mut batch.lines, STREAM_LINE_CHARS, None);
             AdbStreamEvent::Batch(batch)
         }
         other => other,
@@ -1127,6 +1097,15 @@ fn redact_event(ctx: &ServiceCtx, session_id: &str, ev: AdbStreamEvent) -> AdbSt
 
 /// Write all retained raw lines from a live stream session to a file.
 /// Returns the number of lines written. Journals `stream.save`.
+///
+/// The file leaves the tool, so this is a [`Pathway::External`] pathway:
+/// under anonymizer mode `All`/`External` the written lines are redacted
+/// with the session's cached anonymizer (same tokens as the viewer under
+/// `All` and as an `.lts` export); under `None` — or for an agent with raw
+/// access — they are written as captured. The redaction reads the *retained
+/// raw* lines, which the in-chain `__pii_anonymizer` never rewrites, so a
+/// stream that ran it is tokenized exactly once here, never
+/// `<EMAIL-1>` → `<EMAIL-2>`.
 pub fn save_live_capture(
     ctx: &ServiceCtx,
     session_id: &str,
@@ -1135,6 +1114,11 @@ pub fn save_live_capture(
     use std::io::Write;
 
     let dest = policy::authorize_write_dest(ctx, output_path)?;
+
+    // Decided before `sessions` is taken — `should_anonymize_for` reads the
+    // anonymizer config, and the anonymizer's locks never nest under
+    // `sessions`.
+    let anonymizing = policy::should_anonymize_for(ctx, Pathway::External);
 
     let count = {
         let sessions = lock_svc(&ctx.state().sessions, "sessions")?;
@@ -1150,7 +1134,29 @@ pub fn save_live_capture(
             .map_err(|e| ServiceError::Internal(format!("Failed to create file: {e}")))?;
         let mut writer = std::io::BufWriter::new(file);
 
-        let count = source.write_stream_lines(&mut writer).map_err(ServiceError::Internal)?;
+        let count = if anonymizing {
+            // Snapshot the capture (spill first, then retained — the same
+            // bytes the raw path writes, lost-line marker included) under the
+            // lock; redact and write once it is released.
+            let mut buf: Vec<u8> = Vec::new();
+            let count = source.write_stream_lines(&mut buf).map_err(ServiceError::Internal)?;
+            drop(sessions);
+
+            let mut lines: Vec<String> = String::from_utf8_lossy(&buf)
+                .lines()
+                .map(str::to_owned)
+                .collect();
+            policy::anonymize_session_lines(ctx.state(), session_id, &mut lines);
+            for line in &lines {
+                writer
+                    .write_all(line.as_bytes())
+                    .and_then(|()| writer.write_all(b"\n"))
+                    .map_err(|e| ServiceError::Internal(format!("Write error: {e}")))?;
+            }
+            count
+        } else {
+            source.write_stream_lines(&mut writer).map_err(ServiceError::Internal)?
+        };
         writer
             .flush()
             .map_err(|e| ServiceError::Internal(format!("Flush error: {e}")))?;
@@ -1431,7 +1437,7 @@ fn flush_batch(
 
     // Capture the streaming epoch for this session BEFORE extracting any state.
     // Every re-insert below is gated on this value: if a concurrent writer
-    // (stop / set_anonymize / update_* / close_session) changes or drops the
+    // (stop / update_* / close_session) changes or drops the
     // epoch while this batch is processing, the corresponding re-insert is
     // skipped and its now-stale state is dropped. See `AppState::stream_epochs`.
     let epoch0 = state.current_stream_epoch(session_id);
@@ -1524,36 +1530,10 @@ fn flush_batch(
         return;
     }
 
-    // ── Step 2b: Apply PII anonymization to ViewLines (if enabled) ────────────
-    // Extract the anonymizer for this session (extract-use-reinsert; unlike the
-    // reporter/transformer/tracker snapshots this is a move, not a clone —
-    // token maps grow with the capture, and no writer merges into the entry
-    // mid-batch, so cloning per batch would cost without protecting anything).
-    // Using the same instance across batches keeps token numbering stable: the
-    // same raw value always maps to the same token.
-    let anon: Option<LogAnonymizer> = {
-        match state.stream_anonymizers.lock() {
-            Ok(mut sa) => sa.remove(session_id),
-            Err(e) => {
-                eprintln!("[adb flush_batch] stream_anonymizers lock poisoned: {e}");
-                None // skip anonymization, don't abort the whole batch
-            }
-        }
-    };
-
+    // PII anonymization of a stream is the in-chain `__pii_anonymizer`
+    // transformer below (seeded by `resolve_stream_chain` when the mode says
+    // so) — there is no separate per-stream anonymizer any more.
     let mut pii_modified = false;
-    if let Some(ref a) = anon {
-        for pl in &mut parsed {
-            let (anon_msg, _) = a.anonymize(&pl.view_line.message);
-            if anon_msg != pl.view_line.message {
-                // Reconstruct raw: keep the logcat header prefix, replace message.
-                let prefix_len = pl.view_line.raw.len().saturating_sub(pl.view_line.message.len());
-                pl.view_line.raw = format!("{}{}", &pl.view_line.raw[..prefix_len], &anon_msg);
-                pl.view_line.message = anon_msg;
-                pii_modified = true;
-            }
-        }
-    }
 
     // ── Step 2c: Apply built-in transformers / PII pipeline (if active) ──────
     // Transformers in streaming mode modify content but do NOT drop lines —
@@ -2106,28 +2086,6 @@ fn flush_batch(
         }
     }
 
-    // ── Step 4b: Re-insert anonymizer and persist PII mappings ───────────────
-    // Gated on the epoch. This is race (a): `set_anonymize(false)` (or a
-    // stop/close) removes the anonymizer and bumps/drops the epoch; without the
-    // guard, this batch would re-insert the extracted anonymizer and silently keep
-    // PII anonymization ON. Key-presence alone can't detect it — the batch itself
-    // removed the key during extraction — so the epoch check is required.
-    if let Some(a) = anon {
-        // Update the session's token→original map so the PII dashboard can show it.
-        let forward = a.mappings.all_mappings();
-        let inverted: HashMap<String, String> =
-            forward.into_iter().map(|(raw, tok)| (tok, raw)).collect();
-        state.reinsert_stream_state_if_current(session_id, epoch0, || {
-            if let Ok(mut pm) = state.pii_mappings.lock() {
-                pm.insert(session_id.to_string(), inverted);
-            }
-            // Re-insert for the next batch.
-            if let Ok(mut sa) = state.stream_anonymizers.lock() {
-                sa.insert(session_id.to_string(), a);
-            }
-        });
-    }
-
     // ── Step 4c: Evaluate active watches on new lines ──────────────────────────
     let watch_refs: Vec<crate::commands::watch::WatchLineRef<'_>> = parsed
         .iter()
@@ -2409,37 +2367,50 @@ schema:
         assert!(!ran, "stale re-insert must be dropped after the session was cleared/closed");
     }
 
-    /// Race (a): `set_anonymize(false)` removes the anonymizer + bumps the
-    /// epoch while a batch is in flight. The batch must NOT resurrect the
-    /// anonymizer (which would silently keep PII anonymization ON).
+    /// Race (a): `update_transformers` drops the in-chain `__pii_anonymizer`
+    /// + bumps the epoch while a batch is in flight. The batch's stale
+    /// transformer state must NOT resurrect it (which would silently keep
+    /// rewriting lines with a transformer the user removed). The anonymizer
+    /// is an ordinary transformer on this path — the dedicated per-stream
+    /// anonymizer slot this race used to guard is gone.
     #[test]
-    fn race_a_anonymizer_not_resurrected_after_disable() {
+    fn race_a_anonymizer_transformer_not_resurrected_after_removal() {
         let (ctx, _tmp) = test_ctx().build();
+        seed_stream_session(&ctx, "s1");
         let state = ctx.state();
         state.seed_stream_epoch("s1");
+        {
+            let mut st = state.stream_transformer_state.lock().unwrap();
+            let mut inner = HashMap::new();
+            inner.insert(
+                pipeline::PII_ANONYMIZER_ID.to_string(),
+                crate::processors::transformer::types::ContinuousTransformerState::default(),
+            );
+            st.insert("s1".to_string(), inner);
+        }
 
-        // A batch is in flight with an anonymizer enabled: it extracts it and
-        // records the epoch.
+        // A batch is in flight: it snapshotted the transformer state and
+        // recorded the epoch.
         let epoch0 = state.current_stream_epoch("s1");
-        let extracted = LogAnonymizer::from_config(
-            &crate::anonymizer::config::AnonymizerConfig::with_defaults(),
-        );
+        let stale = crate::processors::transformer::types::ContinuousTransformerState {
+            last_processed_line: 10,
+            pii_mappings: None,
+        };
 
-        // Concurrent set_anonymize(false), through the real service function.
-        set_anonymize(&ctx, "s1", false).unwrap();
+        // Concurrent removal, through the real service function.
+        update_transformers(&ctx, "s1", &[]).unwrap();
 
-        // Batch's Step-4b re-insert (gated).
+        // Batch's re-insert (gated).
         state.reinsert_stream_state_if_current("s1", epoch0, || {
-            state
-                .stream_anonymizers
-                .lock()
-                .unwrap()
-                .insert("s1".to_string(), extracted);
+            if let Some(inner) = state.stream_transformer_state.lock().unwrap().get_mut("s1") {
+                inner.insert(pipeline::PII_ANONYMIZER_ID.to_string(), stale);
+            }
         });
 
+        let st = state.stream_transformer_state.lock().unwrap();
         assert!(
-            !state.stream_anonymizers.lock().unwrap().contains_key("s1"),
-            "anonymizer disabled mid-batch must stay disabled, not be resurrected",
+            !st.get("s1").is_some_and(|inner| inner.contains_key(pipeline::PII_ANONYMIZER_ID)),
+            "an anonymizer removed mid-batch must stay removed, not be resurrected",
         );
     }
 
@@ -2598,10 +2569,29 @@ schema:
         let chain = resolve_stream_chain(&ctx, "s1", None).unwrap();
         assert_eq!(chain, vec![pipeline::PII_ANONYMIZER_ID.to_string()]);
 
-        // A UI stream with no processors stays empty — today's behaviour.
+        // A UI stream with no processors stays empty under the default mode.
         let (ui, _tmp2) = test_ctx().build();
         seed_stream_session(&ui, "s1");
         assert!(resolve_stream_chain(&ui, "s1", None).unwrap().is_empty());
+    }
+
+    /// The in-chain anonymizer is an `Internal` pathway: a `Ui` stream carries
+    /// it only under anonymizer mode `All`; an agent's not under `None`.
+    #[test]
+    fn ui_stream_chain_includes_the_anonymizer_only_under_mode_all() {
+        use crate::anonymizer::config::AnonymizerMode;
+        for (mode, expect) in [
+            (AnonymizerMode::All, vec![pipeline::PII_ANONYMIZER_ID.to_string()]),
+            (AnonymizerMode::External, vec![]),
+            (AnonymizerMode::None, vec![]),
+        ] {
+            let (ui, _tmp) = test_ctx().anonymizer_mode(mode).build();
+            seed_stream_session(&ui, "s1");
+            assert_eq!(resolve_stream_chain(&ui, "s1", None).unwrap(), expect, "{mode:?}");
+        }
+        let (agent, _tmp) = test_ctx().agent("mcp").anonymizer_mode(AnonymizerMode::None).build();
+        seed_stream_session(&agent, "s1");
+        assert!(resolve_stream_chain(&agent, "s1", None).unwrap().is_empty(), "None means none — agents too");
     }
 
     // ── Watches ────────────────────────────────────────────────────────────
@@ -3051,15 +3041,13 @@ schema:
         assert!(!st.streaming, "no capture task registered yet");
         assert_eq!(st.processor_ids, vec!["r@official".to_string()]);
         assert!(st.tracker_ids.is_empty());
-        assert!(!st.anonymize);
+        assert!(st.transformer_ids.is_empty());
         assert_eq!(st.latest_event_seq, None);
 
         let (tx, _rx) = tokio::sync::oneshot::channel::<()>();
         ctx.state().stream_tasks.lock().unwrap().insert("s1".to_string(), tx);
-        set_anonymize(&ctx, "s1", true).unwrap();
         let st = status(&ctx, "s1").unwrap();
         assert!(st.streaming);
-        assert!(st.anonymize);
     }
 
     #[test]
@@ -3113,6 +3101,87 @@ schema:
             .list(None, None)
             .iter()
             .any(|e| e.action == "stream.save"));
+    }
+
+    /// `save_live_capture` is an `External` pathway: the written file is
+    /// redacted under `External` (the default) and `All`, raw under `None`.
+    #[test]
+    fn save_live_capture_redacts_the_file_by_mode() {
+        use crate::anonymizer::config::AnonymizerMode;
+        for (mode, expect_raw) in [
+            (AnonymizerMode::External, false),
+            (AnonymizerMode::All, false),
+            (AnonymizerMode::None, true),
+        ] {
+            let (ctx, tmp) = test_ctx().anonymizer_mode(mode).build();
+            seed_stream_session(&ctx, "s1");
+            let sink = RecordingSink::new();
+            flush_batch(
+                vec![logcat_line("contact user@example.com"), logcat_line("plain")],
+                "s1",
+                "s1-src",
+                &ctx,
+                1000,
+                &sink,
+            );
+
+            let dest = tmp.path().join("capture.log");
+            let n = save_live_capture(&ctx, "s1", &dest.to_string_lossy()).unwrap();
+            assert_eq!(n, 2, "{mode:?}: the line count is unaffected by redaction");
+            let body = std::fs::read_to_string(&dest).unwrap();
+            assert_eq!(body.contains("user@example.com"), expect_raw, "{mode:?}: {body}");
+            assert_eq!(body.contains("<EMAIL-"), !expect_raw, "{mode:?}: {body}");
+            assert!(body.contains("plain"), "{mode:?}: non-PII lines round-trip: {body}");
+            assert_eq!(body.lines().count(), 2, "{mode:?}: one record per line: {body}");
+        }
+    }
+
+    /// A stream that ran the in-chain `__pii_anonymizer` (mode `All`) is
+    /// redacted exactly once on save: the retained lines are the raw capture,
+    /// so the save-time pass sees `user@example.com`, never `<EMAIL-1>` — no
+    /// `<EMAIL-1>` → `<EMAIL-2>` re-tokenizing, and the viewer's numbering is
+    /// reused because both go through the session's cached anonymizer.
+    #[test]
+    fn save_live_capture_does_not_double_tokenize_an_in_chain_anonymized_stream() {
+        use crate::anonymizer::config::AnonymizerMode;
+        let (ctx, tmp) = test_ctx().anonymizer_mode(AnonymizerMode::All).build();
+        seed_stream_session(&ctx, "s1");
+        install(
+            &ctx,
+            pipeline::PII_ANONYMIZER_ID,
+            include_str!("../processors/builtin/pii_anonymizer.yaml"),
+        );
+        let chain = resolve_stream_chain(&ctx, "s1", None).unwrap();
+        assert_eq!(chain, vec![pipeline::PII_ANONYMIZER_ID.to_string()]);
+        seed_continuous_state(&ctx, "s1", &chain, 0).unwrap();
+
+        let sink = RecordingSink::new();
+        flush_batch(
+            vec![logcat_line("contact user@example.com"), logcat_line("again user@example.com")],
+            "s1",
+            "s1-src",
+            &ctx,
+            1000,
+            &sink,
+        );
+
+        // The in-chain transformer rewrote what the pane received…
+        let delivered: String = sink
+            .events_named("sink")
+            .iter()
+            .map(|e| e.payload.to_string())
+            .collect();
+        assert!(!delivered.contains("user@example.com"), "in-chain anonymizer must rewrite the batch: {delivered}");
+        assert!(delivered.contains("<EMAIL-1>"), "{delivered}");
+
+        // …but the retained capture is raw, so the save redacts from raw.
+        let dest = tmp.path().join("capture.log");
+        save_live_capture(&ctx, "s1", &dest.to_string_lossy()).unwrap();
+        let body = std::fs::read_to_string(&dest).unwrap();
+        assert!(!body.contains("user@example.com"), "{body}");
+        assert_eq!(body.matches("<EMAIL-1>").count(), 2, "one token, both lines: {body}");
+        assert!(!body.contains("<EMAIL-2>"), "a token must never be re-tokenized: {body}");
+        assert!(!body.contains("<<"), "{body}");
     }
 
     #[test]
