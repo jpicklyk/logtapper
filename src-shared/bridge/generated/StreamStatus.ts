@@ -9,10 +9,6 @@ export type StreamStatus = { sessionId: string, sourceName: string,
  */
 streaming: boolean, totalLines: number, byteCount: number, firstTimestamp: number | null, lastTimestamp: number | null, lostLineCount: number, 
 /**
- * Whether a live anonymizer is attached to this stream.
- */
-anonymize: boolean, 
-/**
  * Active continuous reporter ids.
  */
 processorIds: Array<string>, 

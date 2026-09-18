@@ -16,10 +16,14 @@
 //! `agent_raw_access` is the sharpest case of that rule: it decides whether
 //! an agent sees PII at all, so the only writer anywhere in the codebase is
 //! the `set_agent_raw_access` Tauri command behind the Settings → General →
-//! MCP Integration checkbox. Reading it is fine — an agent learning that it is
-//! being redacted tells it nothing the redaction doesn't already show — and
-//! `GET /mcp/settings/agent_access` exists so a client can say so plainly
-//! rather than guessing from `<EMAIL-1>` tokens.
+//! MCP Integration checkbox. The anonymizer *mode* (`AnonymizerConfig::mode`,
+//! `All` / `External` / `None`) is the other input to that decision and is
+//! carried by the same `set_anonymizer_config` gate. Reading either is fine —
+//! an agent learning that it is being redacted tells it nothing the redaction
+//! doesn't already show — and `GET /mcp/settings/agent_access` exists so a
+//! client can say so plainly rather than guessing from `<EMAIL-1>` tokens:
+//! it reports both settings plus the backend-computed `effectiveAgentRaw`
+//! (`services::settings::agent_access`).
 
 use axum::{Json, extract::State, http::HeaderMap};
 use serde::Deserialize;
@@ -51,13 +55,15 @@ pub(crate) async fn h_get_open_allowlist(
 }
 
 /// `GET /mcp/settings/agent_access` — whether agents are reading raw
-/// (un-anonymized) log text. Read-only by design: see the module doc comment.
+/// (un-anonymized) log text: the opt-out, the anonymizer mode, and the
+/// combined `effectiveAgentRaw`. Read-only by design: see the module doc
+/// comment.
 pub(crate) async fn h_get_agent_access(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
 ) -> Result<Json<McpAgentAccess>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
-    Ok(Json(McpAgentAccess { agent_raw_access: settings::agent_raw_access(&svc)? }))
+    Ok(Json(settings::agent_access(&svc)?))
 }
 
 #[derive(Deserialize)]

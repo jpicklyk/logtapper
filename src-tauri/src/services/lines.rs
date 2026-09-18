@@ -16,11 +16,19 @@
 //!
 //! ## Redaction
 //!
-//! Every returned line's text goes through [`policy::redact_line`] *after* the
-//! `sessions` lock has been dropped — anonymize first, truncate second. A
-//! [`Caller::Ui`](crate::services::Caller::Ui) never redacts and, with
-//! `max_line_chars: None`, never truncates, which is what keeps the viewer's
-//! bytes identical to before this refactor.
+//! Every returned line's text goes through [`policy::redact_lines`] *after* the
+//! `sessions` lock has been dropped — anonymize first, truncate second, one
+//! lock acquisition per page. This is an `Internal` pathway
+//! (`policy::should_anonymize`): a [`Caller::Ui`](crate::services::Caller::Ui)
+//! is redacted only under anonymizer mode `All` and, with `max_line_chars:
+//! None`, never truncated — under the default `External` the viewer's bytes
+//! are untouched. When a line is redacted its search highlights are
+//! recomputed against the redacted text, so the viewer never paints spans
+//! that pointed into the original.
+//!
+//! Search and filters still *match* on raw text: under `All`, searching for
+//! an email finds the line and shows it as `<EMAIL-1>`; searching for
+//! `<EMAIL-1>` finds nothing.
 //!
 //! ## Locking
 //!
@@ -37,7 +45,7 @@ use crate::core::line::{HighlightKind, HighlightSpan, LogLevel, SearchQuery, Vie
 use crate::core::log_source::LogSource;
 use crate::core::parser::LogParser;
 use crate::core::session::{AnalysisSession, parser_for};
-use crate::services::policy::{redact_line, should_anonymize};
+use crate::services::policy::{redact_lines, should_anonymize};
 use crate::services::wire::{LinePage, LineStats, LineStrategy};
 use crate::services::{ServiceCtx, ServiceError, lock_svc};
 
@@ -442,32 +450,81 @@ pub fn get_lines(ctx: &ServiceCtx, req: LinesRequest) -> Result<LinePage, Servic
     };
 
     // Redaction happens here, after every `sessions` acquisition above has been
-    // released: `redact_line` takes `anonymizer_config` / `mcp_anonymizers`,
+    // released: `redact_lines` takes `anonymizer_config` / `mcp_anonymizers`,
     // and nesting those under `sessions` is the lock-order
-    // violation the bridge's module header warns about.
+    // violation the bridge's module header warns about. One lock acquisition
+    // per page (not per line) — under mode `All` this is the viewer's scroll
+    // path.
     let max_chars = req.max_line_chars.unwrap_or(usize::MAX);
     if anonymizing || max_chars != usize::MAX {
-        for line in &mut page.lines {
-            let message_is_raw = line.message == line.raw;
-            let redacted = redact_line(ctx, &req.session_id, &line.raw, max_chars);
-            if redacted == line.raw {
-                continue;
-            }
-            line.message = if message_is_raw {
-                redacted.clone()
-            } else {
-                redact_line(ctx, &req.session_id, &line.message, max_chars)
-            };
-            // Highlight spans are byte offsets into the pre-redaction text.
-            line.highlights.clear();
-            line.raw = redacted;
-        }
+        redact_view_lines(ctx, &req.session_id, &mut page.lines, max_chars, req.search.as_ref());
     }
 
     if req.with_stats {
         page.stats = Some(stats_for(&page.lines));
     }
     Ok(page)
+}
+
+/// Redact `raw` and `message` of every view line in place, in order, through
+/// [`redact_lines`] — the batch form every page-shaped raw-text service uses
+/// (`get_lines`, `filters::lines`, `search::hits`, `stream::events`).
+///
+/// A parsed message differs from its raw line (the logcat header is stripped)
+/// and gets its own pass; an unparsed one mirrors `raw` and simply takes the
+/// redacted raw. Both passes hit the same cached anonymizer, so the tokens
+/// agree. Order is preserved end to end because token numbering follows first
+/// sight — a caller that wants a particular reading order hands the lines
+/// over in that order.
+///
+/// Highlight spans are byte offsets into the pre-redaction text, so a line
+/// whose text changed gets them recomputed against `search` (or cleared when
+/// the caller has no query).
+pub(crate) fn redact_view_lines<'a>(
+    ctx: &ServiceCtx,
+    session_id: &str,
+    lines: impl IntoIterator<Item = &'a mut ViewLine>,
+    max_chars: usize,
+    search: Option<&SearchQuery>,
+) {
+    let mut lines: Vec<&mut ViewLine> = lines.into_iter().collect();
+    if lines.is_empty() {
+        return;
+    }
+
+    let mut raws: Vec<String> = lines.iter().map(|l| l.raw.clone()).collect();
+    redact_lines(ctx, session_id, &mut raws, max_chars);
+
+    let own_message: Vec<bool> = lines
+        .iter()
+        .zip(&raws)
+        .map(|(l, redacted)| l.message != l.raw && *redacted != l.raw)
+        .collect();
+    let mut messages: Vec<String> = lines
+        .iter()
+        .zip(&own_message)
+        .filter(|(_, own)| **own)
+        .map(|(l, _)| l.message.clone())
+        .collect();
+    redact_lines(ctx, session_id, &mut messages, max_chars);
+    let mut messages = messages.into_iter();
+
+    for (i, line) in lines.iter_mut().enumerate() {
+        let redacted = std::mem::take(&mut raws[i]);
+        if redacted == line.raw {
+            continue;
+        }
+        line.message = if own_message[i] {
+            messages.next().expect("one redacted message per parsed line")
+        } else {
+            redacted.clone()
+        };
+        line.highlights = match search {
+            Some(q) => compute_search_highlights(&redacted, q),
+            None => Vec::new(),
+        };
+        line.raw = redacted;
+    }
 }
 
 /// Tag and level histograms over the lines actually returned.
@@ -1334,15 +1391,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn redaction_clears_highlight_spans_because_their_offsets_no_longer_hold() {
-        let (ctx, _tmp) = test_ctx()
-            .agent("claude-code")
-            .with_pii_session("p1", 3)
-            .build();
-        let mut req = LinesRequest::range("p1", 0, 3).for_agent(None);
-        req.search = Some(SearchQuery {
-            text: "contact".into(),
+    fn plain_query(text: &str) -> SearchQuery {
+        SearchQuery {
+            text: text.into(),
             is_regex: false,
             case_sensitive: true,
             within_processor: None,
@@ -1350,12 +1401,103 @@ mod tests {
             tags: None,
             start_time: None,
             end_time: None,
-        });
+        }
+    }
+
+    #[test]
+    fn redaction_recomputes_highlight_spans_against_the_redacted_text() {
+        // The fixture line is `line N contact userN@example.com for access`;
+        // the email shrinks to a token, so a span computed on the original
+        // would point at the wrong bytes of the returned text.
+        let (ctx, _tmp) = test_ctx()
+            .agent("claude-code")
+            .with_pii_session("p1", 3)
+            .build();
+        let mut req = LinesRequest::range("p1", 0, 3).for_agent(None);
+        req.search = Some(plain_query("access"));
         let page = get_lines(&ctx, req).unwrap();
-        assert!(
-            page.lines.iter().all(|l| l.highlights.is_empty()),
-            "a span into the pre-redaction text would point at the wrong bytes"
-        );
+        for line in &page.lines {
+            assert!(!line.raw.contains("@example.com"), "{}", line.raw);
+            assert_eq!(line.highlights.len(), 1, "{:?}", line.highlights);
+            let span = &line.highlights[0];
+            assert_eq!(&line.raw[span.start..span.end], "access");
+        }
+    }
+
+    #[test]
+    fn redaction_drops_a_highlight_that_only_matched_the_redacted_value() {
+        // Searching for the email finds the line (matching is on raw text);
+        // the returned line no longer contains it, so there is nothing to
+        // paint — an empty span list, not a stale one.
+        let (ctx, _tmp) = test_ctx()
+            .agent("claude-code")
+            .with_pii_session("p1", 1)
+            .build();
+        let mut req = LinesRequest::range("p1", 0, 1).for_agent(None);
+        req.search = Some(plain_query("user0@example.com"));
+        let page = get_lines(&ctx, req).unwrap();
+        assert!(page.lines[0].highlights.is_empty());
+    }
+
+    // ── Anonymizer mode (Ui, Internal pathway) ──────────────────────────────
+
+    #[test]
+    fn ui_page_is_redacted_under_all_and_keeps_its_highlights() {
+        let (ctx, _tmp) = test_ctx()
+            .anonymizer_mode(crate::anonymizer::config::AnonymizerMode::All)
+            .with_pii_session("p1", 3)
+            .build();
+        let mut req = LinesRequest::range("p1", 0, 3);
+        req.search = Some(plain_query("contact"));
+        let page = get_lines(&ctx, req).unwrap();
+        assert_eq!(page.lines.len(), 3);
+        for line in &page.lines {
+            assert!(!line.raw.contains("@example.com"), "All: the viewer is anonymized: {}", line.raw);
+            assert!(line.raw.contains("<EMAIL-"), "{}", line.raw);
+            assert!(!line.message.contains("@example.com"), "{}", line.message);
+            let span = &line.highlights[0];
+            assert_eq!(&line.raw[span.start..span.end], "contact");
+        }
+    }
+
+    #[test]
+    fn ui_page_is_raw_under_external_and_none() {
+        use crate::anonymizer::config::AnonymizerMode;
+        for mode in [AnonymizerMode::External, AnonymizerMode::None] {
+            let (ctx, _tmp) = test_ctx().anonymizer_mode(mode).with_pii_session("p1", 2).build();
+            let page = get_lines(&ctx, LinesRequest::range("p1", 0, 2)).unwrap();
+            assert!(page.lines.iter().all(|l| l.raw.contains("@example.com")), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn agent_page_is_raw_only_under_none() {
+        use crate::anonymizer::config::AnonymizerMode;
+        let (ctx, _tmp) = test_ctx()
+            .agent("claude-code")
+            .anonymizer_mode(AnonymizerMode::None)
+            .with_pii_session("p1", 2)
+            .build();
+        let page = get_lines(&ctx, LinesRequest::range("p1", 0, 2).for_agent(None)).unwrap();
+        assert!(page.lines.iter().all(|l| l.raw.contains("@example.com")), "None means none — agents too");
+    }
+
+    #[test]
+    fn batch_redaction_equals_per_line_redaction() {
+        // The page goes through `redact_lines` in one lock; a second state
+        // redacted line-by-line through `redact_line` must produce the same
+        // bytes and the same token numbers.
+        let (batch, _t1) = test_ctx().agent("a").with_pii_session("p1", 4).build();
+        let page = get_lines(&batch, LinesRequest::range("p1", 0, 4).for_agent(None)).unwrap();
+
+        let (single, _t2) = test_ctx().agent("a").with_pii_session("p1", 4).build();
+        let expected: Vec<String> = (0..4)
+            .map(|i| {
+                let raw = format!("line {i} contact user{i}@example.com for access");
+                crate::services::policy::redact_line(&single, "p1", &raw, usize::MAX)
+            })
+            .collect();
+        assert_eq!(raws(&page), expected.iter().map(String::as_str).collect::<Vec<_>>());
     }
 
     // ── Stream sources ──────────────────────────────────────────────────────

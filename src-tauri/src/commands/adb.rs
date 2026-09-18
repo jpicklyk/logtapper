@@ -94,20 +94,6 @@ pub async fn stop_adb_stream(app: AppHandle, session_id: String) -> Result<(), S
 }
 
 // ---------------------------------------------------------------------------
-// set_stream_anonymize
-// ---------------------------------------------------------------------------
-
-/// Enable or disable PII anonymization for a live ADB stream.
-#[tauri::command]
-pub async fn set_stream_anonymize(
-    app: AppHandle,
-    session_id: String,
-    enabled: bool,
-) -> Result<(), String> {
-    Ok(stream::set_anonymize(&ui_ctx(&app), &session_id, enabled)?)
-}
-
-// ---------------------------------------------------------------------------
 // update_stream_processors / update_stream_trackers / update_stream_transformers
 // ---------------------------------------------------------------------------
 

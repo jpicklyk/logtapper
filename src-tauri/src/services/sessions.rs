@@ -684,7 +684,6 @@ fn close_session_state(ctx: &ServiceCtx, session_id: &str) -> Result<(), Service
             lock_or_err(&state.stream_tracker_state, "stream_tracker_state")?.remove(session_id);
             lock_or_err(&state.stream_transformer_state, "stream_transformer_state")?.remove(session_id);
             lock_or_err(&state.pii_mappings, "pii_mappings")?.remove(session_id);
-            lock_or_err(&state.stream_anonymizers, "stream_anonymizers")?.remove(session_id);
             Ok(())
         })
         .map_err(ServiceError::Internal)?;
@@ -995,15 +994,16 @@ pub fn mcp_status(ctx: &ServiceCtx) -> crate::commands::session::McpStatus {
         .ok()
         .and_then(|ts| *ts)
         .map(|t| t.elapsed().as_secs() as u32);
-    let agent_raw_access = *state
-        .agent_raw_access
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // One computation of "are agents raw right now", shared with
+    // `GET /mcp/settings/agent_access` so the pill and the agent agree.
+    let access = super::settings::agent_access(ctx).unwrap_or_default();
     crate::commands::session::McpStatus {
         running: port.is_some(),
         port: port.unwrap_or(crate::mcp_bridge::PORT),
         idle_secs,
-        agent_raw_access,
+        agent_raw_access: access.agent_raw_access,
+        anonymizer_mode: access.anonymizer_mode,
+        effective_agent_raw: access.effective_agent_raw,
     }
 }
 

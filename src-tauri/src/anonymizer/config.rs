@@ -2,10 +2,37 @@ use serde::{Deserialize, Serialize};
 use super::detectors::PiiCategory;
 use ts_rs::TS;
 
+/// Where the anonymizer applies — the one master switch over every use of it.
+///
+/// This is the *decision* input; `LogAnonymizer::from_config` ignores it (the
+/// mechanism does not know whether it is wanted). `services::policy::
+/// should_anonymize_for` is the only reader that turns it into a yes/no.
+///
+/// | Mode       | Viewer & in-app surfaces | Data leaving the tool | Agents (MCP)                    |
+/// |------------|--------------------------|-----------------------|---------------------------------|
+/// | `All`      | anonymized               | anonymized            | anonymized (unless raw access)  |
+/// | `External` | raw                      | anonymized            | anonymized (unless raw access)  |
+/// | `None`     | raw                      | raw                   | raw                             |
+///
+/// `External` is the default and what a config file written before the field
+/// existed parses as: the viewer stays raw, agents stay redacted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum AnonymizerMode {
+    All,
+    #[default]
+    External,
+    None,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AnonymizerConfig {
     pub detectors: Vec<DetectorEntry>,
+    /// Master switch — see [`AnonymizerMode`]. `#[serde(default)]` so every
+    /// existing `anonymizer_config.json` keeps parsing, as `External`.
+    #[serde(default)]
+    pub mode: AnonymizerMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -60,6 +87,7 @@ impl AnonymizerConfig {
     pub fn with_defaults() -> Self {
         Self {
             detectors: default_detector_entries(),
+            mode: AnonymizerMode::default(),
         }
     }
 }
@@ -224,4 +252,36 @@ fn default_detector_entries() -> Vec<DetectorEntry> {
             ],
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mode_defaults_to_external() {
+        assert_eq!(AnonymizerMode::default(), AnonymizerMode::External);
+        assert_eq!(AnonymizerConfig::with_defaults().mode, AnonymizerMode::External);
+    }
+
+    #[test]
+    fn a_config_written_before_the_mode_existed_parses_as_external() {
+        // Every existing anonymizer_config.json has only `detectors`; it must
+        // keep loading, and must not silently turn the viewer anonymized (All)
+        // or agents raw (None).
+        let cfg: AnonymizerConfig = serde_json::from_str(r#"{"detectors":[]}"#).unwrap();
+        assert_eq!(cfg.mode, AnonymizerMode::External);
+    }
+
+    #[test]
+    fn mode_round_trips_as_lowercase_json() {
+        for (mode, wire) in [
+            (AnonymizerMode::All, "\"all\""),
+            (AnonymizerMode::External, "\"external\""),
+            (AnonymizerMode::None, "\"none\""),
+        ] {
+            assert_eq!(serde_json::to_string(&mode).unwrap(), wire);
+            assert_eq!(serde_json::from_str::<AnonymizerMode>(wire).unwrap(), mode);
+        }
+    }
 }

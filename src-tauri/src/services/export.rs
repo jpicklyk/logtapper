@@ -25,26 +25,25 @@
 //! ## Redaction
 //!
 //! Export is a raw-line pathway — session source text ends up on disk in the
-//! `.lts` archive — and the decision to redact it is made once, per caller,
-//! by [`should_anonymize_export`]:
+//! `.lts` archive — and the file leaves the tool, so the decision is
+//! [`policy::should_anonymize_for`]`(ctx, `[`Pathway::External`]`)`, made once
+//! per export for every session in it:
 //!
-//! - **`Agent`**: unaffected by [`ExportAllOptions::anonymize`] — the flag is
-//!   silently ignored for an agent caller. Governed exactly as every other
-//!   raw-line route: [`policy::should_anonymize`], i.e. redacted by default,
-//!   raw only once the user has persisted the `agent_raw_access` opt-out
-//!   (`services::settings::set_agent_raw_access`). An agent exporting every
-//!   open session is the widest version of the leak that gate exists to
-//!   close, so it must not be reachable by an options flag the agent's own
-//!   request body controls.
-//! - **`Ui`**: honors `options.anonymize` — the explicit "Anonymize PII in
-//!   exported log lines" checkbox in the Export dialog. A `Ui` export is the
-//!   user writing their own machine's logs to their own disk through a
-//!   native save dialog, so it is raw by default (unticked), and redacted
-//!   only when the user opts in for that one export.
+//! - **`Ui`**: redacted under anonymizer mode `All` and `External` (the
+//!   default), raw only under `None`. There is no per-export checkbox any
+//!   more — the mode is the one switch, and the Export dialog reports it.
+//! - **`Agent`**: redacted unless the mode is `None` or the user persisted the
+//!   `agent_raw_access` opt-out — exactly as every other raw-line route. An
+//!   agent exporting every open session is the widest version of the leak
+//!   that gate exists to close, so nothing in the agent's own request body
+//!   can influence it.
 //!
-//! Once redaction applies (for either caller), the mechanism is the same:
-//! [`policy::anonymize_session_text`], reusing the session's cached
-//! `LogAnonymizer` so token numbering is stable — see [`export_line_text`].
+//! Once redaction applies, the mechanism is [`policy::anonymize_session_lines`],
+//! reusing the session's cached `LogAnonymizer` so token numbering matches the
+//! viewer (under `All`) and any later clipboard copy — see
+//! [`anonymize_lines_to_bytes`]. The decision is also recorded in the
+//! archive's manifest (`LtsManifest::anonymized`) so a re-import can badge
+//! the session instead of passing redacted logs off as raw.
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -60,8 +59,8 @@ use crate::core::log_source::{FileLogSource, StreamLogSource, ZipLogSource};
 use crate::workspace::lts::{LtsEditorTab, LtsSessionData, LtsSessionMeta};
 
 use super::paths::AppPaths;
-use super::policy;
-use super::{lock_svc, Caller, ServiceCtx, ServiceError};
+use super::policy::{self, Pathway};
+use super::{lock_svc, ServiceCtx, ServiceError};
 
 // ---------------------------------------------------------------------------
 // Per-session helpers
@@ -145,44 +144,21 @@ fn snapshot_stream_bytes(source: &StreamLogSource) -> Vec<u8> {
     buf
 }
 
-/// Decide whether `session_id`'s export must be redacted, given this caller
-/// and the export options' `anonymize` flag. See the module doc comment's
-/// "Redaction" section.
+/// Redact every line in `lines` for `session_id` through the anonymizer
+/// mechanism ([`policy::anonymize_session_lines`] — one lock for the whole
+/// session, the session's cached `LogAnonymizer` so token numbering is
+/// stable) and reassemble into the exact byte layout `write_lts` expects for
+/// a session's `source_bytes`: one record per line, `\n`-terminated, in
+/// original order.
 ///
-/// - `Ui`: honors `ui_anonymize` (`options.anonymize` from the Export
-///   dialog's checkbox) directly — raw by default, redacted only when the
-///   user opted in for this export.
-/// - `Agent`: unaffected by `ui_anonymize`, which is silently ignored.
-///   Governed by [`policy::should_anonymize`] like every other raw-line
-///   route — redacted unless the user persisted the `agent_raw_access`
-///   opt-out.
-fn should_anonymize_export(ctx: &ServiceCtx, ui_anonymize: bool) -> bool {
-    match ctx.caller() {
-        Caller::Ui => ui_anonymize,
-        Caller::Agent { .. } => policy::should_anonymize(ctx, ""),
-    }
-}
-
-/// Redact one line of raw session text for export via the anonymizer
-/// mechanism ([`policy::anonymize_session_text`]), reusing `session_id`'s
-/// cached `LogAnonymizer` so token numbering is stable.
-///
-/// Unconditional — only ever called once [`should_anonymize_export`] has
-/// already decided redaction applies, for either caller. It does not
-/// truncate: export is never subject to the bridge's 500-char response cap.
-fn export_line_text(ctx: &ServiceCtx, session_id: &str, raw: &str) -> String {
-    policy::anonymize_session_text(ctx.state(), session_id, raw)
-}
-
-/// Redact each line in `lines` for `session_id` (caller-aware — see
-/// [`export_line_text`]) and
-/// reassemble into the exact byte layout `write_lts` expects for a session's
-/// `source_bytes`: one record per line, `\n`-terminated, in original order.
-fn anonymize_lines_to_bytes(ctx: &ServiceCtx, session_id: &str, lines: &[String]) -> Vec<u8> {
-    let mut buf = Vec::new();
-    for line in lines {
-        let text = export_line_text(ctx, session_id, line);
-        buf.extend_from_slice(text.as_bytes());
+/// Unconditional — only ever called once `should_anonymize_for(External)`
+/// has decided redaction applies. It does not truncate: export is never
+/// subject to the bridge's 500-char response cap.
+fn anonymize_lines_to_bytes(ctx: &ServiceCtx, session_id: &str, mut lines: Vec<String>) -> Vec<u8> {
+    policy::anonymize_session_lines(ctx.state(), session_id, &mut lines);
+    let mut buf = Vec::with_capacity(lines.iter().map(|l| l.len() + 1).sum());
+    for line in &lines {
+        buf.extend_from_slice(line.as_bytes());
         buf.push(b'\n');
     }
     buf
@@ -249,12 +225,6 @@ pub struct ExportAllOptions {
     pub include_analyses: bool,
     pub include_processors: bool,
     pub editor_tabs: Vec<LtsEditorTab>,
-    /// Explicit "Anonymize PII in exported log lines" opt-in. `Ui`-only — see
-    /// the module doc comment's "Redaction" section and
-    /// [`should_anonymize_export`]. `#[serde(default)]` so an older client
-    /// (or an agent, which never sends this) still deserializes with `false`.
-    #[serde(default)]
-    pub anonymize: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -323,9 +293,9 @@ pub async fn run(ctx: ServiceCtx, options: ExportAllOptions) -> Result<(), Servi
         Zip(Arc<Vec<u8>>),
         Stream(Vec<u8>),
         /// Owned, per-line raw text captured when this export must be
-        /// redacted. Redacted line-by-line (via [`export_line_text`]) once
-        /// the `sessions` lock has been dropped — see step 2 below — instead
-        /// of being written raw.
+        /// redacted. Redacted (via [`anonymize_lines_to_bytes`]) once the
+        /// `sessions` lock has been dropped — see step 2 below — instead of
+        /// being written raw.
         RawLines(Vec<String>),
     }
 
@@ -355,14 +325,12 @@ pub async fn run(ctx: ServiceCtx, options: ExportAllOptions) -> Result<(), Servi
     }
 
     // 1a. Resolve the redaction decision *before* taking the `sessions` lock
-    // — `export_line_text`/`policy::anonymize_session_text` acquire
-    // `anonymizer_config` / `mcp_anonymizers` themselves, and nesting those
-    // under `sessions` would violate the lock-ordering discipline
-    // `services/mod.rs` documents. The decision covers every session in this
-    // export: caller identity + `agent_raw_access` for an `Agent`, or the
-    // `options.anonymize` checkbox for a `Ui` export — see
-    // `should_anonymize_export`.
-    let anonymizing = should_anonymize_export(&ctx, options.anonymize);
+    // — `policy::anonymize_session_lines` acquires `anonymizer_config` /
+    // `mcp_anonymizers` itself, and nesting those under `sessions` would
+    // violate the lock-ordering discipline `services/mod.rs` documents. The
+    // decision covers every session in this export: the file leaves the
+    // tool, so this is the `External` pathway — see the module doc comment.
+    let anonymizing = policy::should_anonymize_for(&ctx, Pathway::External);
 
     // 1b. Collect all session IDs and snapshot source references under brief lock.
     let session_snapshots: Vec<(String, String, SourceRef)> = {
@@ -431,7 +399,7 @@ pub async fn run(ctx: ServiceCtx, options: ExportAllOptions) -> Result<(), Servi
             SourceRef::Mmap(mmap) => mmap.to_vec(),
             SourceRef::Zip(data) => data.as_ref().clone(),
             SourceRef::Stream(bytes) => bytes,
-            SourceRef::RawLines(lines) => anonymize_lines_to_bytes(&ctx, &session_id, &lines),
+            SourceRef::RawLines(lines) => anonymize_lines_to_bytes(&ctx, &session_id, lines),
         };
 
         let session_meta: LtsSessionMeta =
@@ -495,7 +463,13 @@ pub async fn run(ctx: ServiceCtx, options: ExportAllOptions) -> Result<(), Servi
     let dest_for_write = dest.clone();
     let editor_tabs = options.editor_tabs;
     let write_result = tokio::task::spawn_blocking(move || {
-        crate::workspace::lts::write_lts(&dest_for_write, &lts_sessions, &processor_yamls, &editor_tabs)
+        crate::workspace::lts::write_lts_with(
+            &dest_for_write,
+            &lts_sessions,
+            &processor_yamls,
+            &editor_tabs,
+            anonymizing,
+        )
     })
     .await
     .map_err(|e| ServiceError::Internal(format!("Export task panicked: {e}")))?;
@@ -517,6 +491,7 @@ pub async fn run(ctx: ServiceCtx, options: ExportAllOptions) -> Result<(), Servi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::anonymizer::config::AnonymizerMode;
     use crate::services::testing::test_ctx;
     use crate::services::Caller;
     use crate::workspace::SessionMeta;
@@ -679,46 +654,41 @@ mod tests {
         assert_eq!(text, "spill-a\nspill-b\n");
     }
 
-    // ── should_anonymize_export (the decision) ───────────────────────────
+    // ── the export decision (mode × caller, External pathway) ────────────
     //
     // Ported from item 44906851's regression tests: `export_all_sessions`
     // used to snapshot raw session bytes and write them byte-for-byte, with
-    // no anonymizer call anywhere in the file. A session with PII
-    // anonymization enabled would still export raw, unredacted PII. These
-    // tests now cover the caller split documented in the module doc
-    // comment's "Redaction" section — an `Agent` ignores `options.anonymize`
-    // entirely and is governed by `agent_raw_access`; a `Ui` export honors
-    // `options.anonymize` directly.
+    // no anonymizer call anywhere in the file. The per-export checkbox that
+    // first fixed it is gone; export is now `should_anonymize_for(External)`
+    // — `Ui` redacted under All/External, raw under None; an `Agent` as
+    // every other raw-line route. The full table lives in `policy.rs`; these
+    // pin the export's use of it.
 
     #[test]
-    fn should_anonymize_export_ui_follows_the_checkbox() {
-        let (ctx, _tmp) = test_ctx().build();
-        assert!(!should_anonymize_export(&ctx, false), "unticked: raw by default");
-        assert!(should_anonymize_export(&ctx, true), "ticked: the user opted in");
+    fn export_decision_ui_follows_the_mode() {
+        let (ctx, _t1) = test_ctx().build();
+        assert!(policy::should_anonymize_for(&ctx, Pathway::External), "External (default): a Ui export is redacted");
+        let (ctx, _t2) = test_ctx().anonymizer_mode(AnonymizerMode::All).build();
+        assert!(policy::should_anonymize_for(&ctx, Pathway::External));
+        let (ctx, _t3) = test_ctx().anonymizer_mode(AnonymizerMode::None).build();
+        assert!(!policy::should_anonymize_for(&ctx, Pathway::External), "None: raw, exports included");
     }
 
     #[test]
-    fn should_anonymize_export_agent_ignores_the_flag_and_is_redacted_by_default() {
-        let (ctx, _tmp) = test_ctx().agent("mcp").build();
-        // Whatever the (agent-supplied) flag says, an agent with no
-        // `agent_raw_access` opt-out is always redacted.
-        assert!(should_anonymize_export(&ctx, false), "flag=false must not matter for an agent");
-        assert!(should_anonymize_export(&ctx, true), "flag=true must not matter for an agent");
+    fn export_decision_agent_is_redacted_unless_none_or_raw_access() {
+        let (ctx, _t1) = test_ctx().agent("mcp").build();
+        assert!(policy::should_anonymize_for(&ctx, Pathway::External));
+        let (ctx, _t2) = test_ctx().agent("mcp").agent_raw_access(true).build();
+        assert!(!policy::should_anonymize_for(&ctx, Pathway::External));
+        let (ctx, _t3) = test_ctx().agent("mcp").anonymizer_mode(AnonymizerMode::None).build();
+        assert!(!policy::should_anonymize_for(&ctx, Pathway::External));
     }
 
-    #[test]
-    fn should_anonymize_export_agent_ignores_the_flag_even_with_raw_access_on() {
-        let (ctx, _tmp) = test_ctx().agent("mcp").agent_raw_access(true).build();
-        // The user's own opt-out wins regardless of what the flag says.
-        assert!(!should_anonymize_export(&ctx, false), "raw_access=true, flag=false: still raw");
-        assert!(!should_anonymize_export(&ctx, true), "raw_access=true, flag=true: still raw — the flag is Ui-only");
-    }
-
-    // ── export_line_text / anonymize_lines_to_bytes (the mechanism) ──────
+    // ── anonymize_lines_to_bytes (the mechanism) ─────────────────────────
     //
-    // Unconditional — only ever invoked once `should_anonymize_export` has
-    // already decided redaction applies (see `run`'s `SourceRef::RawLines`
-    // branch). No caller dimension here any more.
+    // Unconditional — only ever invoked once the decision above has said
+    // redaction applies (see `run`'s `SourceRef::RawLines` branch). No
+    // caller dimension here.
 
     #[test]
     fn anonymize_lines_to_bytes_redacts_pii() {
@@ -730,7 +700,7 @@ mod tests {
             "no pii on this line at all".to_string(),
         ];
 
-        let bytes = anonymize_lines_to_bytes(&ctx, "sess-anon", &lines);
+        let bytes = anonymize_lines_to_bytes(&ctx, "sess-anon", lines);
         let text = String::from_utf8(bytes).expect("output must be valid UTF-8");
 
         assert!(!text.contains("192.168.1.100"), "raw IP must not appear in an anonymized export: {text}");
@@ -755,7 +725,7 @@ mod tests {
             "contact user@example.com".to_string(),
             "again: user@example.com".to_string(),
         ];
-        let bytes = anonymize_lines_to_bytes(&ctx, "sess-a", &lines);
+        let bytes = anonymize_lines_to_bytes(&ctx, "sess-a", lines);
         let text = String::from_utf8(bytes).unwrap();
         let out_lines: Vec<&str> = text.lines().collect();
         let token = out_lines[0].split_whitespace().last().unwrap();
@@ -933,7 +903,6 @@ mod tests {
             include_analyses: false,
             include_processors: false,
             editor_tabs: vec![],
-            anonymize: false,
         };
         let err = run(ctx, options).await.unwrap_err();
         assert_eq!(err.code(), "NOT_ALLOWED");
@@ -950,7 +919,6 @@ mod tests {
             include_analyses: false,
             include_processors: false,
             editor_tabs: vec![],
-            anonymize: false,
         };
         run(ctx.clone(), options).await.expect("export should succeed");
         assert!(dest.exists(), "the .lts file must be written");
@@ -983,7 +951,6 @@ mod tests {
             include_analyses: false,
             include_processors: false,
             editor_tabs: vec![],
-            anonymize: false,
         };
         run(ctx, options).await.expect("export inside the allowlist should succeed");
         assert!(dest.exists());
@@ -1007,26 +974,12 @@ mod tests {
         assert!(found_source, "the archive must contain a source entry");
     }
 
-    /// Item 0ea8aad3: a `Ui` export honors the explicit `anonymize` checkbox.
-    /// Ticked → the written archive's source bytes carry anonymizer tokens,
-    /// not the fixture's raw PII.
-    #[tokio::test]
-    async fn run_ui_with_anonymize_true_redacts_pii_in_the_written_archive() {
-        let (ctx, tmp) = test_ctx().with_pii_session("s1", 3).build();
-        let dest = tmp.path().join("ui-anon.lts");
-        let options = ExportAllOptions {
-            dest_path: dest.to_string_lossy().to_string(),
-            include_bookmarks: false,
-            include_analyses: false,
-            include_processors: false,
-            editor_tabs: vec![],
-            anonymize: true,
-        };
-        run(ctx, options).await.expect("ui export should succeed");
-        assert!(dest.exists());
-
-        let bytes = std::fs::read(&dest).unwrap();
+    /// The source text of every `source/` entry in the archive, concatenated,
+    /// plus the manifest's `anonymized` flag.
+    fn read_archive(dest: &std::path::Path) -> (String, bool) {
+        let bytes = std::fs::read(dest).unwrap();
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut text = String::new();
         let mut found_source = false;
         for i in 0..zip.len() {
             let mut file = zip.by_index(i).unwrap();
@@ -1034,90 +987,90 @@ mod tests {
                 found_source = true;
                 let mut buf = Vec::new();
                 std::io::Read::read_to_end(&mut file, &mut buf).unwrap();
-                let text = String::from_utf8_lossy(&buf);
-                assert!(!text.contains("@example.com"), "raw PII leaked into a ticked Ui export: {text}");
-                assert!(text.contains("<EMAIL-"), "expected anonymizer tokens in a ticked Ui export: {text}");
+                text.push_str(&String::from_utf8_lossy(&buf));
             }
         }
         assert!(found_source, "the archive must contain a source entry");
+        let manifest = crate::workspace::lts::read_lts(dest).expect("read_lts").manifest;
+        (text, manifest.anonymized)
     }
 
-    /// Unticked (the default): a `Ui` export stays raw, exactly as before
-    /// this item — regression guard for the existing (never-redacted)
-    /// behavior alongside the new opt-in.
+    fn options_for(dest: &std::path::Path) -> ExportAllOptions {
+        ExportAllOptions {
+            dest_path: dest.to_string_lossy().to_string(),
+            include_bookmarks: false,
+            include_analyses: false,
+            include_processors: false,
+            editor_tabs: vec![],
+        }
+    }
+
+    /// A `Ui` export is an `External` pathway: redacted under the default
+    /// `External` mode and under `All`, with the manifest saying so.
     #[tokio::test]
-    async fn run_ui_with_anonymize_false_writes_raw_content() {
-        let (ctx, tmp) = test_ctx().with_pii_session("s1", 3).build();
+    async fn run_ui_redacts_the_archive_under_external_and_all_and_marks_the_manifest() {
+        for mode in [AnonymizerMode::External, AnonymizerMode::All] {
+            let (ctx, tmp) = test_ctx().anonymizer_mode(mode).with_pii_session("s1", 3).build();
+            let dest = tmp.path().join("ui-anon.lts");
+            run(ctx, options_for(&dest)).await.expect("ui export should succeed");
+
+            let (text, anonymized) = read_archive(&dest);
+            assert!(!text.contains("@example.com"), "{mode:?}: raw PII leaked into a Ui export: {text}");
+            assert!(text.contains("<EMAIL-"), "{mode:?}: expected anonymizer tokens: {text}");
+            assert!(anonymized, "{mode:?}: the manifest must record the redaction");
+        }
+    }
+
+    /// `None` means none — a `Ui` export writes the capture as-is and the
+    /// manifest says raw.
+    #[tokio::test]
+    async fn run_ui_writes_raw_content_under_none() {
+        let (ctx, tmp) = test_ctx().anonymizer_mode(AnonymizerMode::None).with_pii_session("s1", 3).build();
         let dest = tmp.path().join("ui-raw.lts");
-        let options = ExportAllOptions {
-            dest_path: dest.to_string_lossy().to_string(),
-            include_bookmarks: false,
-            include_analyses: false,
-            include_processors: false,
-            editor_tabs: vec![],
-            anonymize: false,
-        };
-        run(ctx, options).await.expect("ui export should succeed");
-        assert!(dest.exists());
+        run(ctx, options_for(&dest)).await.expect("ui export should succeed");
 
-        let bytes = std::fs::read(&dest).unwrap();
-        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
-        let mut found_source = false;
-        for i in 0..zip.len() {
-            let mut file = zip.by_index(i).unwrap();
-            if file.name().contains("source/") {
-                found_source = true;
-                let mut buf = Vec::new();
-                std::io::Read::read_to_end(&mut file, &mut buf).unwrap();
-                let text = String::from_utf8_lossy(&buf);
-                assert!(text.contains("@example.com"), "an unticked Ui export must stay raw: {text}");
-            }
-        }
-        assert!(found_source, "the archive must contain a source entry");
+        let (text, anonymized) = read_archive(&dest);
+        assert!(text.contains("@example.com"), "None: a Ui export must stay raw: {text}");
+        assert!(!anonymized);
     }
 
-    /// An agent's request body may set `anonymize: true`, but the flag is
-    /// Ui-only and must be silently ignored — an agent with no
-    /// `agent_raw_access` opt-out is redacted regardless (already covered by
-    /// `run_agent_inside_the_allowlist_writes_redacted_content` for the
-    /// `false` case; this pins the `true` case doesn't accidentally do
-    /// anything different, e.g. skip redaction because the flag "agreed").
+    /// An agent export follows the same rule as its bridge reads: raw only
+    /// under `None` or with the raw-access opt-out. Nothing in the request
+    /// body can influence it (the old `anonymize` field is gone; an unknown
+    /// key in an old client's body is ignored by serde).
     #[tokio::test]
-    async fn run_agent_ignores_a_true_anonymize_flag_and_still_redacts_by_default() {
-        let (ctx, tmp) = test_ctx()
-            .caller(Caller::Agent { client: "mcp".into() })
-            .with_pii_session("s1", 3)
-            .build();
-        let out_dir = tmp.path().join("allowed-out");
-        std::fs::create_dir_all(&out_dir).unwrap();
-        ctx.state()
-            .mcp_open_allowlist
-            .lock()
-            .unwrap()
-            .allowed_dirs
-            .push(out_dir.to_string_lossy().to_string());
+    async fn run_agent_is_raw_only_under_none_or_raw_access() {
+        for (mode, raw_access, expect_raw) in [
+            (AnonymizerMode::All, false, false),
+            (AnonymizerMode::External, false, false),
+            (AnonymizerMode::None, false, true),
+            (AnonymizerMode::External, true, true),
+        ] {
+            let (ctx, tmp) = test_ctx()
+                .agent("mcp")
+                .anonymizer_mode(mode)
+                .agent_raw_access(raw_access)
+                .with_pii_session("s1", 3)
+                .build();
+            let out_dir = tmp.path().join("allowed-out");
+            std::fs::create_dir_all(&out_dir).unwrap();
+            ctx.state()
+                .mcp_open_allowlist
+                .lock()
+                .unwrap()
+                .allowed_dirs
+                .push(out_dir.to_string_lossy().to_string());
 
-        let dest = out_dir.join("agent-flag-ignored.lts");
-        let options = ExportAllOptions {
-            dest_path: dest.to_string_lossy().to_string(),
-            include_bookmarks: false,
-            include_analyses: false,
-            include_processors: false,
-            editor_tabs: vec![],
-            anonymize: true,
-        };
-        run(ctx, options).await.expect("agent export inside the allowlist should succeed");
+            let dest = out_dir.join("agent.lts");
+            run(ctx, options_for(&dest)).await.expect("agent export inside the allowlist should succeed");
 
-        let bytes = std::fs::read(&dest).unwrap();
-        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
-        for i in 0..zip.len() {
-            let mut file = zip.by_index(i).unwrap();
-            if file.name().contains("source/") {
-                let mut buf = Vec::new();
-                std::io::Read::read_to_end(&mut file, &mut buf).unwrap();
-                let text = String::from_utf8_lossy(&buf);
-                assert!(!text.contains("@example.com"), "raw PII leaked into an agent's export: {text}");
-            }
+            let (text, anonymized) = read_archive(&dest);
+            assert_eq!(
+                text.contains("@example.com"),
+                expect_raw,
+                "{mode:?}/raw_access={raw_access}: {text}"
+            );
+            assert_eq!(anonymized, !expect_raw, "{mode:?}/raw_access={raw_access}: manifest flag");
         }
     }
 }

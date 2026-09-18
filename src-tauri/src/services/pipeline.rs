@@ -135,8 +135,11 @@ impl ProgressSink for EventSinkProgress {
 ///   go away.
 ///
 /// [`PII_ANONYMIZER_ID`] is appended whenever [`policy::should_anonymize`] says
-/// this caller must be redacted and it is not already present. An empty result
-/// is an error, never a silent no-op or a run of everything.
+/// this caller's in-app view must be redacted and it is not already present —
+/// the in-chain anonymizer rewrites what the viewer shows, so it is an
+/// `Internal` pathway: a `Ui` chain gets it only under anonymizer mode `All`,
+/// an agent's under `All`/`External`. An empty result is an error, never a
+/// silent no-op or a run of everything.
 pub fn resolve_effective_chain(
     ctx: &ServiceCtx,
     session_id: &str,
@@ -998,8 +1001,8 @@ pub struct TrackerDetail {
 /// Aggregate a session's reporter and state-tracker results.
 ///
 /// `processor_id` filters to one processor, matching either its qualified id or
-/// its bare half. Line text goes through [`policy::redact_line`], so an agent
-/// caller gets the session's redaction gate applied and a UI caller does not.
+/// its bare half. Line text goes through [`policy::redact_lines`], so a caller
+/// whose in-app view is redacted (`policy::should_anonymize`) gets the session's tokens.
 pub fn results(
     ctx: &ServiceCtx,
     session_id: &str,
@@ -1438,15 +1441,15 @@ pub fn matched_lines(
             .collect()
     };
 
-    Ok(raw
+    // No character cap here: this backs the UI's matched-line list, which
+    // renders whole lines. `redact_lines` still applies the caller's
+    // anonymization gate — one lock for the page.
+    let (line_nums, mut texts): (Vec<usize>, Vec<String>) = raw.into_iter().unzip();
+    policy::redact_lines(ctx, session_id, &mut texts, usize::MAX);
+    Ok(line_nums
         .into_iter()
-        .map(|(line_num, text)| MatchedLineInfo {
-            line_num,
-            // No character cap here: this backs the UI's matched-line list,
-            // which renders whole lines. `redact_line` still applies the
-            // caller's anonymization gate.
-            raw: policy::redact_line(ctx, session_id, &text, usize::MAX),
-        })
+        .zip(texts)
+        .map(|(line_num, raw)| MatchedLineInfo { line_num, raw })
         .collect())
 }
 
@@ -1495,7 +1498,7 @@ fn processor_names<'a>(
 /// Resolve `line_nums` to redacted text, one line per entry that exists.
 ///
 /// Raw text is collected under the `sessions` lock and the lock is dropped
-/// before [`policy::redact_line`] runs — `redact_line` takes
+/// before [`policy::redact_lines`] runs — it takes
 /// `agent_raw_access` / `anonymizer_config` / `mcp_anonymizers`, and nesting
 /// those under `sessions` would violate the lock ordering both transports
 /// rely on.
@@ -1522,15 +1525,9 @@ fn redacted_line_texts(
         }
     };
 
-    Ok(raw
-        .into_iter()
-        .map(|(ln, text)| {
-            (
-                ln,
-                policy::redact_line(ctx, session_id, &text, RESULT_LINE_CHARS),
-            )
-        })
-        .collect())
+    let (line_nums, mut texts): (Vec<usize>, Vec<String>) = raw.into_iter().unzip();
+    policy::redact_lines(ctx, session_id, &mut texts, RESULT_LINE_CHARS);
+    Ok(line_nums.into_iter().zip(texts).collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -1792,17 +1789,37 @@ transforms:
     }
 
     #[test]
-    fn a_ui_caller_never_gets_the_anonymizer_forced_in() {
-        let (ctx, _t) = test_ctx().with_session("s1", 1).build();
+    fn a_ui_caller_gets_the_anonymizer_forced_in_only_under_mode_all() {
+        use crate::anonymizer::config::AnonymizerMode;
+        for (mode, expect_anonymizer) in [
+            (AnonymizerMode::External, false),
+            (AnonymizerMode::None, false),
+            (AnonymizerMode::All, true),
+        ] {
+            let (ctx, _t) = test_ctx().anonymizer_mode(mode).with_session("s1", 1).build();
+            install(&ctx, "a@official", reporter_processor("a"));
+            set_meta(&ctx, "s1", &["a@official"], &[]);
+
+            let chain = resolve_effective_chain(&ctx, "s1", None).expect("resolves");
+            let mut expected = vec!["a@official".to_string()];
+            if expect_anonymizer {
+                expected.push(PII_ANONYMIZER_ID.to_string());
+            }
+            assert_eq!(chain, expected, "{mode:?}: the in-chain anonymizer is an Internal pathway");
+        }
+    }
+
+    #[test]
+    fn an_agent_caller_is_not_forced_under_mode_none() {
+        let (ctx, _t) = test_ctx()
+            .agent("mcp")
+            .anonymizer_mode(crate::anonymizer::config::AnonymizerMode::None)
+            .with_session("s1", 1)
+            .build();
         install(&ctx, "a@official", reporter_processor("a"));
         set_meta(&ctx, "s1", &["a@official"], &[]);
-
         let chain = resolve_effective_chain(&ctx, "s1", None).expect("resolves");
-        assert_eq!(
-            chain,
-            vec!["a@official".to_string()],
-            "the desktop user is the owner of their own logs — never force-redacted"
-        );
+        assert_eq!(chain, vec!["a@official".to_string()], "None means none — agents included");
     }
 
     #[test]

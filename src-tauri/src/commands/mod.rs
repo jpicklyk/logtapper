@@ -77,8 +77,6 @@ pub struct AppState {
     pub mcp_open_allowlist: Mutex<bridge_access::McpOpenAllowlist>,
     /// PII token->original mappings from the last pipeline run per session.
     pub pii_mappings: Mutex<HashMap<String, HashMap<String, String>>>,
-    /// Persistent anonymizers for live ADB stream sessions.
-    pub stream_anonymizers: Mutex<HashMap<String, LogAnonymizer>>,
     /// Persistent anonymizers for MCP query results (one per session for stable token numbering).
     pub mcp_anonymizers: Mutex<HashMap<String, LogAnonymizer>>,
     /// Whether agents may read raw (un-anonymized) log text.
@@ -112,7 +110,7 @@ pub struct AppState {
     /// extract-process-reinsert pattern (see `commands::adb::flush_batch`).
     ///
     /// Every writer that clears or replaces a session's continuous stream state
-    /// (`stop_adb_stream`, `set_stream_anonymize`, `update_stream_processors`,
+    /// (`stop_adb_stream`, `update_stream_processors`,
     /// `update_stream_trackers`, `update_stream_transformers`,
     /// `close_session_inner`) bumps or drops this stamp *while holding this lock*.
     /// `flush_batch` records the stamp when a batch begins and, at re-insert
@@ -298,7 +296,6 @@ impl AppState {
             anonymizer_config: Mutex::new(AnonymizerConfig::with_defaults()),
             mcp_open_allowlist: Mutex::new(bridge_access::McpOpenAllowlist::default()),
             pii_mappings: Mutex::new(HashMap::new()),
-            stream_anonymizers: Mutex::new(HashMap::new()),
             mcp_anonymizers: Mutex::new(HashMap::new()),
             agent_raw_access: Mutex::new(false),
             state_tracker_results: Mutex::new(HashMap::new()),
@@ -426,9 +423,9 @@ impl AppState {
     /// this lock (and [`Self::reinsert_stream_state_if_current`] re-checks the
     /// epoch under the same lock), an in-flight `flush_batch` re-insert gated on
     /// the pre-bump epoch is guaranteed to observe the change and drop its stale
-    /// state. Used by the incremental writers (`set_stream_anonymize`,
-    /// `update_stream_processors`, `update_stream_trackers`,
-    /// `update_stream_transformers`). `f` acquires stream-state map locks (inner)
+    /// state. Used by the incremental writers (`update_stream_processors`,
+    /// `update_stream_trackers`, `update_stream_transformers`). `f` acquires
+    /// stream-state map locks (inner)
     /// — never `stream_epochs` again — preserving the `stream_epochs → map` order.
     pub fn bump_stream_epoch_with<F>(&self, session_id: &str, f: F) -> Result<(), String>
     where

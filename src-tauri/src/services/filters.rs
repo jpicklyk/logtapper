@@ -34,9 +34,10 @@
 //! ## Redaction
 //!
 //! [`lines`] puts every returned line's `raw` and `message` through
-//! [`redact_line`] whenever [`should_anonymize`] says this caller/session
-//! pair requires it — never for a `Ui` caller, fail-closed for an `Agent`
-//! caller against an unknown session flag. No truncation is applied (`usize::MAX`):
+//! [`redact_view_lines`] (one anonymizer lock per page) whenever
+//! [`should_anonymize`] says this caller's in-app view is redacted — a `Ui`
+//! caller only under anonymizer mode `All`, an `Agent` unless the mode is
+//! `None` or raw access is on. No truncation is applied (`usize::MAX`):
 //! `get_filtered_lines` has never truncated line text, unlike `lines_around`
 //! or the search endpoints.
 //!
@@ -65,7 +66,8 @@ use crate::core::parser::LogParser;
 use crate::core::session::parser_for;
 
 use super::events::{FilterProgressEvent, ProgressEvent, ProgressSink};
-use super::policy::{redact_line, should_anonymize};
+use super::lines::redact_view_lines;
+use super::policy::should_anonymize;
 use super::{lock_svc, ServiceCtx, ServiceError};
 
 /// Reproduced verbatim from `commands::filter`'s pre-service error text —
@@ -418,15 +420,12 @@ pub fn lines(
         out
     };
 
-    // Redact only when this caller/session pair requires it — never for `Ui`,
-    // fail-closed for an unrecognized session under `Agent`. `redact_line`'s
-    // own truncation is disabled (`usize::MAX`): this endpoint has never
-    // truncated line text.
+    // Redact only when the mode says this caller's in-app view is redacted
+    // (`Ui` under `All`; an `Agent` unless `None`/raw access) — one lock
+    // acquisition for the page. Truncation is disabled (`usize::MAX`): this
+    // endpoint has never truncated line text.
     if anonymizing {
-        for line in &mut view_lines {
-            line.raw = redact_line(ctx, &session_id, &line.raw, usize::MAX);
-            line.message = redact_line(ctx, &session_id, &line.message, usize::MAX);
-        }
+        redact_view_lines(ctx, &session_id, &mut view_lines, usize::MAX, None);
     }
 
     Ok(FilteredLinesResult {

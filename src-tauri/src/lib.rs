@@ -361,7 +361,7 @@ pub fn run() {
             // nothing an agent or a pipeline chain does can flip it.
             let agent_access_path = data_dir.join(crate::services::settings::AGENT_ACCESS_FILE);
             if let Ok(json) = std::fs::read_to_string(&agent_access_path) {
-                match serde_json::from_str::<crate::services::settings::McpAgentAccess>(&json) {
+                match serde_json::from_str::<crate::services::settings::AgentAccessFile>(&json) {
                     Ok(cfg) => {
                         if let Ok(mut stored) = state.agent_raw_access.lock() {
                             *stored = cfg.agent_raw_access;
@@ -523,7 +523,6 @@ pub fn run() {
             commands::adb::list_adb_devices,
             commands::adb::start_adb_stream,
             commands::adb::stop_adb_stream,
-            commands::adb::set_stream_anonymize,
             commands::adb::update_stream_processors,
             commands::adb::update_stream_trackers,
             commands::adb::update_stream_transformers,
@@ -563,6 +562,7 @@ pub fn run() {
             commands::anonymizer::get_anonymizer_config,
             commands::anonymizer::set_anonymizer_config,
             commands::anonymizer::test_anonymizer,
+            commands::anonymizer::anonymize_text,
             commands::anonymizer::get_pii_mappings,
             commands::anonymizer::get_agent_raw_access,
             commands::anonymizer::set_agent_raw_access,

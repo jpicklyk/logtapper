@@ -36,6 +36,17 @@ pub fn test_anonymizer(app: AppHandle, text: String) -> Result<AnonymizerTestRes
     Ok(settings::test_anonymizer(&ctx, text)?)
 }
 
+/// Redact frontend-assembled text (clipboard copy, bookmark Markdown) before
+/// it leaves the tool, under the anonymizer mode's `External` decision, with
+/// `session_id`'s cached anonymizer so tokens match the viewer/exports.
+/// Returns the input unchanged when the mode says raw. `Ui`-only — there is
+/// deliberately no bridge route (an agent has no clipboard).
+#[tauri::command]
+pub fn anonymize_text(app: AppHandle, session_id: String, text: String) -> Result<String, String> {
+    let ctx = ui_ctx(&app);
+    Ok(settings::anonymize_text(&ctx, &session_id, text)?)
+}
+
 /// The token -> original-value map accumulated for `session_id`.
 #[tauri::command]
 pub fn get_pii_mappings(app: AppHandle, session_id: String) -> Result<HashMap<String, String>, String> {

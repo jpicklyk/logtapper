@@ -273,6 +273,17 @@ impl TestCtxBuilder {
         self
     }
 
+    /// Set the anonymizer mode (`AnonymizerConfig::mode`). The default is
+    /// `External` — the viewer raw, everything leaving the tool redacted.
+    pub fn anonymizer_mode(self, mode: crate::anonymizer::config::AnonymizerMode) -> Self {
+        self.state
+            .anonymizer_config
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .mode = mode;
+        self
+    }
+
     /// Build the context. The `TempDir` is the context's `app_data_dir`.
     pub fn build(self) -> (ServiceCtx, TempDir) {
         let (ctx, _sink, tmp) = self.build_recording();

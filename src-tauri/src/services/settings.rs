@@ -19,12 +19,12 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::anonymizer::config::AnonymizerConfig;
+use crate::anonymizer::config::{AnonymizerConfig, AnonymizerMode};
 use crate::anonymizer::LogAnonymizer;
 use crate::commands::bridge_access::McpOpenAllowlist;
 
 use super::paths::AppPaths;
-use super::policy::deny_agent_gate_mutation;
+use super::policy::{self, deny_agent_gate_mutation, Pathway};
 use super::{lock_svc, Caller, ServiceCtx, ServiceError};
 
 // ---------------------------------------------------------------------------
@@ -130,6 +130,33 @@ pub fn test_anonymizer(ctx: &ServiceCtx, text: String) -> Result<AnonymizerTestR
     Ok(AnonymizerTestResult { anonymized, replacements })
 }
 
+/// Redact frontend-assembled text that is about to leave the tool — copy to
+/// clipboard, the bookmark Markdown export — under the
+/// [`Pathway::External`] decision.
+///
+/// Unlike [`test_anonymizer`] this uses the *session's* cached
+/// `LogAnonymizer` (`mcp_anonymizers`, via [`policy::anonymize_session_text`])
+/// so the tokens in a pasted snippet match what the viewer and an `.lts`
+/// export of the same session show. Returns `text` unchanged when the mode
+/// says this pathway is raw (`None`), and under `All` the cache the caller
+/// assembled from is already anonymized so the same tokens come back — one
+/// code path for the frontend, whatever the mode.
+///
+/// **`Agent` → `Forbidden`.** An agent has no clipboard; every text it can
+/// obtain is already redacted on the read path, and this exists only so text
+/// the desktop assembled locally can leave redacted. Not journaled: a read.
+pub fn anonymize_text(ctx: &ServiceCtx, session_id: &str, text: String) -> Result<String, ServiceError> {
+    if let Caller::Agent { .. } = ctx.caller() {
+        return Err(ServiceError::not_allowed(
+            "agents may not use the clipboard redaction command",
+        ));
+    }
+    if !policy::should_anonymize_for(ctx, Pathway::External) {
+        return Ok(text);
+    }
+    Ok(policy::anonymize_session_text(ctx.state(), session_id, &text))
+}
+
 /// The token -> original-value map accumulated for `session_id`.
 ///
 /// **`Agent` -> `Forbidden`**: this is the reverse of anonymization — an
@@ -201,15 +228,39 @@ pub fn set_open_allowlist(ctx: &ServiceCtx, allowlist: McpOpenAllowlist) -> Resu
 pub const AGENT_ACCESS_FILE: &str = "mcp_agent_access.json";
 
 /// On-disk shape of [`AGENT_ACCESS_FILE`]. A struct rather than a bare bool so
-/// a future agent-visibility setting can join it without a migration.
-#[derive(Debug, Default, Clone, Serialize, Deserialize, TS)]
+/// a future agent-visibility setting can join it without a migration. Only the
+/// opt-out itself is persisted here — the anonymizer mode lives in
+/// `anonymizer_config.json`, and [`McpAgentAccess`] is the *computed* view
+/// that puts the two together for the wire.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-pub struct McpAgentAccess {
+pub struct AgentAccessFile {
     /// `true` = agents receive raw, un-anonymized log text. Default `false`.
     pub agent_raw_access: bool,
 }
 
-/// Whether agents may read raw (un-anonymized) log text.
+/// What an agent (and the desktop's presence pill) is told about its own
+/// visibility — `GET /mcp/settings/agent_access` and part of `McpStatus`.
+///
+/// `effective_agent_raw` is computed **here**, once, so the presence pill, the
+/// anonymizer card, Settings and the MCP `agent_access` action can never
+/// disagree about whether agents currently read raw text: they do when the
+/// mode is `None` *or* the raw-access opt-out is on — see
+/// `policy::should_anonymize_for`.
+#[derive(Debug, Default, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+pub struct McpAgentAccess {
+    /// The persisted opt-out (Settings → General → MCP Integration).
+    pub agent_raw_access: bool,
+    /// The anonymizer master switch (`AnonymizerConfig::mode`).
+    pub anonymizer_mode: AnonymizerMode,
+    /// `anonymizer_mode == None || agent_raw_access` — whether agents are
+    /// reading raw log text right now, whichever setting caused it.
+    pub effective_agent_raw: bool,
+}
+
+/// Whether agents may read raw (un-anonymized) log text — the persisted
+/// opt-out alone. Use [`agent_access`] for the effective answer.
 ///
 /// Readable by both callers: an agent learning *that* it is being redacted
 /// reveals nothing the redaction itself doesn't already make obvious, and the
@@ -219,11 +270,23 @@ pub fn agent_raw_access(ctx: &ServiceCtx) -> Result<bool, ServiceError> {
     Ok(*flag)
 }
 
+/// The computed [`McpAgentAccess`]: opt-out, mode, and their combination.
+/// Readable by both callers for the same reason as [`agent_raw_access`].
+pub fn agent_access(ctx: &ServiceCtx) -> Result<McpAgentAccess, ServiceError> {
+    let agent_raw_access = agent_raw_access(ctx)?;
+    let anonymizer_mode = policy::anonymizer_mode(ctx.state());
+    Ok(McpAgentAccess {
+        agent_raw_access,
+        anonymizer_mode,
+        effective_agent_raw: anonymizer_mode == AnonymizerMode::None || agent_raw_access,
+    })
+}
+
 /// Persist the agent raw-access opt-out to `{app_data_dir}/mcp_agent_access.json`.
 fn persist_agent_raw_access(paths: &dyn AppPaths, enabled: bool) -> Result<(), ServiceError> {
     let data_dir = paths.app_data_dir()?;
     std::fs::create_dir_all(&data_dir).map_err(|e| ServiceError::Internal(e.to_string()))?;
-    let json = serde_json::to_string_pretty(&McpAgentAccess { agent_raw_access: enabled })
+    let json = serde_json::to_string_pretty(&AgentAccessFile { agent_raw_access: enabled })
         .map_err(|e| ServiceError::Internal(e.to_string()))?;
     std::fs::write(data_dir.join(AGENT_ACCESS_FILE), json)
         .map_err(|e| ServiceError::Internal(format!("Failed to persist MCP agent access: {e}")))
@@ -428,9 +491,13 @@ mod tests {
         let data_dir = ctx.paths().app_data_dir().unwrap();
         let on_disk = std::fs::read_to_string(data_dir.join(AGENT_ACCESS_FILE))
             .expect("the opt-out must be persisted to disk");
-        let reloaded: McpAgentAccess = serde_json::from_str(&on_disk).unwrap();
+        let reloaded: AgentAccessFile = serde_json::from_str(&on_disk).unwrap();
         assert!(reloaded.agent_raw_access);
         assert!(on_disk.contains("agentRawAccess"), "persisted key must be camelCase: {on_disk}");
+        assert!(
+            !on_disk.contains("anonymizerMode") && !on_disk.contains("effectiveAgentRaw"),
+            "computed fields must not be persisted: {on_disk}"
+        );
 
         let activity = ctx.state().activity.list(None, None);
         assert_eq!(activity.len(), 1);
@@ -444,7 +511,7 @@ mod tests {
         assert!(!agent_raw_access(&ctx).unwrap());
 
         let data_dir = ctx.paths().app_data_dir().unwrap();
-        let reloaded: McpAgentAccess = serde_json::from_str(
+        let reloaded: AgentAccessFile = serde_json::from_str(
             &std::fs::read_to_string(data_dir.join(AGENT_ACCESS_FILE)).unwrap(),
         )
         .unwrap();
@@ -475,9 +542,101 @@ mod tests {
     fn a_missing_or_corrupt_settings_file_parses_as_anonymized() {
         // `#[serde(default)]` on the struct: an empty object, or one written
         // by a future version with extra fields, must still mean "redact".
-        let empty: McpAgentAccess = serde_json::from_str("{}").unwrap();
+        let empty: AgentAccessFile = serde_json::from_str("{}").unwrap();
         assert!(!empty.agent_raw_access);
-        assert!(!McpAgentAccess::default().agent_raw_access);
+        assert!(!AgentAccessFile::default().agent_raw_access);
+    }
+
+    // ── agent_access (the computed view) ───────────────────────────────────
+
+    #[test]
+    fn agent_access_reports_effective_raw_from_either_setting() {
+        let (ctx, _t1) = test_ctx().build();
+        let a = agent_access(&ctx).unwrap();
+        assert_eq!(a.anonymizer_mode, AnonymizerMode::External);
+        assert!(!a.agent_raw_access);
+        assert!(!a.effective_agent_raw);
+
+        let (ctx, _t2) = test_ctx().agent_raw_access(true).build();
+        assert!(agent_access(&ctx).unwrap().effective_agent_raw, "the opt-out alone makes agents raw");
+
+        let (ctx, _t3) = test_ctx().anonymizer_mode(AnonymizerMode::None).build();
+        let a = agent_access(&ctx).unwrap();
+        assert!(!a.agent_raw_access);
+        assert!(a.effective_agent_raw, "mode None alone makes agents raw");
+
+        let (ctx, _t4) = test_ctx().anonymizer_mode(AnonymizerMode::All).build();
+        assert!(!agent_access(&ctx).unwrap().effective_agent_raw);
+    }
+
+    #[test]
+    fn agent_can_read_agent_access_and_the_wire_keys_are_camel_case() {
+        let (ctx, _tmp) = test_ctx().agent("claude-code").build();
+        let json = serde_json::to_value(agent_access(&ctx).unwrap()).unwrap();
+        assert_eq!(json["agentRawAccess"], false);
+        assert_eq!(json["anonymizerMode"], "external");
+        assert_eq!(json["effectiveAgentRaw"], false);
+    }
+
+    // ── the anonymizer mode is a gate an agent cannot flip ─────────────────
+
+    #[test]
+    fn agent_cannot_change_the_anonymizer_mode() {
+        let (ctx, _tmp) = test_ctx().agent("claude-code").build();
+        let mut cfg = AnonymizerConfig::with_defaults();
+        cfg.mode = AnonymizerMode::None;
+        let err = set_anonymizer_config(&ctx, cfg)
+            .expect_err("an agent turning the anonymizer off would un-redact itself");
+        assert!(matches!(err, ServiceError::Forbidden { .. }));
+        assert_eq!(err.code(), "NOT_ALLOWED");
+        assert_eq!(anonymizer_config(&ctx).unwrap().mode, AnonymizerMode::External);
+        assert!(ctx.state().activity.list(None, None).is_empty());
+    }
+
+    #[test]
+    fn ui_can_change_the_anonymizer_mode_and_it_persists() {
+        let (ctx, _tmp) = test_ctx().build();
+        let mut cfg = AnonymizerConfig::with_defaults();
+        cfg.mode = AnonymizerMode::All;
+        set_anonymizer_config(&ctx, cfg).unwrap();
+        assert_eq!(anonymizer_config(&ctx).unwrap().mode, AnonymizerMode::All);
+
+        let data_dir = ctx.paths().app_data_dir().unwrap();
+        let on_disk = std::fs::read_to_string(data_dir.join("anonymizer_config.json")).unwrap();
+        assert!(on_disk.contains("\"mode\": \"all\""), "{on_disk}");
+    }
+
+    // ── anonymize_text ──────────────────────────────────────────────────────
+
+    #[test]
+    fn anonymize_text_redacts_under_external_and_all_with_the_sessions_tokens() {
+        for mode in [AnonymizerMode::External, AnonymizerMode::All] {
+            let (ctx, _tmp) = test_ctx().anonymizer_mode(mode).build();
+            // The viewer/export path has already numbered this address for
+            // the session; the clipboard copy must reuse that token.
+            let seen = policy::anonymize_session_text(ctx.state(), "s1", "first user@example.com");
+            let token = seen.split_whitespace().last().unwrap().to_string();
+
+            let out = anonymize_text(&ctx, "s1", "copied: user@example.com".to_string()).unwrap();
+            assert!(!out.contains("user@example.com"), "{mode:?}: {out}");
+            assert_eq!(out, format!("copied: {token}"), "{mode:?}: tokens must match the session");
+        }
+    }
+
+    #[test]
+    fn anonymize_text_returns_the_input_unchanged_under_none() {
+        let (ctx, _tmp) = test_ctx().anonymizer_mode(AnonymizerMode::None).build();
+        let text = "copied: user@example.com".to_string();
+        assert_eq!(anonymize_text(&ctx, "s1", text.clone()).unwrap(), text);
+    }
+
+    #[test]
+    fn anonymize_text_is_forbidden_for_an_agent() {
+        let (ctx, _tmp) = test_ctx().agent("claude-code").build();
+        let err = anonymize_text(&ctx, "s1", "user@example.com".to_string())
+            .expect_err("an agent has no clipboard");
+        assert!(matches!(err, ServiceError::Forbidden { .. }));
+        assert_eq!(err.code(), "NOT_ALLOWED");
     }
 
     #[test]
