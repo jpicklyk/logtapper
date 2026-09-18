@@ -49,17 +49,28 @@
 import { createMemo, createRoot, createSignal, untrack } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import type { UnlistenFn } from '@tauri-apps/api/event';
+import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import {
   listAnalyses as listAnalysesCmd,
   getAnalysis as getAnalysisCmd,
   publishAnalysis as publishAnalysisCmd,
   updateAnalysis as updateAnalysisCmd,
   deleteAnalysis as deleteAnalysisCmd,
+  renderAnalysisMarkdown as renderAnalysisMarkdownCmd,
+  exportAnalysisMarkdown as exportAnalysisMarkdownCmd,
+  getAnonymizerConfig as getAnonymizerConfigCmd,
 } from '@bridge/commands';
 import { onAnalysisUpdate } from '@bridge/events';
-import type { AnalysisArtifact, AnalysisSection, AnalysisUpdateEvent, SourceReference } from '@bridge/types';
+import type {
+  AnalysisArtifact,
+  AnalysisSection,
+  AnalysisUpdateEvent,
+  AnonymizerMode,
+  SourceReference,
+} from '@bridge/types';
 import { setDraftSeed, takeDraftSeed as takeStashedDraftSeed } from './draftSeed';
 import type { LineRefTarget } from '../editor';
+import { writeClipboard as writeClipboardText } from '../viewer';
 import type { ViewerController } from '../viewer';
 // `'../app'` also matches `App.tsx` on a case-insensitive filesystem and TS
 // refuses the program (TS1149) — always import the barrel via `/index`.
@@ -72,6 +83,11 @@ export interface AnalysesCommands {
   publishAnalysis: typeof publishAnalysisCmd;
   updateAnalysis: typeof updateAnalysisCmd;
   deleteAnalysis: typeof deleteAnalysisCmd;
+  renderAnalysisMarkdown: typeof renderAnalysisMarkdownCmd;
+  exportAnalysisMarkdown: typeof exportAnalysisMarkdownCmd;
+  /** Read for the export row's status line only — the mode is decided and
+   *  applied in the backend (`src-solid/CLAUDE.md` rule 9). */
+  getAnonymizerConfig: typeof getAnonymizerConfigCmd;
 }
 
 const DEFAULT_COMMANDS: AnalysesCommands = {
@@ -80,7 +96,28 @@ const DEFAULT_COMMANDS: AnalysesCommands = {
   publishAnalysis: publishAnalysisCmd,
   updateAnalysis: updateAnalysisCmd,
   deleteAnalysis: deleteAnalysisCmd,
+  renderAnalysisMarkdown: renderAnalysisMarkdownCmd,
+  exportAnalysisMarkdown: exportAnalysisMarkdownCmd,
+  getAnonymizerConfig: getAnonymizerConfigCmd,
 };
+
+const SAVE_FILTERS = [{ name: 'Markdown', extensions: ['md'] }];
+
+/** Native save dialog for the hand-off document; `null` when cancelled.
+ *  Same shape as `EditorStoreDeps.chooseSavePath`. */
+async function defaultChooseSavePath(defaultName: string): Promise<string | null> {
+  const path = await saveDialog({ defaultPath: defaultName, filters: SAVE_FILTERS });
+  return typeof path === 'string' ? path : null;
+}
+
+/** `"Crash loop after the 03:12 OOM"` → `"crash-loop-after-the-03-12-oom"`.
+ *  `settings/ThemesTab.deriveSlug` is the same idea for a file *path* (it
+ *  strips an extension, which would eat part of a title like `v1.2`) and is
+ *  owned by settings, so the title form lives here. */
+function titleStem(title: string): string {
+  const stem = title.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  return stem || 'analysis';
+}
 
 export interface AnalysesStoreDeps {
   sessions: SessionStore;
@@ -89,6 +126,17 @@ export interface AnalysesStoreDeps {
   listen?: typeof onAnalysisUpdate;
   /** Injected for tests; defaults to the real bridge commands. */
   commands?: Partial<AnalysesCommands>;
+  /** Injected in tests; defaults to the native save dialog. Returns `null`
+   *  when the user cancels. */
+  chooseSavePath?: (defaultName: string) => Promise<string | null>;
+  /** Injected in tests; defaults to the viewer's clipboard helper. */
+  writeClipboard?: (text: string) => void;
+}
+
+/** Options for {@link AnalysesStore.exportMarkdown} / {@link AnalysesStore.copyMarkdown}. */
+export interface ExportMarkdownOptions {
+  /** Log lines of context around each reference (0–10; the backend clamps). */
+  contextLines: number;
 }
 
 export interface PublishDraft {
@@ -106,8 +154,9 @@ export interface UpdateDraft {
 export interface AnalysesStore {
   list: Accessor<AnalysisArtifact[]>;
   loading: Accessor<boolean>;
-  /** The last `listAnalyses` / `getAnalysis` / `deleteAnalysis` failure, or
-   *  `null`. Cleared by a successful refresh and by {@link AnalysesStore.retry}. */
+  /** The last `listAnalyses` / `getAnalysis` / export failure, or `null`.
+   *  Cleared by a successful refresh, a successful export and
+   *  {@link AnalysesStore.retry}. */
   error: Accessor<string | null>;
   /** Clear the error and re-run `listAnalyses`. */
   retry(): void;
@@ -125,6 +174,17 @@ export interface AnalysesStore {
   publish(draft: PublishDraft): Promise<AnalysisArtifact>;
   update(draft: UpdateDraft): Promise<AnalysisArtifact>;
   remove(artifactId: string): Promise<void>;
+
+  /** Write the artifact as a Markdown hand-off document. `path` omitted →
+   *  the save dialog (`chooseSavePath`, default name `<title-stem>.md`); a
+   *  cancelled dialog is a no-op. A failure lands in {@link error}. */
+  exportMarkdown(artifactId: string, opts: ExportMarkdownOptions, path?: string): Promise<void>;
+  /** Render the same document and put it on the clipboard. A failure lands
+   *  in {@link error}. */
+  copyMarkdown(artifactId: string, opts: ExportMarkdownOptions): Promise<void>;
+  /** The anonymizer mode, for the export row's status line. Display only —
+   *  the backend decides redaction. */
+  anonymizerMode(): Promise<AnonymizerMode>;
 
   /** A `SourceReference` built from the controller's current cursor, or `null`
    *  when nothing is focused. Read live — for "add reference" while the
@@ -146,6 +206,8 @@ export interface AnalysesStore {
 export function createAnalysesStore(deps: AnalysesStoreDeps): AnalysesStore {
   const commands: AnalysesCommands = { ...DEFAULT_COMMANDS, ...deps.commands };
   const listenFn = deps.listen ?? onAnalysisUpdate;
+  const chooseSavePath = deps.chooseSavePath ?? defaultChooseSavePath;
+  const writeClipboard = deps.writeClipboard ?? writeClipboardText;
   const { sessions, controller } = deps;
 
   return createRoot((disposeRoot) => {
@@ -290,6 +352,44 @@ export function createAnalysesStore(deps: AnalysesStoreDeps): AnalysesStore {
         }
       });
 
+    /** Title for the default file name: the cache, else the list, else a
+     *  generic stem — never a fetch, the dialog must open on the click. */
+    const titleOf = (artifactId: string): string =>
+      (cache.get(artifactId) ?? untrack(list).find((a) => a.id === artifactId))?.title ?? 'analysis';
+
+    /** Shared failure path for the two export calls: the message lands in
+     *  `error` (rendered by the reader's export row) instead of an unhandled
+     *  rejection from a click handler; success clears it. */
+    const settle = (p: Promise<unknown>): Promise<void> =>
+      p.then(
+        () => {
+          if (!disposed) setError(null);
+        },
+        (e: unknown) => {
+          if (!disposed) setError(String(e));
+        },
+      );
+
+    const exportMarkdown = async (
+      artifactId: string,
+      opts: ExportMarkdownOptions,
+      path?: string,
+    ): Promise<void> => {
+      const dest = path ?? (await chooseSavePath(`${titleStem(titleOf(artifactId))}.md`));
+      if (dest === null || disposed) return;
+      await settle(commands.exportAnalysisMarkdown({ artifactId, contextLines: opts.contextLines }, dest));
+    };
+
+    const copyMarkdown = (artifactId: string, opts: ExportMarkdownOptions): Promise<void> =>
+      settle(
+        commands
+          .renderAnalysisMarkdown({ artifactId, contextLines: opts.contextLines })
+          .then((markdown) => writeClipboard(markdown)),
+      );
+
+    const anonymizerMode = (): Promise<AnonymizerMode> =>
+      commands.getAnonymizerConfig().then((config) => config.mode);
+
     const cursorReference = (): SourceReference | null => {
       const cursor = controller.cursor();
       if (!cursor) return null;
@@ -341,6 +441,9 @@ export function createAnalysesStore(deps: AnalysesStoreDeps): AnalysesStore {
       publish,
       update,
       remove,
+      exportMarkdown,
+      copyMarkdown,
+      anonymizerMode,
       cursorReference,
       captureDraftSeed,
       takeDraftSeed,

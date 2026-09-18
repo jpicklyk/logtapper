@@ -30,6 +30,7 @@ import type {
   Bookmark,
   CreatedBy,
   AnalysisArtifact,
+  AnalysisMarkdownOptions,
   AnalysisSection,
   WatchInfo,
   SectionInfo,
@@ -624,6 +625,22 @@ export function getExportAllSessionsInfo(): Promise<ExportAllSessionsInfo> {
 
 export function exportAllSessions(options: ExportAllOptions): Promise<void> {
   return invoke('export_all_sessions', { options });
+}
+
+/**
+ * One analysis rendered as a self-contained Markdown hand-off document (the
+ * narrative plus the referenced log lines, read from the live session). Feeds
+ * the reader's Copy. Redaction follows the anonymizer mode's `External`
+ * decision — there is no per-export flag. Ui-only: no bridge route returns
+ * the rendered text.
+ */
+export function renderAnalysisMarkdown(opts: AnalysisMarkdownOptions): Promise<string> {
+  return invoke('render_analysis_markdown', { opts });
+}
+
+/** Write {@link renderAnalysisMarkdown}'s document to `destPath` (Save as). */
+export function exportAnalysisMarkdown(opts: AnalysisMarkdownOptions, destPath: string): Promise<void> {
+  return invoke('export_analysis_markdown', { opts, destPath });
 }
 
 // ---------------------------------------------------------------------------
