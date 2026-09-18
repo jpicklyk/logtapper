@@ -69,6 +69,16 @@ export interface WorkspaceHomeProps {
    * this pane lists everything the workspace file contains.
    */
   analyses?: JSX.Element;
+  /**
+   * A session row's Focus. `actions.focus` alone only moves the focused
+   * session id — it does not bring the viewer back from the editor surface,
+   * and it is a no-op when the row is already focused (always, with one file
+   * open) — so the app hands in the tab strip's own activation path, which
+   * also switches the viewer to the session and puts the drawer away. Falls
+   * back to `actions.focus` when absent (tests, and any host without a
+   * surface to switch).
+   */
+  onFocusSession?: (sessionId: string) => void;
 }
 
 /**
@@ -414,7 +424,11 @@ export function WorkspaceHome(props: WorkspaceHomeProps): JSX.Element {
                           <span class={styles.focusedMarker}>Focused</span>
                         </Show>
                         <div class={styles.sessionActions}>
-                          <button type="button" class={styles.iconButton} onClick={() => props.actions.focus(id)}>
+                          <button
+                            type="button"
+                            class={styles.iconButton}
+                            onClick={() => (props.onFocusSession ?? props.actions.focus)(id)}
+                          >
                             Focus
                           </button>
                           <button
