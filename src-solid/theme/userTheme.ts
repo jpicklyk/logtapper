@@ -39,6 +39,8 @@ export const KNOWN_TOKENS: ReadonlySet<string> = new Set([
   '--accent-muted',
   '--accent-border',
   '--text-on-accent',
+  '--brand',
+  '--brand-muted',
   '--danger',
   '--danger-muted',
   '--success',

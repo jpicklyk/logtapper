@@ -90,6 +90,7 @@ const REQUIRED_FOREGROUND_TOKENS = [
   '--success',
   '--warning',
   '--accent',
+  '--brand',
   '--text',
   '--text-subtle',
   '--text-muted',
