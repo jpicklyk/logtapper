@@ -33,7 +33,6 @@ export function StreamControlsPanel(props: StreamControlsPanelProps) {
 
   const [deviceId, setDeviceId] = createSignal<string | undefined>(undefined);
   const [packageFilter, setPackageFilter] = createSignal('');
-  const [anonymize, setAnonymizeChecked] = createSignal(false);
   const [startError, setStartError] = createSignal<string | null>(null);
   const [saveError, setSaveError] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
@@ -62,35 +61,7 @@ export function StreamControlsPanel(props: StreamControlsPanelProps) {
     setStartError(null);
     await props.store.start(deviceId(), { packageFilter: packageFilter().trim() || undefined });
     const s = status();
-    if (s.phase === 'error') {
-      setStartError(s.message);
-      return;
-    }
-    // A tick made BEFORE Start had no session to apply to — `toggleAnonymize`
-    // returns early when `targetSessionId()` is null, and neither
-    // `StreamStartOptions` nor `start_adb_stream` carries an anonymize flag,
-    // so the only path is `set_stream_anonymize(sessionId, …)` once a session
-    // exists. Without this the checkbox read "on" while the capture streamed
-    // raw PII: the one place the UI and the backend's redaction state
-    // disagreed (M1).
-    if (s.phase === 'streaming' && anonymize()) {
-      try {
-        await props.store.setAnonymize(s.sessionId, true);
-      } catch (e) {
-        setStartError(String(e));
-      }
-    }
-  };
-
-  const toggleAnonymize = async (checked: boolean): Promise<void> => {
-    setAnonymizeChecked(checked);
-    const sessionId = targetSessionId();
-    if (!sessionId) return;
-    try {
-      await props.store.setAnonymize(sessionId, checked);
-    } catch (e) {
-      setStartError(String(e));
-    }
+    if (s.phase === 'error') setStartError(s.message);
   };
 
   const saveCapture = async (): Promise<void> => {
@@ -171,16 +142,9 @@ export function StreamControlsPanel(props: StreamControlsPanelProps) {
         />
       </section>
 
-      <section class={styles.section}>
-        <label class={styles.checkboxRow}>
-          <input
-            type="checkbox"
-            checked={anonymize()}
-            onChange={(e) => void toggleAnonymize(e.currentTarget.checked)}
-          />
-          Anonymize PII while streaming
-        </label>
-      </section>
+      {/* TODO(PR3 e64bc7a9): mode status line — the per-stream "Anonymize PII while
+          streaming" checkbox is gone; in-chain anonymization follows the anonymizer
+          mode (Analyzers panel), and Save capture redacts under External/All. */}
 
       <Show when={startError()}>
         <p class={styles.error} role="alert">{startError()}</p>

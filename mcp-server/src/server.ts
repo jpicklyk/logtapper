@@ -1898,20 +1898,17 @@ server.tool(
     "identical whether the parent is outside the allowlist or does not exist, " +
     "by the same anti-probing design as logtapper_open_file. Raw log-line text " +
     "in the bundle is PII-redacted the same way every other raw-line tool " +
-    "is — unless the user allowed raw agent access in Settings (see " +
-    "logtapper_settings action 'agent_access'). `anonymize` is a Ui-only " +
-    "option (the desktop app's Export dialog checkbox) and is SILENTLY " +
-    "IGNORED for an agent caller — an agent's export redaction is governed " +
-    "solely by 'agent_access', never by this flag.",
+    "is — by the user's anonymizer mode plus the raw-access setting (see " +
+    "logtapper_settings action 'agent_access'); nothing in this call's " +
+    "arguments can change that.",
   {
     action: z.enum(["info", "run"]).describe("Action to perform"),
     dest_path: z.string().optional().describe("Destination `.lts` path (required for 'run')"),
     include_bookmarks: z.boolean().optional().describe("Include bookmarks in the bundle (used with 'run', default true)"),
     include_analyses: z.boolean().optional().describe("Include analysis artifacts in the bundle (used with 'run', default true)"),
     include_processors: z.boolean().optional().describe("Include installed processor definitions in the bundle (used with 'run', default true)"),
-    anonymize: z.boolean().optional().describe("Ui-only; ignored for an agent caller (see the tool description)"),
   },
-  async ({ action, dest_path, include_bookmarks, include_analyses, include_processors, anonymize }) => {
+  async ({ action, dest_path, include_bookmarks, include_analyses, include_processors }) => {
     try {
       switch (action) {
         case "info":
@@ -1925,7 +1922,6 @@ server.tool(
               includeAnalyses: include_analyses ?? true,
               includeProcessors: include_processors ?? true,
               editorTabs: [],
-              anonymize: anonymize ?? false,
             })
           );
         }
@@ -2188,15 +2184,18 @@ server.tool(
     "accept, 'agent_access' to see whether the log text you receive is " +
     "redacted, and 'test' to preview redaction on text you supply (nothing " +
     "is persisted or changed — safe to call freely).\n\n" +
-    "ANONYMIZATION IS ON UNLESS THE USER TURNED IT OFF: every raw log line " +
-    "you read through any tool — query, search, lines_around, processor " +
-    "detail, insights, filter lines, stream events, export — is " +
-    "PII-redacted (<EMAIL-1>, <IPv4-2>, ...) unless the user ticked 'Allow " +
-    "agents to read raw (un-anonymized) log text' in LogTapper's Settings " +
-    "→ General → MCP Integration. 'agent_access' returns { agentRawAccess } " +
-    "so you can say which one you are seeing. Redaction tokens are stable " +
-    "within a session, so you can still correlate on them; never ask the " +
-    "user to paste an un-redacted value unless they raise it themselves.\n\n" +
+    "REDACTION FOLLOWS THE USER'S ANONYMIZER MODE: every raw log line you " +
+    "read through any tool — query, search, lines_around, processor detail, " +
+    "insights, filter lines, stream events, export — is PII-redacted " +
+    "(<EMAIL-1>, <IPv4-2>, ...) under mode 'all' or 'external' (the " +
+    "default), and raw only when the user set the mode to 'none' on the " +
+    "Analyzers panel's PII Anonymizer card or ticked 'Allow agents to read " +
+    "raw (un-anonymized) log text' in Settings → General → MCP Integration. " +
+    "'agent_access' returns { agentRawAccess, anonymizerMode, " +
+    "effectiveAgentRaw } — key off effectiveAgentRaw to say which one you " +
+    "are seeing. Redaction tokens are stable within a session, so you can " +
+    "still correlate on them; never ask the user to paste an un-redacted " +
+    "value unless they raise it themselves.\n\n" +
     "READ-ONLY BY DESIGN: there are no actions to change any of these. An " +
     "agent widening its own anonymizer config, open-file allowlist or " +
     "raw-log access would be an agent granting itself more access — that " +

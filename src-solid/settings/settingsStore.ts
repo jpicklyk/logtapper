@@ -224,7 +224,10 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
     const toggleDetector = (id: string, enabled: boolean): Promise<void> => {
       const prev = anonymizerConfig();
       if (!prev) return Promise.resolve();
-      const next: AnonymizerConfig = { detectors: prev.detectors.map((d) => (d.id === id ? { ...d, enabled } : d)) };
+      // Spread `prev` so the config's other fields (the anonymizer `mode`) ride
+      // along — the backend replaces the whole document, so a `{ detectors }`
+      // payload would silently reset the mode to its default.
+      const next: AnonymizerConfig = { ...prev, detectors: prev.detectors.map((d) => (d.id === id ? { ...d, enabled } : d)) };
       setAnonymizerConfig(next);
       return mutate(c.setAnonymizerConfig(next)).catch((e) => { refreshAnonymizerConfig(); throw e; });
     };

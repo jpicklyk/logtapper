@@ -50,10 +50,8 @@ export function ExportDialog(props: ExportDialogProps) {
               <label class={styles.checkboxRow}><input type="checkbox" checked={props.store.options().includeAnalyses} onChange={(e) => props.store.setOption('includeAnalyses', e.currentTarget.checked)} /> Analyses ({totalAnalyses()})</label>
               <label class={styles.checkboxRow}><input type="checkbox" checked={props.store.options().includeProcessors} onChange={(e) => props.store.setOption('includeProcessors', e.currentTarget.checked)} /> Processors ({info().totalProcessorCount} of {info().totalPipelineProcessorCount} enabled)</label>
             </div>
-            <div class={styles.section}>
-              <label class={styles.checkboxRow}><input type="checkbox" checked={props.store.options().anonymize} onChange={(e) => props.store.setOption('anonymize', e.currentTarget.checked)} /> Anonymize PII in exported log lines</label>
-              <p class={styles.hint}>Detected emails, IMEIs, MAC/IP addresses etc. become stable tokens such as {'<EMAIL-1>'}.</p>
-            </div>
+            {/* TODO(PR3 e64bc7a9): mode status line — the per-export anonymize checkbox is gone;
+                redaction of exported log lines follows the anonymizer mode (Analyzers panel). */}
             <Show when={props.store.error()}><p class={styles.error} role="alert">{props.store.error()}</p></Show>
             <Show when={!props.store.error() && savedTo()}>
               {(dest) => <p class={styles.success} role="status" data-testid="export-success">Exported to {dest()}</p>}

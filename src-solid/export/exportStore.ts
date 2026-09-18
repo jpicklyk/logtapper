@@ -1,6 +1,6 @@
 /**
  * Export store (W8): fetches session/processor counts, tracks the
- * include-toggles + anonymize opt-in, and runs the `.lts` export once a
+ * include-toggles, and runs the `.lts` export once a
  * destination is chosen. Mirrors React's `ExportModal.tsx`; `editorTabs` is
  * always `[]` here — Solid has no multi-tab editor/workspace state yet
  * (see implementation-notes).
@@ -16,10 +16,8 @@ export interface ExportStoreDeps {
 }
 export interface ExportOptionsState {
   includeBookmarks: boolean; includeAnalyses: boolean; includeProcessors: boolean;
-  /** Ui-only "Anonymize PII in exported log lines" opt-in — see `ExportAllOptions.anonymize`. */
-  anonymize: boolean;
 }
-const DEFAULT_OPTIONS: ExportOptionsState = { includeBookmarks: true, includeAnalyses: true, includeProcessors: true, anonymize: false };
+const DEFAULT_OPTIONS: ExportOptionsState = { includeBookmarks: true, includeAnalyses: true, includeProcessors: true };
 export interface ExportStore {
   info: Accessor<ExportAllSessionsInfo | null>; loading: Accessor<boolean>; exporting: Accessor<boolean>;
   /** Verbatim message from the last failed `refresh`/`runExport` (e.g. a B3 policy-gate rejection). */

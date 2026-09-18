@@ -54,7 +54,7 @@ vi.mock('@bridge/events', () => ({
 }));
 
 function status(overrides: Partial<McpStatus> = {}): McpStatus {
-  return { running: true, port: 40404, idleSecs: 1, agentRawAccess: false, ...overrides };
+  return { running: true, port: 40404, idleSecs: 1, agentRawAccess: false, anonymizerMode: 'external', effectiveAgentRaw: false, ...overrides };
 }
 
 function entry(id: number, overrides: Partial<ActivityEntry> = {}): ActivityEntry {

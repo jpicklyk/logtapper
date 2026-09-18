@@ -116,13 +116,6 @@ export function updateStreamTransformers(
   return invoke('update_stream_transformers', { sessionId, transformerIds });
 }
 
-export function setStreamAnonymize(
-  sessionId: string,
-  enabled: boolean,
-): Promise<void> {
-  return invoke('set_stream_anonymize', { sessionId, enabled });
-}
-
 export function getPackagePids(
   deviceSerial: string,
   packageName: string,
@@ -177,7 +170,8 @@ export function searchLogs(
  * Pass `null` for `processorIds` to run the session's OWN chain — the backend
  * resolves `active − disabled` from the `session_pipeline_meta` that
  * {@link setSessionPipelineMeta} pushes, filters it to installed processors and
- * appends `__pii_anonymizer` when the session's anonymize flag is on. An
+ * appends `__pii_anonymizer` when the anonymizer mode redacts the in-app view
+ * (`all`; agents also under `external`). An
  * explicit list overrides that resolution and rejects uninstalled ids.
  *
  * The result's `effectiveProcessorIds` is the chain the backend actually ran,
@@ -286,6 +280,17 @@ export function setAnonymizerConfig(config: AnonymizerConfig): Promise<void> {
 
 export function testAnonymizer(text: string): Promise<AnonymizerTestResult> {
   return invoke('test_anonymizer', { text });
+}
+
+/**
+ * Redact frontend-assembled text (clipboard copy, bookmark Markdown) before it
+ * leaves the tool, using `sessionId`'s cached anonymizer so tokens match the
+ * viewer and `.lts` exports. The backend applies the anonymizer mode's
+ * `External` decision and returns `text` unchanged under `None` — call it
+ * regardless of mode, one code path. Ui-only: there is no bridge route.
+ */
+export function anonymizeText(sessionId: string, text: string): Promise<string> {
+  return invoke('anonymize_text', { sessionId, text });
 }
 
 export function getPiiMappings(sessionId: string): Promise<Record<string, string>> {
