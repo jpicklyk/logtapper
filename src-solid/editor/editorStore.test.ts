@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSignal } from 'solid-js';
-import type { LtwEditorTab } from '@bridge/types';
+import type { LtsEditorTabPayload, LtwEditorTab } from '@bridge/types';
 
 // editorStore.ts imports these at module scope even though tests inject their
 // own `commands` — the real module reaches Tauri's `invoke`, which jsdom has
@@ -11,6 +11,12 @@ vi.mock('@bridge/commands', () => ({
   writeTextFile: vi.fn(),
 }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ save: vi.fn() }));
+// The `.lts` import subscription reaches Tauri's `listen`; the default here
+// resolves to a no-op unlisten so stores built without an injected `listen`
+// neither throw nor ever receive an event.
+vi.mock('@bridge/events', () => ({
+  onLtsEditorTabs: vi.fn(() => Promise.resolve(() => {})),
+}));
 
 import { createEditorStore } from './editorStore';
 import type { ConfirmClose, EditorFileCommands, EditorStoreDeps, EditorWorkspacePort } from './editorStore';
@@ -60,6 +66,25 @@ function makeStore(overrides: Partial<EditorStoreDeps> = {}) {
   const commands = makeCommands();
   const store = createEditorStore({ workspace: workspace.port, commands, ...overrides });
   return { store, workspace, commands };
+}
+
+/** Fake `onLtsEditorTabs`: captures the handler and exposes `emit`/`unlisten`. */
+function makeLtsListen() {
+  let handler: ((payload: LtsEditorTabPayload[]) => void) | null = null;
+  const unlisten = vi.fn();
+  let resolve: ((fn: () => void) => void) | null = null;
+  const promise = new Promise<() => void>((r) => { resolve = r; });
+  const listen = vi.fn((cb: (payload: LtsEditorTabPayload[]) => void) => {
+    handler = cb;
+    return promise;
+  });
+  return {
+    listen,
+    unlisten,
+    emit: (payload: LtsEditorTabPayload[]) => handler?.(payload),
+    /** Settle the `listen()` promise — tests decide whether that happens before or after `dispose`. */
+    settle: () => resolve?.(unlisten),
+  };
 }
 
 afterEach(() => {
@@ -406,5 +431,50 @@ describe('createEditorStore', () => {
       await store.open('C:\\logs\\other.md');
       expect(store.tabs()).toHaveLength(2);
     });
+  });
+});
+
+describe('.lts import (lts-editor-tabs)', () => {
+  const tab = (label: string, content = 'x'): LtsEditorTabPayload =>
+    ({ label, content, viewMode: 'editor', wordWrap: false, filePath: null });
+
+  it('materializes the archive tabs and dirties the workspace (an import is not a restore)', async () => {
+    const lts = makeLtsListen();
+    const { store, workspace } = makeStore({ listen: lts.listen });
+    lts.settle();
+    await Promise.resolve();
+
+    lts.emit([tab('notes.md', '# a'), tab('todo.md', '- b')]);
+
+    expect(store.tabs().map((t) => t.label)).toEqual(['notes.md', 'todo.md']);
+    expect(store.tabs()[0]).toMatchObject({ content: '# a', savedContent: '# a', filePath: null, mode: 'markdown' });
+    expect(store.activeId()).toBe(store.tabs()[0].id);
+    expect(workspace.markMutated).toHaveBeenCalled();
+    store.dispose();
+  });
+
+  it('skips tabs whose label is already open, so re-importing the same archive does not double them', async () => {
+    const lts = makeLtsListen();
+    const { store } = makeStore({ listen: lts.listen });
+    lts.settle();
+    await Promise.resolve();
+
+    lts.emit([tab('notes.md')]);
+    lts.emit([tab('notes.md'), tab('other.md')]);
+
+    expect(store.tabs().map((t) => t.label)).toEqual(['notes.md', 'other.md']);
+    store.dispose();
+  });
+
+  it('unsubscribes when dispose races the listen() promise, and ignores late events', async () => {
+    const lts = makeLtsListen();
+    const { store } = makeStore({ listen: lts.listen });
+    store.dispose();
+    lts.settle();
+    await Promise.resolve();
+
+    expect(lts.unlisten).toHaveBeenCalledTimes(1);
+    lts.emit([tab('late.md')]);
+    expect(store.tabs()).toHaveLength(0);
   });
 });
