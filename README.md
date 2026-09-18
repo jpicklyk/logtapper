@@ -30,7 +30,7 @@ To install:
 3. Remove the quarantine flag from the installed app:
 
    ```bash
-   xattr -dr com.apple.quarantine /Applications/LogTapper.app
+   xattr -d -r com.apple.quarantine /Applications/LogTapper.app
    ```
 
 4. Launch LogTapper from Applications as normal.
