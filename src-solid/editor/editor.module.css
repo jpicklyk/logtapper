@@ -135,6 +135,26 @@
   margin: 0 0 0.8em;
 }
 
+/* `globals.css` zeroes every element's padding, which also removes the UA's
+   `padding-left` on lists. The markers sit outside the content box, so with
+   no padding they land in negative-x space and the pane clips them — bullets
+   vanish and `1.` renders as a bare `.` at the edge. Restore the indent here;
+   `li` keeps the default `outside` position so wrapped lines align. */
+.prose :global(ul),
+.prose :global(ol) {
+  padding-left: 1.6em;
+}
+
+.prose :global(li) {
+  margin: 0.15em 0;
+}
+
+/* A list nested in a list item closes the gap its parent `ul`/`ol` opens. */
+.prose :global(li > ul),
+.prose :global(li > ol) {
+  margin-bottom: 0;
+}
+
 .prose :global(a) {
   color: var(--accent);
 }
