@@ -52,6 +52,9 @@ function fakeStore(overrides: {
     publish: vi.fn(() => Promise.resolve(artifact('new'))),
     update: vi.fn(() => Promise.resolve(artifact('x'))),
     remove: vi.fn(overrides.remove ?? (() => Promise.resolve())),
+    exportMarkdown: vi.fn(() => Promise.resolve()),
+    copyMarkdown: vi.fn(() => Promise.resolve()),
+    anonymizerMode: vi.fn(() => Promise.resolve('external' as const)),
     cursorReference: vi.fn(() => null),
     captureDraftSeed: vi.fn(),
     takeDraftSeed: vi.fn(() => null),
@@ -148,6 +151,36 @@ describe('AnalysesPanel', () => {
     expect(store.remove).toHaveBeenCalledWith('a1');
     expect(store.select).not.toHaveBeenCalled();
     expect(screen.queryByTestId('analysis-reader')).toBeNull();
+  });
+
+  it("a card's Export button selects the artifact once and opens the reader with the export row expanded", async () => {
+    const store = fakeStore({ list: [artifact('a1')] });
+    render(() => <AnalysesPanel store={store} />);
+
+    fireEvent.click(screen.getByTitle('Export analysis'));
+
+    // Same stopPropagation discipline as delete: the card's own onClick must
+    // not fire a second `select` on the way up.
+    expect(store.select).toHaveBeenCalledTimes(1);
+    expect(store.select).toHaveBeenCalledWith('a1');
+    expect(await screen.findByTestId('analysis-reader')).toBeTruthy();
+    expect(screen.getByTestId('analysis-export-options')).toBeTruthy();
+    expect(store.anonymizerMode).toHaveBeenCalled();
+  });
+
+  it('a plain card open lands in the reader with the export row collapsed, even after an Export open', async () => {
+    const store = fakeStore({ list: [artifact('a1')] });
+    render(() => <AnalysesPanel store={store} />);
+
+    fireEvent.click(screen.getByTitle('Export analysis'));
+    await screen.findByTestId('analysis-export-options');
+    fireEvent.click(screen.getByRole('button', { name: /back/i }));
+    store.select(null);
+    await screen.findByTestId('analysis-card');
+
+    fireEvent.click(screen.getByText('Title a1'));
+    await screen.findByTestId('analysis-reader');
+    expect(screen.queryByTestId('analysis-export-options')).toBeNull();
   });
 
   it('Space on the card opens the reader, but Space on the delete button does not', () => {

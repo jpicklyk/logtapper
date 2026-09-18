@@ -9,7 +9,7 @@
  * Two things are asserted:
  *  1. `ROUTE_TABLE` below has one row per `mcp_bridge::ROUTES` entry (parsed
  *     from `src-tauri/src/mcp_bridge/mod.rs` at test time, so this file
- *     cannot silently drift from the authoritative 83-entry table), and
+ *     cannot silently drift from the authoritative 84-entry table), and
  *     invoking each row's tool call produces a fetch to the expected method
  *     + path (+ a few representative query keys).
  *  2. A non-2xx bridge response becomes `{ isError: true }` with the
@@ -117,7 +117,7 @@ afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
-// The tool → route table. One row per `ROUTES` entry (83 total).
+// The tool → route table. One row per `ROUTES` entry (84 total).
 // ---------------------------------------------------------------------------
 
 const S = "s1"; // session id
@@ -223,6 +223,7 @@ const ROUTE_TABLE: Row[] = [
   { route: "GET /mcp/sessions/{session_id}/chain", tool: "logtapper_chain", args: { session_id: S, action: "get" }, method: "GET", expectPath: `/mcp/sessions/${S}/chain` },
   { route: "PUT /mcp/sessions/{session_id}/chain", tool: "logtapper_chain", args: { session_id: S, action: "set", active_processor_ids: [P] }, method: "PUT", expectPath: `/mcp/sessions/${S}/chain` },
   { route: "PATCH /mcp/sessions/{session_id}/chain", tool: "logtapper_chain", args: { session_id: S, action: "add", processor_ids: [P] }, method: "PATCH", expectPath: `/mcp/sessions/${S}/chain` },
+  { route: "POST /mcp/analyses/{artifact_id}/export", tool: "logtapper_analyses", args: { action: "export", artifact_id: A, dest_path: "C:\\out\\handoff.md" }, method: "POST", expectPath: `/mcp/analyses/${A}/export` },
 ];
 
 const covered = new Set<string>();
@@ -263,7 +264,7 @@ describe("mcp-server tool → route coverage", () => {
 
   it("ROUTE_TABLE covers every entry in mcp_bridge::ROUTES", () => {
     const bridgeRoutes = parseBridgeRoutes();
-    expect(bridgeRoutes.length).toBe(83);
+    expect(bridgeRoutes.length).toBe(84);
 
     const missing = bridgeRoutes.filter((r) => !covered.has(r) && !ROUTES_WITH_NO_TOOL.has(r));
     expect(missing, `ROUTE_TABLE is missing rows for: ${missing.join(", ")}`).toEqual([]);
@@ -328,6 +329,48 @@ describe("bridge error envelope", () => {
 
     expect(result.isError).toBe(true);
     expect(recordedCalls).toHaveLength(0); // never reached the bridge
+  });
+
+  it("a 403 NOT_ALLOWED on an analysis export (denied destination) becomes isError:true", async () => {
+    queuedResponse = {
+      status: 403,
+      body: { error: { code: "NOT_ALLOWED", message: "path is not allowed" } },
+    };
+
+    const result = await client.callTool({
+      name: "logtapper_analyses",
+      arguments: { action: "export", artifact_id: A, dest_path: "C:\\outside\\handoff.md" },
+    });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(JSON.parse(text)).toMatchObject({ code: "NOT_ALLOWED", status: 403 });
+  });
+
+  it("a 404 NOT_FOUND on an analysis export (unknown artifact) becomes isError:true", async () => {
+    queuedResponse = {
+      status: 404,
+      body: { error: { code: "NOT_FOUND", message: "Analysis not found: nosuch" } },
+    };
+
+    const result = await client.callTool({
+      name: "logtapper_analyses",
+      arguments: { action: "export", artifact_id: "nosuch", dest_path: "C:\\out\\handoff.md" },
+    });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(JSON.parse(text)).toMatchObject({ code: "NOT_FOUND", status: 404 });
+  });
+
+  it("an analysis export without dest_path fails client-side without reaching the bridge", async () => {
+    const result = await client.callTool({
+      name: "logtapper_analyses",
+      arguments: { action: "export", artifact_id: A },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(recordedCalls).toHaveLength(0);
   });
 });
 
@@ -466,6 +509,27 @@ describe("anonymizer mode", () => {
       includeProcessors: true,
       editorTabs: [],
     });
+  });
+
+  it("logtapper_analyses 'export' sends only the destination and context width", async () => {
+    const result = await client.callTool({
+      name: "logtapper_analyses",
+      arguments: { action: "export", artifact_id: A, dest_path: "C:\\out\\handoff.md", context_lines: 4 },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(recordedCalls).toHaveLength(1);
+    expect(recordedCalls[0].method).toBe("POST");
+    expect(new URL(recordedCalls[0].url).pathname).toBe(`/mcp/analyses/${A}/export`);
+    expect(recordedCalls[0].body).toEqual({ destPath: "C:\\out\\handoff.md", contextLines: 4 });
+  });
+
+  it("logtapper_analyses 'export' omits contextLines when not given, so the bridge default applies", async () => {
+    await client.callTool({
+      name: "logtapper_analyses",
+      arguments: { action: "export", artifact_id: A, dest_path: "C:\\out\\handoff.md" },
+    });
+    expect(recordedCalls[0].body).toEqual({ destPath: "C:\\out\\handoff.md" });
   });
 
   it("logtapper_settings 'agent_access' passes the mode and effectiveAgentRaw through verbatim", async () => {

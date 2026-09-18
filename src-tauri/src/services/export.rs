@@ -184,7 +184,10 @@ fn analyses_referencing_session(
 }
 
 /// Derive a display name for a session: source name > file_path basename > session ID.
-fn session_display_name(session: &crate::core::session::AnalysisSession) -> String {
+///
+/// Shared with `services::analyses`' hand-off export, whose header names each
+/// referenced session the same way the `.lts` export dialog does.
+pub(crate) fn session_display_name(session: &crate::core::session::AnalysisSession) -> String {
     if let Some(src) = session.primary_source() {
         return src.name().to_string();
     }

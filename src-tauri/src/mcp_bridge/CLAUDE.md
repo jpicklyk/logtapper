@@ -90,7 +90,7 @@ guard against drift:
 - `route_table_probe_every_route_resolves_through_the_live_router` (in
   `tests/bridge_http.rs`) — actually drives the real `router()` via
   `tower::ServiceExt::oneshot` for every `ROUTES` entry and asserts none 404/405s. Also
-  pins the **total route count** (currently 70).
+  pins the **total route count** (the test is the source of truth for the number).
 
 **To add a route:** append one line to `ROUTES`, one `.route(...)` call to `router()` in
 the same relative position, update both pinned literals in the same change, and add the
@@ -125,6 +125,21 @@ error mapping. A denied and a nonexistent open-file path render **byte-identical
 a pure function of the error, not something a handler has to arrange — never special-case
 a route to distinguish them. A poisoned `AppState` lock now returns 500 +
 `LOCK_POISONED` instead of possibly serving a torn map; the next request just tries again.
+
+The two routes that write a caller-chosen file share one status table, from
+`policy::authorize_write_dest` and the service lookup:
+
+| route | 403 `NOT_ALLOWED` | 400 `INVALID_PATH` | 404 `NOT_FOUND` |
+|---|---|---|---|
+| `POST /mcp/export` | destination's parent outside the allowlist (or missing — indistinguishable) | relative path, no file name, NTFS ADS suffix | — |
+| `POST /mcp/analyses/{artifact_id}/export` | same | same | unknown `artifact_id` |
+
+Both answer `Ack` on success. The analysis export is a raw-line pathway (the referenced log
+lines are inlined in the Markdown), and it only ever writes them to disk: **no route returns
+the rendered document** — that would be a bulk raw-text response outside the per-line cap.
+An agent that wants the content reads the file it wrote through the open-allowlist path.
+Redaction is `services::policy::should_anonymize_for(External)`; nothing in the body
+(`{ destPath, contextLines? }`) can influence it.
 
 `GET /mcp/processors` and `GET /mcp/processors/{id}` are the two remaining routes that
 still answer a hand-assembled `Json<Value>` (the YAML-derived processor/tracker/correlator

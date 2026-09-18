@@ -31,8 +31,14 @@ const bridgeCommands = vi.hoisted(() => ({
   publishAnalysis: vi.fn(),
   updateAnalysis: vi.fn(),
   deleteAnalysis: vi.fn(),
+  renderAnalysisMarkdown: vi.fn(),
+  exportAnalysisMarkdown: vi.fn(),
+  getAnonymizerConfig: vi.fn(),
 }));
 vi.mock('@bridge/commands', () => bridgeCommands);
+// The store's default `chooseSavePath` is the native dialog; every test
+// injects its own, but the module is imported at load time.
+vi.mock('@tauri-apps/plugin-dialog', () => ({ save: vi.fn(() => Promise.resolve(null)) }));
 
 function load(sessionId: string, overrides: Partial<LoadResult> = {}): LoadResult {
   return {
@@ -83,6 +89,9 @@ function makeCommands(): AnalysesCommands {
     publishAnalysis: vi.fn(),
     updateAnalysis: vi.fn(),
     deleteAnalysis: vi.fn(),
+    renderAnalysisMarkdown: vi.fn(() => Promise.resolve('# doc')),
+    exportAnalysisMarkdown: vi.fn(() => Promise.resolve()),
+    getAnonymizerConfig: vi.fn(() => Promise.resolve({ detectors: [], mode: 'external' as const })),
   };
 }
 
@@ -325,6 +334,89 @@ describe('createAnalysesStore', () => {
       const spy = vi.spyOn(controller, 'scrollToLine');
       store.jumpTo({ sessionId: null, line: 5, endLine: null });
       expect(spy).toHaveBeenCalledWith('focused', 5, { highlight: true, select: undefined, source: 'analysis' });
+    });
+  });
+
+  describe('exportMarkdown / copyMarkdown', () => {
+    const rebuild = (extra: { chooseSavePath?: (name: string) => Promise<string | null>; writeClipboard?: (t: string) => void }) => {
+      store.dispose();
+      store = createAnalysesStore({
+        sessions: sessionStore,
+        controller,
+        commands,
+        listen: listen.listen as never,
+        ...extra,
+      });
+    };
+
+    it('asks the save dialog with a title-derived .md name and exports to the chosen path', async () => {
+      (commands.listAnalyses as ReturnType<typeof vi.fn>).mockResolvedValue([artifact('a1', { title: 'Crash loop: the 03:12 OOM' })]);
+      const chooseSavePath = vi.fn(() => Promise.resolve('C:/out/handoff.md'));
+      rebuild({ chooseSavePath });
+      await flush();
+
+      await store.exportMarkdown('a1', { contextLines: 3 });
+
+      expect(chooseSavePath).toHaveBeenCalledWith('crash-loop-the-03-12-oom.md');
+      expect(commands.exportAnalysisMarkdown).toHaveBeenCalledWith(
+        { artifactId: 'a1', contextLines: 3 },
+        'C:/out/handoff.md',
+      );
+      expect(store.error()).toBeNull();
+    });
+
+    it('a cancelled dialog exports nothing and sets no error', async () => {
+      const chooseSavePath = vi.fn(() => Promise.resolve(null));
+      rebuild({ chooseSavePath });
+
+      await store.exportMarkdown('a1', { contextLines: 2 });
+
+      expect(commands.exportAnalysisMarkdown).not.toHaveBeenCalled();
+      expect(store.error()).toBeNull();
+    });
+
+    it('an explicit path skips the dialog', async () => {
+      const chooseSavePath = vi.fn(() => Promise.resolve('never'));
+      rebuild({ chooseSavePath });
+
+      await store.exportMarkdown('a1', { contextLines: 2 }, 'D:/given.md');
+
+      expect(chooseSavePath).not.toHaveBeenCalled();
+      expect(commands.exportAnalysisMarkdown).toHaveBeenCalledWith({ artifactId: 'a1', contextLines: 2 }, 'D:/given.md');
+    });
+
+    it('a rejected export lands in error() instead of rejecting the caller', async () => {
+      (commands.exportAnalysisMarkdown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('disk full'));
+      rebuild({ chooseSavePath: () => Promise.resolve('C:/out/x.md') });
+
+      await expect(store.exportMarkdown('a1', { contextLines: 2 })).resolves.toBeUndefined();
+      expect(store.error()).toContain('disk full');
+    });
+
+    it('copyMarkdown renders through the command and writes the result to the clipboard', async () => {
+      const writeClipboard = vi.fn();
+      rebuild({ writeClipboard });
+
+      await store.copyMarkdown('a1', { contextLines: 0 });
+
+      expect(commands.renderAnalysisMarkdown).toHaveBeenCalledWith({ artifactId: 'a1', contextLines: 0 });
+      expect(writeClipboard).toHaveBeenCalledWith('# doc');
+      expect(store.error()).toBeNull();
+    });
+
+    it('a rejected render lands in error() and writes nothing', async () => {
+      (commands.renderAnalysisMarkdown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('Analysis not found: a1'));
+      const writeClipboard = vi.fn();
+      rebuild({ writeClipboard });
+
+      await store.copyMarkdown('a1', { contextLines: 2 });
+
+      expect(writeClipboard).not.toHaveBeenCalled();
+      expect(store.error()).toContain('Analysis not found');
+    });
+
+    it('anonymizerMode() reads the mode off the anonymizer config', async () => {
+      await expect(store.anonymizerMode()).resolves.toBe('external');
     });
   });
 

@@ -2,6 +2,7 @@ use tauri::AppHandle;
 
 use crate::commands::AppState;
 use crate::commands::adapters::ui_ctx;
+use crate::services::analyses::{self, AnalysisMarkdownOptions};
 use crate::services::export::{self, ExportAllOptions, ExportAllSessionsInfo};
 
 // ---------------------------------------------------------------------------
@@ -18,6 +19,30 @@ pub async fn get_export_all_sessions_info(app: AppHandle) -> Result<ExportAllSes
 pub async fn export_all_sessions(app: AppHandle, options: ExportAllOptions) -> Result<(), String> {
     let ctx = ui_ctx(&app);
     Ok(export::run(ctx, options).await?)
+}
+
+// ---------------------------------------------------------------------------
+// Analysis hand-off export — thin adapters over `services::analyses`
+// ---------------------------------------------------------------------------
+
+/// The rendered document, for the reader's **Copy**. Ui-only: there is no
+/// bridge route that returns the text (see `services::analyses`' "Markdown
+/// hand-off export" section).
+#[tauri::command]
+pub async fn render_analysis_markdown(app: AppHandle, opts: AnalysisMarkdownOptions) -> Result<String, String> {
+    let ctx = ui_ctx(&app);
+    Ok(analyses::render_markdown(&ctx, opts)?)
+}
+
+/// Write the rendered document to `dest_path`, for the reader's **Save as…**.
+#[tauri::command]
+pub async fn export_analysis_markdown(
+    app: AppHandle,
+    opts: AnalysisMarkdownOptions,
+    dest_path: String,
+) -> Result<(), String> {
+    let ctx = ui_ctx(&app);
+    Ok(analyses::export_markdown(ctx, opts, dest_path).await?)
 }
 
 // ---------------------------------------------------------------------------

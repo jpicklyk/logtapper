@@ -8,6 +8,7 @@ export type {
   AnalysesStore,
   AnalysesStoreDeps,
   AnalysesCommands,
+  ExportMarkdownOptions,
   PublishDraft,
   UpdateDraft,
 } from './analysesStore';

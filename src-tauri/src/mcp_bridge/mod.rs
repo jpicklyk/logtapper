@@ -29,9 +29,9 @@ use crate::services::{AppPaths, Caller, EventSink, ServiceCtx, Spawner};
 use routes::activity::h_activity;
 use routes::artifacts::{
     h_create_bookmark, h_delete_analysis, h_delete_analysis_scoped, h_delete_bookmark,
-    h_get_analysis, h_get_analysis_scoped, h_list_all_analyses, h_list_analyses,
-    h_list_bookmarks, h_publish_analysis, h_publish_workspace_analysis, h_update_analysis,
-    h_update_analysis_scoped, h_update_bookmark,
+    h_export_analysis_markdown, h_get_analysis, h_get_analysis_scoped, h_list_all_analyses,
+    h_list_analyses, h_list_bookmarks, h_publish_analysis, h_publish_workspace_analysis,
+    h_update_analysis, h_update_analysis_scoped, h_update_bookmark,
 };
 use routes::filters::{h_cancel_filter, h_close_filter, h_create_filter, h_filter_info, h_filter_lines};
 use routes::export::{h_export_info, h_export_run};
@@ -269,6 +269,10 @@ pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/mcp/sessions/{session_id}/chain"),
     ("PUT", "/mcp/sessions/{session_id}/chain"),
     ("PATCH", "/mcp/sessions/{session_id}/chain"),
+    // PR4 — one analysis as a Markdown hand-off document, written to an
+    // allowlisted destination (services::analyses::export_markdown). No route
+    // returns the rendered text.
+    ("POST", "/mcp/analyses/{artifact_id}/export"),
 ];
 
 /// Build the bridge's `Router` without binding a socket.
@@ -362,6 +366,8 @@ pub fn router(ctx: BridgeCtx) -> Router {
         .route("/mcp/workspaces/{id}", patch(h_rename_workspace).delete(h_delete_workspace))
         // B1 (agent chain) — the session's processor chain.
         .route("/mcp/sessions/{session_id}/chain", get(h_get_chain).put(h_set_chain).patch(h_patch_chain))
+        // PR4 — analysis hand-off export (write-only; no rendered-text route).
+        .route("/mcp/analyses/{artifact_id}/export", post(h_export_analysis_markdown))
         .layer(axum_middleware::from_fn_with_state(ctx.clone(), middleware::record_activity))
         // `require_local` is added AFTER `record_activity`, which in axum/tower
         // layering means it becomes the OUTERMOST layer and therefore runs
@@ -516,6 +522,7 @@ mod tests {
             "GET /mcp/sessions/{session_id}/chain",
             "PUT /mcp/sessions/{session_id}/chain",
             "PATCH /mcp/sessions/{session_id}/chain",
+            "POST /mcp/analyses/{artifact_id}/export",
         ];
 
         assert_eq!(rendered, expected, "ROUTES drifted from the pinned route table — update both this test and router() together");
