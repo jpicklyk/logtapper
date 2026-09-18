@@ -139,14 +139,15 @@ async fn route_table_probe_every_route_resolves_through_the_live_router() {
     // /mcp/focus` + `POST /mcp/navigate`, 78 with B2's `GET /mcp/themes` +
     // `GET|PUT|DELETE /mcp/themes/{slug}`, 80 with B3's `PATCH|DELETE
     // /mcp/workspaces/{id}`, 83 with the agent-chain B1's `GET|PUT|PATCH
-    // /mcp/sessions/{session_id}/chain`) — a drift here means BOTH tests need updating,
+    // /mcp/sessions/{session_id}/chain`, 84 with PR4's `POST
+    // /mcp/analyses/{artifact_id}/export`) — a drift here means BOTH tests need updating,
     // which is the point: it forces a route addition or removal to touch this
     // file. Other packages may bump this same number concurrently in sibling
     // worktrees — resolve a merge conflict by summing every package's
     // additions rather than picking one side.
     assert_eq!(
         routes.len(),
-        83,
+        84,
         "mcp_bridge::ROUTES count drifted — update this assertion alongside the route table"
     );
 
@@ -810,6 +811,11 @@ const RAW_TEXT_ROUTE_COVERAGE: &[(&str, &str, &str)] = &[
     ),
     ("POST", "/mcp/export", "gated: export_route_inside_the_allowlist_succeeds_and_redacts_for_an_agent (wp10) / export_route_honors_the_anonymization_gate_explicit_false_too"),
     (
+        "POST",
+        "/mcp/analyses/{artifact_id}/export",
+        "gated: pr4_analysis_export::inside_the_allowlist_writes_a_redacted_document_for_an_agent / raw_access_writes_the_document_raw — the response is an Ack; the raw text only ever reaches an allowlisted file",
+    ),
+    (
         "GET",
         "/mcp/sessions/{session_id}/stream/events",
         "gated: wp11_stream::events_are_redacted_for_an_agent_by_default / events_stay_raw_when_agent_raw_access_is_on",
@@ -1453,6 +1459,122 @@ pipeline:
         assert_eq!(status, StatusCode::FORBIDDEN, "body: {resp}");
         assert_eq!(resp["error"]["code"], "NOT_ALLOWED");
         assert!(!dest.exists(), "no file must be written on a denied destination");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 7b. PR4 — `POST /mcp/analyses/{artifact_id}/export` (analysis hand-off)
+// ---------------------------------------------------------------------------
+//
+// The route count (§2 above) was bumped 83 -> 84 for this one route. It is a
+// raw-line pathway that only ever writes to disk: the status table is
+// `/mcp/export`'s (403 denied destination, 400 malformed path, 404 unknown
+// artifact), and the written document follows the agent redaction rule.
+mod pr4_analysis_export {
+    use super::*;
+    use app_lib::core::analysis::{AnalysisArtifact, AnalysisSection, HighlightType, SourceReference};
+
+    const SESSION: &str = "pii-session-md";
+    const NEEDLE: &str = "user1@example.com";
+
+    fn seed_artifact(state: &AppState) {
+        state.sessions.lock().unwrap().insert(SESSION.to_string(), fixture_session_with_pii(SESSION, 3));
+        state.analyses.lock().unwrap().push(AnalysisArtifact {
+            id: "art-md".to_string(),
+            title: "Handoff".to_string(),
+            created_at: 0,
+            sections: vec![AnalysisSection {
+                heading: "H".to_string(),
+                body: "B".to_string(),
+                references: vec![SourceReference {
+                    line_number: 1,
+                    end_line: None,
+                    label: "ref".to_string(),
+                    highlight_type: HighlightType::default(),
+                    session_id: Some(SESSION.to_string()),
+                }],
+                severity: None,
+            }],
+            legacy_session_id: None,
+        });
+    }
+
+    fn allowlist(state: &AppState, tmp: &TempDir) -> std::path::PathBuf {
+        let out_dir = tmp.path().join("allowed-out");
+        std::fs::create_dir_all(&out_dir).unwrap();
+        state.mcp_open_allowlist.lock().unwrap().allowed_dirs.push(out_dir.to_string_lossy().to_string());
+        out_dir
+    }
+
+    #[tokio::test]
+    async fn inside_the_allowlist_writes_a_redacted_document_for_an_agent() {
+        let (router, state, _sink, tmp) = app();
+        seed_artifact(&state);
+        let dest = allowlist(&state, &tmp).join("handoff.md");
+
+        let body = json!({ "destPath": dest.to_string_lossy(), "contextLines": 1 });
+        let (status, resp) =
+            send_json(&router, Method::POST, "/mcp/analyses/art-md/export", &trusted_headers(), &body).await;
+        assert_eq!(status, StatusCode::OK, "{resp}");
+        assert_eq!(resp, json!({ "ok": true }), "the route answers an Ack, never the rendered text");
+
+        let text = std::fs::read_to_string(&dest).unwrap();
+        assert!(text.starts_with("# Handoff\n"), "{text}");
+        assert!(!text.contains(NEEDLE), "raw PII leaked into an agent's hand-off export: {text}");
+        assert!(text.contains("<EMAIL-") && text.contains("· anonymized"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn raw_access_writes_the_document_raw() {
+        let (router, state, _sink, tmp) = app();
+        seed_artifact(&state);
+        *state.agent_raw_access.lock().unwrap() = true;
+        let dest = allowlist(&state, &tmp).join("handoff-raw.md");
+
+        let body = json!({ "destPath": dest.to_string_lossy() });
+        let (status, resp) =
+            send_json(&router, Method::POST, "/mcp/analyses/art-md/export", &trusted_headers(), &body).await;
+        assert_eq!(status, StatusCode::OK, "{resp}");
+        let text = std::fs::read_to_string(&dest).unwrap();
+        assert!(text.contains(NEEDLE), "the agent_raw_access opt-out must write raw text: {text}");
+        assert!(!text.contains("· anonymized"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn denied_destination_is_403_and_writes_nothing() {
+        let (router, state, _sink, tmp) = app();
+        seed_artifact(&state);
+        let dest = tmp.path().join("nope.md");
+
+        let body = json!({ "destPath": dest.to_string_lossy() });
+        let (status, resp) =
+            send_json(&router, Method::POST, "/mcp/analyses/art-md/export", &trusted_headers(), &body).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+        assert_eq!(resp["error"]["code"], "NOT_ALLOWED");
+        assert!(!dest.exists());
+    }
+
+    #[tokio::test]
+    async fn malformed_destination_is_400_invalid_path() {
+        let (router, state, _sink, _tmp) = app();
+        seed_artifact(&state);
+        let body = json!({ "destPath": r"relative\handoff.md" });
+        let (status, resp) =
+            send_json(&router, Method::POST, "/mcp/analyses/art-md/export", &trusted_headers(), &body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{resp}");
+        assert_eq!(resp["error"]["code"], "INVALID_PATH");
+    }
+
+    #[tokio::test]
+    async fn unknown_artifact_is_404_not_found() {
+        let (router, state, _sink, tmp) = app();
+        let dest = allowlist(&state, &tmp).join("missing.md");
+        let body = json!({ "destPath": dest.to_string_lossy() });
+        let (status, resp) =
+            send_json(&router, Method::POST, "/mcp/analyses/nosuch/export", &trusted_headers(), &body).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{resp}");
+        assert_eq!(resp["error"]["code"], "NOT_FOUND");
+        assert!(!dest.exists());
     }
 }
 

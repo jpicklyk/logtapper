@@ -75,6 +75,8 @@ interface CardProps {
   artifact: AnalysisArtifact;
   attribution: ArtifactAttribution;
   onOpen: () => void;
+  /** Open the reader with its export row already expanded. */
+  onExport: () => void;
   onDelete: () => void;
 }
 
@@ -103,6 +105,20 @@ function AnalysisCard(props: CardProps): JSX.Element {
     >
       <div class={styles.cardHeader}>
         <h4 class={styles.cardTitle}>{props.artifact.title}</h4>
+        {/* Same stopPropagation discipline as delete: the card itself is the
+            open target, so a nested button must not also fire `onOpen`. */}
+        <button
+          type="button"
+          class={styles.iconButton}
+          title="Export analysis"
+          aria-label="Export analysis"
+          onClick={(e) => {
+            e.stopPropagation();
+            props.onExport();
+          }}
+        >
+          ⇩
+        </button>
         {/* An analysis is the most expensive artifact in the app; deleting one
             used to be a single unconfirmed click, unlike a bookmark row. */}
         <Show
@@ -193,9 +209,20 @@ export function AnalysesPanel(props: AnalysesPanelProps): JSX.Element {
 
   const groups = createMemo(() => groupBySession(filtered(), props.store.labels()));
 
-  const openReader = (id: string): void => {
+  // True only for the reader opened by a row's Export button — it mounts with
+  // the export row expanded. Cleared whenever the reader is left, so a later
+  // plain open starts collapsed.
+  const [readerExportOpen, setReaderExportOpen] = createSignal(false);
+
+  const openReader = (id: string, { exportOpen = false } = {}): void => {
+    setReaderExportOpen(exportOpen);
     props.store.select(id);
     setMode('reading');
+  };
+
+  const leaveReader = (next: PanelMode): void => {
+    setReaderExportOpen(false);
+    setMode(next);
   };
 
   const openNewDraft = (): void => {
@@ -206,7 +233,7 @@ export function AnalysesPanel(props: AnalysesPanelProps): JSX.Element {
 
   const openEditSelected = (): void => {
     setEditingId(props.store.selectedId());
-    setMode('editing');
+    leaveReader('editing');
   };
 
   const handleEditorDone = (artifactId: string): void => {
@@ -230,7 +257,7 @@ export function AnalysesPanel(props: AnalysesPanelProps): JSX.Element {
     on(
       () => props.store.selected(),
       (selected) => {
-        if (!selected && mode() === 'reading') setMode('list');
+        if (!selected && mode() === 'reading') leaveReader('list');
         if (selected && mode() === 'list') setMode('reading');
       },
       { defer: true },
@@ -304,6 +331,7 @@ export function AnalysesPanel(props: AnalysesPanelProps): JSX.Element {
                       artifact={entry.artifact}
                       attribution={entry.attribution}
                       onOpen={() => openReader(entry.artifact.id)}
+                      onExport={() => openReader(entry.artifact.id, { exportOpen: true })}
                       onDelete={() => handleDelete(entry.artifact.id)}
                     />
                   )}
@@ -315,7 +343,12 @@ export function AnalysesPanel(props: AnalysesPanelProps): JSX.Element {
       </Show>
 
       <Show when={mode() === 'reading'}>
-        <AnalysisReader store={props.store} onBack={() => setMode('list')} onEdit={openEditSelected} />
+        <AnalysisReader
+          store={props.store}
+          exportOpen={readerExportOpen()}
+          onBack={() => leaveReader('list')}
+          onEdit={openEditSelected}
+        />
       </Show>
 
       <Show when={mode() === 'editing'}>

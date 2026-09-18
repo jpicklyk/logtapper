@@ -39,6 +39,24 @@ pub(crate) fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146097 + doe - 719468
 }
 
+/// Civil date `(year, month, day)` for a count of days since the Unix epoch —
+/// the inverse of [`days_from_civil`], from the same source. Used where a
+/// Unix timestamp has to be *rendered* (the analysis hand-off export's
+/// header) rather than parsed; the crate carries no date library, and one
+/// pair of era-based functions is cheaper than adding one for two lines.
+pub(crate) fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
 /// Infer the current UTC year from system time, for logcat-style timestamps
 /// that omit the year. Approximate (365.25-day years) — good enough for year
 /// inference, not for exact date math.
@@ -71,6 +89,19 @@ mod civil_date_tests {
         assert_eq!(days_from_civil(2000, 1, 1), 10_957);
         // A leap-day date.
         assert_eq!(days_from_civil(2024, 2, 29), 19_782);
+    }
+
+    /// `civil_from_days` inverts `days_from_civil` on the same reference
+    /// dates, plus a sweep across every day of a 400-year era.
+    #[test]
+    fn civil_from_days_inverts_days_from_civil() {
+        for (y, m, d) in [(1970, 1, 1), (1969, 12, 31), (2000, 3, 1), (2000, 1, 1), (2024, 2, 29), (2026, 9, 18)] {
+            assert_eq!(civil_from_days(days_from_civil(y, m, d)), (y, m, d));
+        }
+        for day in days_from_civil(1900, 1, 1)..days_from_civil(2300, 1, 1) {
+            let (y, m, d) = civil_from_days(day);
+            assert_eq!(days_from_civil(y, m, d), day, "round trip failed at day {day}");
+        }
     }
 
     #[test]

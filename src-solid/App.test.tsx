@@ -146,6 +146,8 @@ vi.mock('@bridge/commands', () => ({
   publishAnalysis: vi.fn(),
   updateAnalysis: vi.fn(),
   deleteAnalysis: vi.fn(),
+  renderAnalysisMarkdown: vi.fn(() => Promise.resolve('')),
+  exportAnalysisMarkdown: vi.fn(() => Promise.resolve()),
   getStateAtLine: vi.fn(),
   getStateTransitions: vi.fn(() => Promise.resolve([])),
   listBookmarks: vi.fn(() => Promise.resolve([])),

@@ -188,6 +188,8 @@ macro_rules! ROOT_TYPES {
             app_lib::services::timeline::TimelineSeriesData,
             app_lib::services::export::ExportAllSessionsInfo,
             app_lib::services::export::ExportAllOptions,
+            // PR4: the analysis hand-off export's command argument.
+            app_lib::services::analyses::AnalysisMarkdownOptions,
             // --- workspace (.ltw / .lts) --------------------------------------
             app_lib::services::workspace::SaveWorkspaceOptions,
             app_lib::services::workspace::AutoSaveWorkspaceOptions,

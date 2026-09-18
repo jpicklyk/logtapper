@@ -28,6 +28,14 @@
 //! Success bodies are the domain types themselves (`Bookmark`,
 //! `AnalysisArtifact`, or a list of them); a delete answers [`Ack`]. An
 //! unknown id is a real `404`, not a 200 with an `error` key.
+//!
+//! `POST /mcp/analyses/{artifact_id}/export` writes one analysis as a Markdown
+//! hand-off document ([`h_export_analysis_markdown`]). It is the one route in
+//! this file that touches raw log text, and it only ever writes it to disk:
+//! there is deliberately no route returning the rendered document, which
+//! would be a bulk raw-text response outside the per-line cap. Statuses: a
+//! denied destination is `403 NOT_ALLOWED`, a malformed one `400 INVALID_PATH`,
+//! an unknown artifact `404 NOT_FOUND` — the `/mcp/export` table.
 
 use axum::{
     Json,
@@ -41,6 +49,7 @@ use crate::core::bookmark::Bookmark;
 use crate::mcp_bridge::BridgeCtx;
 use crate::mcp_bridge::respond::{JsonBody, Qs, client_name};
 use crate::services::ServiceError;
+use crate::services::analyses::{AnalysisMarkdownOptions, DEFAULT_CONTEXT_LINES};
 use crate::services::{analyses, bookmarks};
 use crate::services::wire::Ack;
 
@@ -314,4 +323,35 @@ pub(crate) async fn h_delete_analysis_scoped(
     headers: HeaderMap,
 ) -> Result<Json<Ack>, ServiceError> {
     do_delete_analysis(&ctx, client_name(&headers), artifact_id)
+}
+
+/// Body of `POST /mcp/analyses/{artifact_id}/export`. Nothing here influences
+/// redaction: an agent's document is redacted solely by
+/// `services::policy::should_anonymize_for(External)` — the anonymizer mode
+/// plus `agent_raw_access` — never by a field the agent's own request body
+/// controls (an unknown key is ignored by serde).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExportAnalysisBody {
+    dest_path: String,
+    /// Lines of context around each reference; defaults to 2, clamped to 10.
+    context_lines: Option<usize>,
+}
+
+/// `POST /mcp/analyses/{artifact_id}/export` — write the artifact as a
+/// Markdown hand-off document to `destPath`. See the module doc for the
+/// statuses and why no route returns the rendered text.
+pub(crate) async fn h_export_analysis_markdown(
+    State(ctx): State<BridgeCtx>,
+    Path(artifact_id): Path<String>,
+    headers: HeaderMap,
+    JsonBody(body): JsonBody<ExportAnalysisBody>,
+) -> Result<Json<Ack>, ServiceError> {
+    let svc = ctx.svc(client_name(&headers));
+    let opts = AnalysisMarkdownOptions {
+        artifact_id,
+        context_lines: body.context_lines.unwrap_or(DEFAULT_CONTEXT_LINES),
+    };
+    analyses::export_markdown(svc, opts, body.dest_path).await?;
+    Ok(Json(Ack::ok()))
 }
