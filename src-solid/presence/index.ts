@@ -44,5 +44,5 @@ export type {
 export { ActivityFeed } from './ActivityFeed';
 export type { ActivityFeedProps } from './ActivityFeed';
 
-export { PresencePanel, COLLAPSED_STORAGE_KEY } from './PresencePanel';
+export { PresencePanel } from './PresencePanel';
 export type { PresencePanelProps } from './PresencePanel';
