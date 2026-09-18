@@ -5,7 +5,7 @@ import { createRoot, createSignal, untrack } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import * as cmds from '@bridge/commands';
 import type {
-  AnonymizerConfig, AnonymizerTestResult, FileAssocEntry, McpBundleInfo, McpHttpInfo, McpOpenAllowlist, McpStatus, Source, ThemeSummary, UserTheme,
+  AnonymizerConfig, AnonymizerMode, AnonymizerTestResult, FileAssocEntry, McpBundleInfo, McpHttpInfo, McpOpenAllowlist, McpStatus, Source, ThemeSummary, UserTheme,
 } from '@bridge/types';
 import { validateUserTheme } from '../theme';
 export type SettingsCommands = Pick<typeof cmds,
@@ -27,6 +27,14 @@ export interface SettingsStoreDeps {
    * Optional so a host that has no presence store still builds a settings store.
    */
   refreshMcpStatus?: () => void;
+  /**
+   * Fired after a `setAnonymizerMode` write the backend accepted, with the
+   * mode that was persisted before and the one persisted now. `App.tsx` uses
+   * it to refetch every open session's lines when `'all'` is entered or left —
+   * the viewer's cached text is the only in-app surface whose content the mode
+   * changes. Never fired for a rejected write or a no-op (same mode).
+   */
+  onAnonymizerModeChanged?: (prev: AnonymizerMode, next: AnonymizerMode) => void;
   commands?: Partial<SettingsCommands>; // injected for tests; defaults to the real bridge commands
   /** Where the shared `logtapper_settings` preference blob lives; defaults to `localStorage`. */
   storage?: Pick<Storage, 'getItem' | 'setItem'>;
@@ -62,6 +70,14 @@ export interface SettingsStore {
   fileAssociations: Accessor<FileAssocEntry[]>; refreshFileAssociations(): void;
   setFileAssociation(ext: string, enabled: boolean): Promise<void>; openDefaultAppsSettings(): void;
   anonymizerConfig: Accessor<AnonymizerConfig | null>; refreshAnonymizerConfig(): void; toggleDetector(id: string, enabled: boolean): Promise<void>;
+  /** `anonymizerConfig()?.mode`, or the backend's default (`'external'`) while
+   *  the config has not loaded — every surface that names the mode reads this
+   *  one accessor. The Analyzers panel's pinned card is the only writer. */
+  anonymizerMode: Accessor<AnonymizerMode>;
+  /** Optimistic like `toggleDetector`: the mode is shown at once, written as
+   *  the whole config document (the backend replaces it), reverted on a
+   *  rejection, and `onAnonymizerModeChanged(prev, next)` fires on success. */
+  setAnonymizerMode(mode: AnonymizerMode): Promise<void>;
   testResult: Accessor<AnonymizerTestResult | null>; runAnonymizerTest(text: string): Promise<AnonymizerTestResult>;
   piiMappings: Accessor<Record<string, string>>; refreshPiiMappings(sessionId: string): Promise<void>;
   themes: Accessor<ThemeSummary[]>; refreshThemes(): void; readTheme(slug: string): Promise<UserTheme>;
@@ -231,6 +247,31 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
       setAnonymizerConfig(next);
       return mutate(c.setAnonymizerConfig(next)).catch((e) => { refreshAnonymizerConfig(); throw e; });
     };
+    const anonymizerMode = (): AnonymizerMode => anonymizerConfig()?.mode ?? 'external';
+    const setAnonymizerMode = (mode: AnonymizerMode): Promise<void> => {
+      const prev = anonymizerConfig();
+      // The control is disabled until the config has loaded (nothing to spread
+      // into yet), so this is the same "nothing to write" no-op as `toggleDetector`.
+      if (!prev || prev.mode === mode) return Promise.resolve();
+      const next: AnonymizerConfig = { ...prev, mode };
+      setAnonymizerConfig(next);
+      return mutate(c.setAnonymizerConfig(next))
+        .then(() => {
+          if (disposed) return;
+          // `effectiveAgentRaw` moves with the mode (`None` means agents read
+          // raw); re-read `McpStatus` now, as `setAgentRawAccess` does, so the
+          // presence warning and the General tab reflect this write.
+          refreshMcpStatus?.();
+          deps.onAnonymizerModeChanged?.(prev.mode, mode);
+        })
+        .catch((e: unknown) => {
+          // Put the persisted mode back at once — the optimistic value must not
+          // stand for a poll interval — then re-read the backend's truth.
+          if (!disposed) setAnonymizerConfig(prev);
+          refreshAnonymizerConfig();
+          throw e;
+        });
+    };
     const runAnonymizerTest = (text: string): Promise<AnonymizerTestResult> =>
       mutate(c.testAnonymizer(text)).then((r) => { if (!disposed) setTestResult(r); return r; });
     const refreshPiiMappings = (sessionId: string): Promise<void> =>
@@ -276,7 +317,7 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
       mcpStatus, mcpBridgePending, setMcpBridgeEnabled, mcpBridgeEnabled, agentRawAccessPending, setAgentRawAccess,
       allowlist, refreshAllowlist, addAllowDir, removeAllowDir, setAllowAll,
       fileAssociations, refreshFileAssociations, setFileAssociation, openDefaultAppsSettings,
-      anonymizerConfig, refreshAnonymizerConfig, toggleDetector, testResult, runAnonymizerTest,
+      anonymizerConfig, refreshAnonymizerConfig, toggleDetector, anonymizerMode, setAnonymizerMode, testResult, runAnonymizerTest,
       piiMappings, refreshPiiMappings,
       themes, refreshThemes, readTheme: c.readTheme, saveTheme, deleteTheme: deleteThemeFn,
       importThemeFromFile, exportThemeToFile,
