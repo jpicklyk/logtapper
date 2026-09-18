@@ -351,8 +351,9 @@ export function App(props: AppProps) {
   onCleanup(() => deviceState.dispose());
 
   // Export (W8) — session/processor counts and the `.lts` export run for
-  // the `export` rail surface.
-  const exportStore = createExportStore();
+  // the `export` rail surface. The open editor documents ride along, read at
+  // export time (`editorStore` is built above, so no forward reference here).
+  const exportStore = createExportStore({ getEditorTabs: () => editorStore.toLtwTabs() });
   onCleanup(() => exportStore.dispose());
 
   // Settings (W8) — General/PII/Themes/Sources tabs for the `settings` rail

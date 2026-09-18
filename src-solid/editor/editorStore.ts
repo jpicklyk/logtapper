@@ -16,6 +16,15 @@
  * pending tabs), so it materialises both at construction (usually empty) and
  * whenever a later restore populates it.
  *
+ * `.lts` import: the backend emits `lts-editor-tabs` with the archive's
+ * bundled editor documents once its sessions are open (`services::sessions`,
+ * mirroring React's `useEditorTabRestore`). This store adopts them through
+ * the same `materialize()` as a restore, minus the pending-tabs contract — an
+ * import is not a restore (it *should* dirty the workspace, and `markMutated`
+ * is a no-op during a restore) — and dedups by label so re-importing the same
+ * archive does not double the tabs. The subscription is cancel-safe: a
+ * `dispose()` that races the `listen()` promise still unsubscribes.
+ *
  * Persistence: `toLtwTabs()` projects the open docs back into
  * `LtwEditorTab[]` for `WorkspaceStoreDeps.getEditorTabs` — App wires that in
  * with a forward-reference closure (this store is built *after* the
@@ -29,6 +38,8 @@ import { createEffect, createRoot, createSignal, untrack } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@bridge/commands';
+import { onLtsEditorTabs } from '@bridge/events';
+import type { UnlistenFn } from '@tauri-apps/api/event';
 // Reused rather than re-derived: the same separator/case normalisation the
 // workspace restore uses to decide whether two paths name the same file
 // (`workspaceStore.ts:493` is the other caller).
@@ -88,6 +99,8 @@ export interface EditorStoreDeps {
   workspace: EditorWorkspacePort;
   /** Injected in tests; defaults to the real `@bridge/commands` wrappers. */
   commands?: EditorFileCommands;
+  /** Injected in tests; defaults to the real `lts-editor-tabs` subscription. */
+  listen?: typeof onLtsEditorTabs;
   /** Injected in tests; defaults to the native save dialog. Returns `null`
    *  when the user cancels. */
   chooseSavePath?: (defaultLabel: string) => Promise<string | null>;
@@ -272,6 +285,24 @@ export function createEditorStore(deps: EditorStoreDeps): EditorStore {
       materialize(deps.workspace.takePendingEditorTabs());
     });
 
+    // ── .lts import (see the module doc) ──────────────────────────────────────
+    //
+    // Dedup is by label against the *live* tab list, as React's hook did: the
+    // archive carries no ids, and a file-backed tab's path is not a stable key
+    // either (an archive exported on another machine names a file this one
+    // may not have).
+    let disposed = false;
+    let unlistenLts: UnlistenFn | null = null;
+    const listenLts = deps.listen ?? onLtsEditorTabs;
+    listenLts((payload) => {
+      if (disposed) return;
+      const open = untrack(() => new Set(tabs().map((t) => t.label)));
+      materialize(payload.filter((t) => !open.has(t.label)));
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlistenLts = fn;
+    });
+
     // ── open / new / close ────────────────────────────────────────────────────
 
     const open = async (path: string): Promise<string> => {
@@ -441,7 +472,12 @@ export function createEditorStore(deps: EditorStoreDeps): EditorStore {
           wordWrap: t.wordWrap,
           filePath: t.filePath,
         })),
-      dispose: () => disposeRoot(),
+      dispose: () => {
+        if (disposed) return;
+        disposed = true;
+        unlistenLts?.();
+        disposeRoot();
+      },
     };
   });
 }

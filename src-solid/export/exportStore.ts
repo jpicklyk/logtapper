@@ -1,18 +1,25 @@
 /**
  * Export store (W8): fetches session/processor counts, tracks the
- * include-toggles, and runs the `.lts` export once a
- * destination is chosen. Mirrors React's `ExportModal.tsx`; `editorTabs` is
- * always `[]` here — Solid has no multi-tab editor/workspace state yet
- * (see implementation-notes).
+ * include-toggles, and runs the `.lts` export once a destination is
+ * chosen. Mirrors React's `ExportModal.tsx`, including its
+ * `collectEditorTabs()`: the open editor documents ride along in the `.lts`
+ * via the injected `getEditorTabs` (App wires `editorStore.toLtwTabs`).
+ * Redaction is not an option here any more — the anonymizer mode decides it
+ * (`policy::should_anonymize_for(External)`; PR3 adds the status line).
  */
 import { createRoot, createSignal } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import * as cmds from '@bridge/commands';
-import type { ExportAllOptions, ExportAllSessionsInfo } from '@bridge/types';
+import type { ExportAllOptions, ExportAllSessionsInfo, LtsEditorTabPayload, LtwEditorTab } from '@bridge/types';
 export type ExportCommands = Pick<typeof cmds, 'getExportAllSessionsInfo' | 'exportAllSessions'>;
 export interface ExportStoreDeps {
   /** Injected for tests; defaults to the real bridge commands. */
   commands?: Partial<ExportCommands>;
+  /** The open editor documents to bundle into the archive — W9's
+   *  `editorStore.toLtwTabs`; the `.ltw` and `.lts` tab shapes are identical,
+   *  so the projection is reused as-is. Read at export time, not at
+   *  construction. Defaults to none. */
+  getEditorTabs?: () => LtwEditorTab[];
 }
 export interface ExportOptionsState {
   includeBookmarks: boolean; includeAnalyses: boolean; includeProcessors: boolean;
@@ -30,8 +37,18 @@ export interface ExportStore {
   runExport(destPath: string): Promise<void>;
   dispose(): void;
 }
+const LTS_VIEW_MODES: readonly LtsEditorTabPayload['viewMode'][] = ['editor', 'split', 'preview'];
+function isLtsViewMode(mode: string): mode is LtsEditorTabPayload['viewMode'] {
+  return (LTS_VIEW_MODES as readonly string[]).includes(mode);
+}
 export function createExportStore(deps: ExportStoreDeps = {}): ExportStore {
   const c: ExportCommands = { ...cmds, ...deps.commands };
+  const getEditorTabs = deps.getEditorTabs ?? ((): LtwEditorTab[] => []);
+  // `.ltw` tabs carry `viewMode: string`; the `.lts` payload is the narrowed
+  // union (`types.ts`'s `LtsEditorTabPayload`). Same fallback the editor store
+  // applies when it reads a tab back (`normalizeViewMode`).
+  const toLtsTabs = (tabs: readonly LtwEditorTab[]): LtsEditorTabPayload[] =>
+    tabs.map((t) => ({ ...t, viewMode: isLtsViewMode(t.viewMode) ? t.viewMode : 'editor' }));
   return createRoot((disposeRoot) => {
     const [info, setInfo] = createSignal<ExportAllSessionsInfo | null>(null);
     const [loading, setLoading] = createSignal(false);
@@ -51,7 +68,7 @@ export function createExportStore(deps: ExportStoreDeps = {}): ExportStore {
       setOptions((prev) => ({ ...prev, [key]: value }));
     };
     const runExport = (destPath: string): Promise<void> => {
-      const payload: ExportAllOptions = { destPath, editorTabs: [], ...options() };
+      const payload: ExportAllOptions = { destPath, editorTabs: toLtsTabs(getEditorTabs()), ...options() };
       setExporting(true);
       setError(null);
       return c.exportAllSessions(payload)
