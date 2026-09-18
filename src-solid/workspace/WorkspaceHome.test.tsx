@@ -294,6 +294,26 @@ describe('WorkspaceHome', () => {
     expect(actions.close).toHaveBeenCalledWith('s1');
   });
 
+  it('Focus prefers onFocusSession over the bare store action when the app provides one', () => {
+    const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1' });
+    const sessions = fakeSessions({ order: ['s1'], entries: { s1: sessionEntry('a.log') } });
+    const actions = fakeActions();
+    const onFocusSession = vi.fn();
+    render(() => (
+      <WorkspaceHome
+        store={store}
+        sessions={sessions}
+        actions={actions}
+        liveStream={fakeLiveStreamStore()}
+        onFocusSession={onFocusSession}
+      />
+    ));
+
+    fireEvent.click(screen.getByText('Focus'));
+    expect(onFocusSession).toHaveBeenCalledWith('s1');
+    expect(actions.focus).not.toHaveBeenCalled();
+  });
+
   it('"New workspace" calls store.newWorkspace', () => {
     const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1' });
     render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);

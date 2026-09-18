@@ -660,6 +660,14 @@ export function App(props: AppProps) {
               sessions={store}
               actions={actions}
               liveStream={liveStream}
+              // The same path as clicking the session's tab: focus it AND show
+              // the session surface (the editor may be in front), then put the
+              // home drawer away so the file is actually visible — a no-op on
+              // tiers where the home is a column.
+              onFocusSession={(id) => {
+                selectTab(id, 'session');
+                shellBox.current?.applyDrawer(null);
+              }}
               bookmarks={<BookmarksPanel store={bookmarks} sessions={store} />}
               analyses={
                 <AnalysesIndex
