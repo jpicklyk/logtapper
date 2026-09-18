@@ -18,6 +18,11 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   save: (...args: unknown[]) => saveDialog(...args),
   open: (...args: unknown[]) => openDialog(...args),
 }));
+// The editor store's `.lts` import subscription reaches Tauri's `listen`;
+// resolve to a no-op unlisten so these tests never see an event.
+vi.mock('@bridge/events', () => ({
+  onLtsEditorTabs: vi.fn(() => Promise.resolve(() => {})),
+}));
 
 import { EditorTabs } from './EditorTabs';
 import { createEditorStore } from './editorStore';
