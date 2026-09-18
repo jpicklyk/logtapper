@@ -14,6 +14,7 @@ export type { AgentRequestEvent } from './AgentRequestEvent';
 export type { AgentRequestKind } from './AgentRequestKind';
 export type { AgentRequestPhase } from './AgentRequestPhase';
 export type { AnalysisArtifact } from './AnalysisArtifact';
+export type { AnalysisMarkdownOptions } from './AnalysisMarkdownOptions';
 export type { AnalysisSection } from './AnalysisSection';
 export type { AnalysisUpdateEvent } from './AnalysisUpdateEvent';
 export type { AnonymizerConfig } from './AnonymizerConfig';

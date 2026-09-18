@@ -621,6 +621,8 @@ pub fn run() {
             // Export commands
             commands::export::get_export_all_sessions_info,
             commands::export::export_all_sessions,
+            commands::export::render_analysis_markdown,
+            commands::export::export_analysis_markdown,
             // Workspace v4 commands
             commands::workspace_cmd::save_workspace_v4,
             commands::workspace_cmd::auto_save_workspace,
