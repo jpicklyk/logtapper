@@ -1,5 +1,5 @@
 /** @jsxImportSource solid-js */
-import { Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from 'solid-js';
+import { Show, createEffect, createMemo, createSignal, on, onCleanup, onMount, untrack } from 'solid-js';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { onCatalogUpdate } from '@bridge/events';
 import {
@@ -199,7 +199,13 @@ export function App(props: AppProps) {
   // Bookmarks (W7) — per-session line pins, categories, create-from-cursor,
   // markdown export. Couples to the app only through the controller and
   // session store, same as sections/analyses above.
-  const bookmarks = createBookmarksStore({ sessions: store, controller });
+  // `anonymizerMode` is read lazily: `settings` is built further down (it needs
+  // `presence`), and the accessor is only ever called from an export click.
+  const bookmarks = createBookmarksStore({
+    sessions: store,
+    controller,
+    anonymizerMode: () => settings.anonymizerMode(),
+  });
   onCleanup(() => bookmarks.dispose());
 
   // Workspace home + switcher (W1b) — the workspace list, open/save/switch,
@@ -362,11 +368,56 @@ export function App(props: AppProps) {
   // is the undebounced re-read the security-relevant setters call after a
   // write, so a rejected raw-access toggle is corrected from the backend at
   // once rather than after the next poll.
+  //
+  // `onAnonymizerModeChanged`: the viewer is the one in-app surface whose
+  // *content* the anonymizer mode changes — `get_lines` redacts a Ui page
+  // only under `All` — so entering or leaving `All` refetches every open
+  // session's lines. That is `replace()`'s own recipe (`app/sessions.ts`):
+  // drop the cached content, discard in-flight pages, and bump the
+  // controller's revision through `setViewMode` re-set to its current value
+  // (the documented unconditional bump `createCacheBinding` resets on). A
+  // search's highlights ride the refetched page (the backend recomputes them
+  // on the redacted text); a filter's line set is unchanged by design — the
+  // backend scans raw text in every mode, so the matched set is the same.
+  // Live sessions are included: their batches to the Ui follow the same
+  // decision, and `get_lines` serves a stream's retained lines like a file's.
+  const refetchSessionLines = (sessionId: string): void => {
+    const entry = store.byId(sessionId);
+    if (!entry) return;
+    cacheManager.clearSession(sessionId);
+    entry.dataSource.invalidate();
+    controller.setViewMode(sessionId, controller.viewMode(sessionId));
+  };
   const settings = createSettingsStore({
     mcpStatus: presence.status,
     refreshMcpStatus: presence.refreshStatus,
+    onAnonymizerModeChanged: (prev, next) => {
+      if (prev !== 'all' && next !== 'all') return;
+      for (const id of untrack(store.order)) refetchSessionLines(id);
+    },
   });
   onCleanup(() => settings.dispose());
+  // The pinned PII card renders the mode from the persisted config, and the
+  // General tab's raw-access checkbox is gated on it — load it once here
+  // rather than only when Settings → PII mounts.
+  onMount(() => settings.refreshAnonymizerConfig());
+  /** An agent is talking to the bridge right now: the orb is anything but
+   *  `detached` (which already folds in `running` and the idle threshold). */
+  const agentConnected = (): boolean =>
+    (presence.status()?.running ?? false) && presence.agent.state() !== 'detached';
+  const bridgeRunning = (): boolean => presence.status()?.running ?? false;
+  /**
+   * Bring the Analyzers panel into view — the export dialog's "Change" link
+   * for the anonymizer mode, whose only writer is that panel's pinned card.
+   * On compact the panel is a rail drawer (`applyDrawer` opens it, and one
+   * drawer at a time means the export drawer goes away); on standard and
+   * wider it is the `details` column, which may be folded — unfold it. Both
+   * calls are no-ops where they do not apply, same as the analyses opener.
+   */
+  const showAnalyzers = (): void => {
+    shellBox.current?.applyDrawer('analyzers');
+    shellBox.current?.collapse.set('details', false);
+  };
 
   // Packs (P1) — the remote marketplace half (browse/install/uninstall/
   // update) for the Packs tab now mounted where `settings` used to hold a
@@ -661,6 +712,7 @@ export function App(props: AppProps) {
               sessions={store}
               actions={actions}
               liveStream={liveStream}
+              anonymizerMode={settings.anonymizerMode}
               // The same path as clicking the session's tab: focus it AND show
               // the session surface (the editor may be in front), then put the
               // home drawer away so the file is actually visible — a no-op on
@@ -702,6 +754,11 @@ export function App(props: AppProps) {
                   sessionId={entry().load.sessionId}
                   sessionName={entry().load.sourceName}
                   lastRunCaller={lastRunCaller}
+                  anonymizerMode={settings.anonymizerMode}
+                  setAnonymizerMode={settings.setAnonymizerMode}
+                  bridgeRunning={bridgeRunning}
+                  agentConnected={agentConnected}
+                  anonymizerLoading={() => settings.anonymizerConfig() === null}
                   onOpenDeviceState={(processorId) =>
                     deviceState.setSelectedTracker(entry().load.sessionId, processorId)
                   }
@@ -769,6 +826,7 @@ export function App(props: AppProps) {
                               sessionId={entry().load.sessionId}
                               tailMode={entry().kind === 'live'}
                               controller={controller}
+                              onError={actions.reportError}
                               onActivate={() => splitView.setActivePane('main')}
                             />
                           </>
@@ -805,6 +863,7 @@ export function App(props: AppProps) {
                         tailMode={entry().kind === 'live'}
                         controller={controller}
                         paneId={SECONDARY_PANE_ID}
+                        onError={actions.reportError}
                         onActivate={() => splitView.setActivePane('secondary')}
                       />
                     </>
@@ -825,9 +884,13 @@ export function App(props: AppProps) {
               )}
             </Show>
           ),
-          export: () => <ExportDialog store={exportStore} />,
+          export: () => (
+            <ExportDialog store={exportStore} anonymizerMode={settings.anonymizerMode} onChangeMode={showAnalyzers} />
+          ),
           settings: () => <SettingsPanel store={settings} packs={packs} theme={props.theme} />,
-          'stream-controls': () => <StreamControlsPanel store={liveStream} />,
+          'stream-controls': () => (
+            <StreamControlsPanel store={liveStream} anonymizerMode={settings.anonymizerMode} />
+          ),
         }}
       />
       {/* Launch-time updates prompt — over the whole window, whatever surface
