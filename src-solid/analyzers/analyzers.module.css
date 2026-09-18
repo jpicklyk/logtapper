@@ -262,6 +262,86 @@
   margin-top: 4px;
 }
 
+/* ── Pinned PII Anonymizer card: the mode control ─────────────────────── */
+
+.modeBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.modeRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Segmented: one bordered pill, the options share its edges. The checked
+   option takes the card's accent (`--processor-transformer` for the
+   anonymizer), never the generic `--accent`, so it reads as this card's. */
+.modeGroup {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  overflow: hidden;
+}
+
+.modeOption {
+  border: none;
+  border-right: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.modeOption:last-child {
+  border-right: none;
+}
+
+.modeOption:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-raised);
+}
+
+.modeOption:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.modeOption:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.modeOptionChecked,
+.modeOptionChecked:hover:not(:disabled) {
+  color: var(--card-accent, var(--accent));
+  background: var(--surface-overlay);
+  font-weight: 600;
+}
+
+.modeCaption {
+  color: var(--text-subtle);
+  font-size: 10.5px;
+}
+
+.modeDescription {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* `None` is the one mode that leaves raw text everywhere — same weight as the
+   not-applicable `.skipRow`. */
+.modeDescriptionWarn {
+  color: var(--warning);
+}
+
 /* ── Overlays: detail drawer, add-analyzer drawer ─────────────────────── */
 
 .overlay {
