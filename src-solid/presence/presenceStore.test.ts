@@ -178,6 +178,17 @@ describe('createPresenceStore — status and raw access', () => {
   it('defaults agentRawAccess to false before the first status resolves', () => {
     const s = build();
     expect(s.agentRawAccess()).toBe(false);
+    expect(s.effectiveAgentRaw()).toBe(false);
+  });
+
+  it('exposes the backend-computed effectiveAgentRaw and drives the orb from it, not the checkbox', async () => {
+    // Mode None with the checkbox off: the backend says agents read raw.
+    getMcpStatusMock.mockResolvedValue(status({ agentRawAccess: false, anonymizerMode: 'none', effectiveAgentRaw: true }));
+    const s = build();
+    await flush();
+    expect(s.agentRawAccess()).toBe(false);
+    expect(s.effectiveAgentRaw()).toBe(true);
+    expect(s.agent.state()).toBe('raw');
   });
 
   it('resolves session names from the session list, falling back to the id', async () => {

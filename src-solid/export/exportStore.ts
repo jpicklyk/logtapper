@@ -4,8 +4,9 @@
  * chosen. Mirrors React's `ExportModal.tsx`, including its
  * `collectEditorTabs()`: the open editor documents ride along in the `.lts`
  * via the injected `getEditorTabs` (App wires `editorStore.toLtwTabs`).
- * Redaction is not an option here any more — the anonymizer mode decides it
- * (`policy::should_anonymize_for(External)`; PR3 adds the status line).
+ * Redaction is not an option here — the anonymizer mode decides it
+ * (`policy::should_anonymize_for(External)`); `ExportDialog` states the mode
+ * from `settingsStore.anonymizerMode` and points at the Analyzers panel.
  */
 import { createRoot, createSignal } from 'solid-js';
 import type { Accessor } from 'solid-js';

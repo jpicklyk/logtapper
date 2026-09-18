@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
 import type {
-  AnonymizerConfig, AnonymizerTestResult, FileAssocEntry, McpBundleInfo, McpStatus, Source, ThemeSummary, UserTheme,
+  AnonymizerConfig, AnonymizerMode, AnonymizerTestResult, FileAssocEntry, McpBundleInfo, McpStatus, Source, ThemeSummary, UserTheme,
 } from '@bridge/types';
 import type { AppliedUserTheme, Density, ThemeController, ThemeMode } from '../theme';
 import { SettingsPanel } from './SettingsPanel';
@@ -24,6 +24,7 @@ function fakeStore(): SettingsStore {
     allowlist: () => null, refreshAllowlist: vi.fn(), addAllowDir: vi.fn(noop), removeAllowDir: vi.fn(noop), setAllowAll: vi.fn(noop),
     fileAssociations: () => [] as FileAssocEntry[], refreshFileAssociations: vi.fn(), setFileAssociation: vi.fn(noop), openDefaultAppsSettings: vi.fn(),
     anonymizerConfig: () => null as AnonymizerConfig | null, refreshAnonymizerConfig: vi.fn(), toggleDetector: vi.fn(noop),
+    anonymizerMode: () => 'external' as AnonymizerMode, setAnonymizerMode: vi.fn(noop),
     testResult: () => null as AnonymizerTestResult | null,
     runAnonymizerTest: vi.fn(() => Promise.resolve({ anonymized: '', replacements: [] })),
     piiMappings: () => ({}), refreshPiiMappings: vi.fn(noop),
@@ -184,6 +185,29 @@ describe('GeneralTab security toggle (D1-M5, D1-M6)', () => {
     expect(box.checked).toBe(true);
   });
 
+  it('disables (but keeps) the raw-access checkbox under anonymizer mode None, with the reason', () => {
+    const store = fakeStore();
+    const [status] = createSignal<McpStatus | null>({ running: true, idleSecs: 2, agentRawAccess: false } as unknown as McpStatus);
+    (store as { mcpStatus: () => McpStatus | null }).mcpStatus = status;
+    const [mode, setMode] = createSignal<AnonymizerMode>('external');
+    (store as { anonymizerMode: () => AnonymizerMode }).anonymizerMode = mode;
+
+    render(() => <SettingsPanel store={store} />);
+    const box = screen.getByTestId('agent-raw-access') as HTMLInputElement;
+    expect(box.disabled).toBe(false);
+    expect(screen.queryByTestId('agent-raw-access-off-hint')).toBeNull();
+
+    setMode('none');
+    expect(box.disabled).toBe(true);
+    expect(box.indeterminate).toBe(false);
+    expect(screen.getByTestId('agent-raw-access-off-hint').textContent).toContain('agents already read raw text');
+    box.click();
+    expect(store.setAgentRawAccess).not.toHaveBeenCalled();
+
+    setMode('all');
+    expect(box.disabled).toBe(false);
+  });
+
   it('labels the bridge "starting" while the preference is on but it is not running yet', () => {
     const store = fakeStore();
     const [enabled, setEnabled] = createSignal(false);
@@ -193,6 +217,46 @@ describe('GeneralTab security toggle (D1-M5, D1-M6)', () => {
     expect(screen.getByText(/Bridge: disabled/)).toBeTruthy();
     setEnabled(true);
     expect(screen.getByText(/Bridge: starting/)).toBeTruthy();
+  });
+});
+
+describe('PiiTab anonymizer mode mirror', () => {
+  function mountPii(mode: AnonymizerMode) {
+    const store = fakeStore();
+    const [modeSignal, setMode] = createSignal<AnonymizerMode>(mode);
+    (store as { anonymizerMode: () => AnonymizerMode }).anonymizerMode = modeSignal;
+    (store as { anonymizerConfig: () => AnonymizerConfig | null }).anonymizerConfig = () => ({
+      mode,
+      detectors: [{ id: 'email', label: 'Email', tier: 'strict', fpHint: 'low', enabled: true, patterns: [] }],
+    });
+    render(() => <SettingsPanel store={store} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'PII' }));
+    return { store, setMode };
+  }
+
+  it('shows the mode read-only, with the card\'s description and where to change it', () => {
+    const { setMode } = mountPii('external');
+    const line = () => screen.getByTestId('pii-mode-line').textContent ?? '';
+    expect(line()).toContain('Mode: External');
+    expect(line()).toContain('agents and exports are anonymized; the viewer shows raw text');
+    expect(screen.getByText(/Change it on the Analyzers panel/)).toBeTruthy();
+    // No writer here: the only radios/buttons for the mode live on the Analyzers panel.
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+    expect(screen.queryByTestId('pii-off-hint')).toBeNull();
+    setMode('all');
+    expect(line()).toContain('Mode: All');
+  });
+
+  it('keeps the detector toggles and the test box usable under None, with an "anonymizer is off" hint', () => {
+    const { store } = mountPii('none');
+    expect(screen.getByTestId('pii-mode-line').textContent).toContain('raw text everywhere');
+    expect(screen.getByTestId('pii-off-hint').textContent).toContain('The anonymizer is off');
+    const detector = screen.getAllByRole('checkbox')[0] as HTMLInputElement;
+    expect(detector.disabled).toBe(false);
+    fireEvent.click(detector);
+    expect(store.toggleDetector).toHaveBeenCalledWith('email', false);
+    const textarea = screen.getByPlaceholderText(/paste a log line/i) as HTMLTextAreaElement;
+    expect(textarea.disabled).toBe(false);
   });
 });
 

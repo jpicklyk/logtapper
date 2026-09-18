@@ -45,7 +45,10 @@
 }
 .textInput:disabled { opacity: 0.6; }
 
-.checkboxRow { display: flex; align-items: center; gap: 6px; }
+/* The anonymizer-mode status line that replaced the per-stream checkbox.
+   `None` is the only state that ships raw PII, hence the warning colour. */
+.modeStatus { margin: 0; color: var(--text-muted); line-height: 1.45; }
+.modeStatus[data-mode='none'] { color: var(--warning); }
 
 .error {
   margin: 0;

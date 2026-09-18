@@ -35,7 +35,10 @@ function fakeStore(overrides: Partial<McpStatus> = {}) {
   const [requireConfirm, setRequireConfirm] = createSignal(true);
 
   const agentRawAccess = () => status().agentRawAccess;
-  const agent = createAgentState({ bridgeStatus: status, agentRawAccess, activity: entries });
+  // Same wiring as the real store: the orb's raw state follows the backend's
+  // combined answer, not the checkbox alone.
+  const effectiveAgentRaw = () => status().effectiveAgentRaw;
+  const agent = createAgentState({ bridgeStatus: status, agentRawAccess: effectiveAgentRaw, activity: entries });
 
   const calls = {
     navigate: [] as NavTarget[],
@@ -51,6 +54,7 @@ function fakeStore(overrides: Partial<McpStatus> = {}) {
     status,
     refreshStatus: () => { calls.refreshStatus += 1; },
     agentRawAccess,
+    effectiveAgentRaw,
     entries,
     focus,
     pendingNav,
@@ -116,18 +120,29 @@ describe('<PresencePanel> — orb state', () => {
     expect(container.querySelector('[data-state="idle"]')).toBeTruthy();
   });
 
-  it('renders the raw orb and the banner only when raw access is on', () => {
+  it('renders the raw orb and the banner only when agents effectively read raw', () => {
     const off = fakeStore();
     const first = render(() => <PresencePanel store={off.store} now={() => NOW} />);
     expect(first.container.querySelector('[data-testid="raw-banner"]')).toBeNull();
     first.unmount();
 
-    const on = fakeStore({ agentRawAccess: true });
+    const on = fakeStore({ agentRawAccess: true, effectiveAgentRaw: true });
     const second = render(() => <PresencePanel store={on.store} now={() => NOW} />);
     expect(second.container.querySelector('.orb--raw')).toBeTruthy();
     expect(second.container.querySelector('[data-testid="raw-banner"]')!.textContent).toContain(
       'Raw access ON',
     );
+    second.unmount();
+
+    // Anonymizer mode None opens the same door with the checkbox still off:
+    // the warning is keyed off the backend's `effectiveAgentRaw`, and names
+    // the gate that is actually open.
+    const modeNone = fakeStore({ agentRawAccess: false, anonymizerMode: 'none', effectiveAgentRaw: true });
+    const third = render(() => <PresencePanel store={modeNone.store} now={() => NOW} />);
+    expect(third.container.querySelector('.orb--raw')).toBeTruthy();
+    const banner = third.container.querySelector('[data-testid="raw-banner"]')!;
+    expect(banner.textContent).toContain('Anonymizer OFF');
+    expect(banner.textContent).toContain('reads un-anonymized log text');
   });
 
   it('renders the detached orb when the bridge is not running', () => {

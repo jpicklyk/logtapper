@@ -1,6 +1,7 @@
 /** @jsxImportSource solid-js */
 import { For, Show, children, createMemo, createSignal } from 'solid-js';
-import type { JSX } from 'solid-js';
+import type { Accessor, JSX } from 'solid-js';
+import type { AnonymizerMode } from '@bridge/types';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import type { WorkspaceIdentity } from '@bridge/workspaceTypes';
 // `'../app'` also matches `App.tsx` on a case-insensitive filesystem and TS
@@ -50,12 +51,19 @@ function restoreWarningTitle(count: number): string {
     : `${count} parts of this workspace could not be restored`;
 }
 
+/** What the attach panel states when the host passes no mode accessor (tests):
+ *  the backend's own default, the same value the settings store reports
+ *  before its config has loaded. */
+const DEFAULT_ANONYMIZER_MODE: Accessor<AnonymizerMode> = () => 'external';
+
 export interface WorkspaceHomeProps {
   store: WorkspaceStore;
   sessions: SessionStore;
   actions: AppActions;
   /** L1's live-session store — the attach action renders its picker in place. */
   liveStream: LiveStreamStore;
+  /** The settings store's anonymizer mode, for the attach panel's status line. */
+  anonymizerMode?: Accessor<AnonymizerMode>;
   /**
    * The bookmarks panel, rendered under the sessions list. Bookmarks are
    * workspace content (saved in the `.ltw`), and as a navigator surface they
@@ -399,7 +407,10 @@ export function WorkspaceHome(props: WorkspaceHomeProps): JSX.Element {
               </div>
               <Show when={showAttach()}>
                 <div class={styles.attachPanel} data-testid="workspace-attach-panel">
-                  <StreamControlsPanel store={props.liveStream} />
+                  <StreamControlsPanel
+                    store={props.liveStream}
+                    anonymizerMode={props.anonymizerMode ?? DEFAULT_ANONYMIZER_MODE}
+                  />
                 </div>
               </Show>
             </div>

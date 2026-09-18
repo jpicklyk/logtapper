@@ -86,7 +86,15 @@ export interface PresenceStore {
    * poll's last one. The backend stays the only writer of `status`.
    */
   refreshStatus: () => void;
+  /** The raw-access checkbox alone (Settings → General). */
   agentRawAccess: Accessor<boolean>;
+  /**
+   * Whether agents actually read raw text right now: the backend's
+   * `McpStatus.effectiveAgentRaw` (raw access on, OR the anonymizer mode is
+   * `None`), computed there so the presence warning, the orb's `raw` state,
+   * the anonymizer card and Settings all agree. Never recomputed here.
+   */
+  effectiveAgentRaw: Accessor<boolean>;
   /** Journaled actions, oldest first, deduped by id and capped. */
   entries: Accessor<readonly ActivityEntry[]>;
   focus: Accessor<FocusContext | null>;
@@ -178,10 +186,13 @@ export function createPresenceStore(options: PresenceStoreOptions = {}): Presenc
     };
 
     const agentRawAccess = createMemo(() => status()?.agentRawAccess ?? false);
+    const effectiveAgentRaw = createMemo(() => status()?.effectiveAgentRaw ?? false);
 
+    // The orb goes `raw` whenever agents read raw text, whichever of the two
+    // gates opened it.
     const agent = createAgentState({
       bridgeStatus: status,
-      agentRawAccess,
+      agentRawAccess: effectiveAgentRaw,
       activity: entries,
     });
 
@@ -385,6 +396,7 @@ export function createPresenceStore(options: PresenceStoreOptions = {}): Presenc
       status,
       refreshStatus,
       agentRawAccess,
+      effectiveAgentRaw,
       entries,
       focus,
       pendingNav,
