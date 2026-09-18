@@ -111,6 +111,15 @@
   --p-teal-400: #2dd4bf;
   --p-orange-500: #ff6128;
 
+  /* ── Brand: the woodpecker mascot's crest (src-tauri/icons/icon.svg,
+     #e3393d). Two text-safe tunings of that hue, leaning orange so the brand
+     stays visibly apart from --danger. The exact crest is deliberately not a
+     primitive: as a large fill it overpowered the cool neutral palette, and
+     as text it is only 4.27:1 on white. The brand is a thin accent here — a
+     tab edge, the "needs you" orb, a bookmark — never a button face. ── */
+  --p-brand-400: #ff6b47; /* brand, dark family — 6.8:1 on --surface */
+  --p-brand-600: #b8301c; /* brand, light family — 6.0:1 on --surface */
+
   /* ── Dark reds (level backgrounds, dark theme only) ── */
   --p-darkred-900: #2d1117;
   --p-darkred-800: #3d1118;
@@ -166,11 +175,11 @@
 
   /* ── Domain tokens whose formula is identical in all four themes ──
      Safe to declare once: every input they reference (--accent, --danger,
-     --success, --warning, --surface*, --text-dimmed, --match, --pii,
-     --agent-idle) is itself redefined per theme/family below, so these
+     --success, --warning, --brand, --surface*, --text-dimmed, --match,
+     --pii, --agent-idle) is itself redefined per theme/family below, so these
      formulas resolve differently per theme without being redeclared. ── */
   --bookmark-1: var(--danger);
-  --bookmark-2: var(--p-orange-500);
+  --bookmark-2: var(--brand);
   --bookmark-3: var(--warning);
   --bookmark-4: var(--success);
   --bookmark-5: var(--accent);
@@ -187,6 +196,9 @@
 
   --agent-reading: var(--accent);
   --agent-running: var(--success);
+  /* The one moment the woodpecker taps: "needs you" is the brand colour, not
+     the warning amber it used to share with log-level warnings. */
+  --agent-needs: var(--brand);
   --agent-raw: var(--danger);
   --caller-human: var(--agent-idle);
   --caller-agent: var(--accent);
@@ -259,7 +271,6 @@
 
   --agent-idle: #7c8ea3;
   --agent-wrote: #c9a227;
-  --agent-needs: #f0a500;
 
   --diff-added: rgba(63, 185, 80, 0.15);
   --diff-removed: rgba(248, 81, 73, 0.15);
@@ -287,7 +298,6 @@
 
   --agent-idle: #6b7a8c;
   --agent-wrote: #7d4e00;
-  --agent-needs: #b35c00;
 
   --diff-added: rgba(26, 127, 55, 0.12);
   --diff-removed: rgba(207, 34, 46, 0.12);
@@ -315,6 +325,9 @@
   --accent-base: var(--p-blue-500);
   --accent-muted: rgba(88, 166, 255, 0.12);
   --accent-border: rgba(88, 166, 255, 0.25);
+
+  --brand: var(--p-brand-400);
+  --brand-muted: rgba(255, 107, 71, 0.14);
 
   --danger: var(--p-red-400);
   --danger-muted: rgba(248, 81, 73, 0.12);
@@ -353,6 +366,9 @@
   --accent-muted: rgba(9, 105, 218, 0.1);
   --accent-border: rgba(9, 105, 218, 0.2);
 
+  --brand: var(--p-brand-600);
+  --brand-muted: rgba(184, 48, 28, 0.1);
+
   --danger: var(--p-red-500);
   --danger-muted: rgba(207, 34, 46, 0.1);
   --success: var(--p-green-500);
@@ -390,6 +406,10 @@
   --accent-base: var(--p-blue-400);
   --accent-muted: rgba(127, 186, 255, 0.16);
   --accent-border: rgba(127, 186, 255, 0.32);
+
+  /* Same value as dark: already 6.8:1 on both surfaces. */
+  --brand: var(--p-brand-400);
+  --brand-muted: rgba(255, 107, 71, 0.18);
 
   --danger: var(--p-red-300);
   --danger-muted: rgba(255, 123, 115, 0.16);
@@ -431,6 +451,10 @@
   --accent-base: #073d7c;
   --accent-muted: rgba(10, 79, 158, 0.12);
   --accent-border: rgba(10, 79, 158, 0.28);
+
+  /* Same value as light: already 6.0:1 on both surfaces. */
+  --brand: var(--p-brand-600);
+  --brand-muted: rgba(184, 48, 28, 0.14);
 
   --danger: var(--p-red-600);
   --danger-muted: rgba(164, 4, 26, 0.12);
