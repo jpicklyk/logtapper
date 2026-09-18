@@ -1121,7 +1121,23 @@ server.tool(
     "doesn't carry its own sessionId (so a client that PUTs bare references doesn't " +
     "silently de-attribute the artifact from every session). A reference left " +
     "unresolved (no sessionId, and none inferred) still displays in the UI but " +
-    "cannot be attributed to a specific session's log lines.",
+    "cannot be attributed to a specific session's log lines.\n\n" +
+    "'export' writes ONE analysis as a self-contained Markdown hand-off document " +
+    "to dest_path: the narrative plus, under each section, the referenced log " +
+    "lines inlined with context_lines (default 2, max 10) lines around each " +
+    "reference, read from the live session at export time (a closed session, an " +
+    "unattributed reference or a line past the end of the source renders a " +
+    "one-line note instead of failing). The rendered text is never returned by " +
+    "this tool — read the file back through logtapper_open_file if you need it.\n\n" +
+    "GATE for 'export': dest_path's PARENT DIRECTORY must already exist inside the " +
+    "MCP open allowlist (see logtapper_settings action 'open_allowlist'); the file " +
+    "itself need not exist yet. A denied destination is HTTP 403 NOT_ALLOWED — " +
+    "identical whether the parent is outside the allowlist or does not exist, by " +
+    "the same anti-probing design as logtapper_open_file. Raw log-line text in the " +
+    "document is PII-redacted the same way every other raw-line tool is — by the " +
+    "user's anonymizer mode plus the raw-access setting (see logtapper_settings " +
+    "action 'agent_access'); nothing in this call's arguments can change that, and " +
+    "the document's header says `anonymized` when it applied.",
   {
     session_id: z
       .string()
@@ -1133,12 +1149,23 @@ server.tool(
           "'get'/'update'/'delete' need no session context."
       ),
     action: z
-      .enum(["list", "get", "publish", "update", "delete"])
-      .describe("Action: list, get, publish, update, or delete"),
+      .enum(["list", "get", "publish", "update", "delete", "export"])
+      .describe("Action: list, get, publish, update, delete, or export"),
     artifact_id: z
       .string()
       .optional()
-      .describe("Analysis artifact ID (required for get, update, delete)"),
+      .describe("Analysis artifact ID (required for get, update, delete, export)"),
+    dest_path: z
+      .string()
+      .optional()
+      .describe("Destination `.md` path for 'export' (required for 'export'; see GATE)"),
+    context_lines: z
+      .number()
+      .int()
+      .min(0)
+      .max(10)
+      .optional()
+      .describe("Lines of log context around each reference in an 'export' (default 2, max 10)"),
     title: z
       .string()
       .optional()
@@ -1180,7 +1207,7 @@ server.tool(
       .optional()
       .describe("Analysis sections (required for publish, optional for update)"),
   },
-  async ({ session_id, action, artifact_id, title, sections }) => {
+  async ({ session_id, action, artifact_id, title, sections, dest_path, context_lines }) => {
     const sid = session_id ? encodeURIComponent(session_id) : undefined;
     try {
       switch (action) {
@@ -1188,6 +1215,23 @@ server.tool(
           return ok(
             await bridgeGet<AnalysisArtifact[]>(sid ? `/mcp/sessions/${sid}/analyses` : "/mcp/analyses")
           );
+        case "export": {
+          if (!artifact_id) {
+            return argError("artifact_id is required for 'export'");
+          }
+          if (!dest_path) {
+            return argError("dest_path is required for 'export'");
+          }
+          // Workspace-unique id, so the route is never session-scoped. The
+          // body carries only the destination and the context width —
+          // redaction is decided by the bridge's policy, never by an argument.
+          return ok(
+            await bridgePost<Ack>(`/mcp/analyses/${encodeURIComponent(artifact_id)}/export`, {
+              destPath: dest_path,
+              ...(context_lines !== undefined ? { contextLines: context_lines } : {}),
+            })
+          );
+        }
         case "get": {
           if (!artifact_id) {
             return argError("artifact_id is required for 'get'");
