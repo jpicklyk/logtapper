@@ -38,6 +38,9 @@ export function GeneralTab(props: GeneralTabProps) {
   /** No `McpStatus` yet: the backend's answer is unknown, so the security toggle
    *  below must not claim one (M6). */
   const statusUnknown = createMemo(() => status() === null);
+  /** Under anonymizer mode `None` agents already read raw text, so the
+   *  raw-access checkbox has nothing left to grant: shown, disabled, explained. */
+  const anonymizerOff = createMemo(() => props.store.anonymizerMode() === 'none');
   const addDir = async (): Promise<void> => {
     const result = await openDirectoryDialog({ directory: true, multiple: false }).catch(() => null);
     if (typeof result === 'string') reported(props.store.addAllowDir(result));
@@ -78,7 +81,16 @@ export function GeneralTab(props: GeneralTabProps) {
         <div class={styles.row}>
           <div class={styles.label}>
             <span>Allow agents to read raw (un-anonymized) log text</span>
-            <span class={styles.labelHint}>Off by default: agents read PII replaced by stable tokens such as {'<EMAIL-1>'}.</span>
+            <Show
+              when={!anonymizerOff()}
+              fallback={
+                <span class={styles.warningText} data-testid="agent-raw-access-off-hint">
+                  The anonymizer is off — agents already read raw text.
+                </span>
+              }
+            >
+              <span class={styles.labelHint}>Off by default: agents read PII replaced by stable tokens such as {'<EMAIL-1>'}.</span>
+            </Show>
           </div>
           <input
             type="checkbox"
@@ -89,9 +101,15 @@ export function GeneralTab(props: GeneralTabProps) {
               createEffect(() => { el.indeterminate = statusUnknown(); });
             }}
             checked={status()?.agentRawAccess ?? false}
-            disabled={statusUnknown() || props.store.agentRawAccessPending()}
+            disabled={statusUnknown() || anonymizerOff() || props.store.agentRawAccessPending()}
             aria-busy={statusUnknown() || props.store.agentRawAccessPending()}
-            title={statusUnknown() ? 'Waiting for the backend to report the current setting…' : undefined}
+            title={
+              statusUnknown()
+                ? 'Waiting for the backend to report the current setting…'
+                : anonymizerOff()
+                  ? 'The anonymizer is off — agents already read raw text'
+                  : undefined
+            }
             onChange={(e) => reported(props.store.setAgentRawAccess(e.currentTarget.checked))}
           />
         </div>

@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
 import { save } from '@tauri-apps/plugin-dialog';
-import type { ExportAllSessionsInfo } from '@bridge/types';
+import type { AnonymizerMode, ExportAllSessionsInfo } from '@bridge/types';
 import { ExportDialog } from './ExportDialog';
 import { createExportStore } from './exportStore';
 import type { ExportCommands } from './exportStore';
@@ -19,9 +19,9 @@ const INFO: ExportAllSessionsInfo = {
   totalPipelineProcessorCount: 5,
 };
 
-function mount(commands: Partial<ExportCommands>) {
+function mount(commands: Partial<ExportCommands>, mode: AnonymizerMode = 'external', onChangeMode?: () => void) {
   const store = createExportStore({ commands });
-  const result = render(() => <ExportDialog store={store} />);
+  const result = render(() => <ExportDialog store={store} anonymizerMode={() => mode} onChangeMode={onChangeMode} />);
   return { store, result };
 }
 
@@ -87,5 +87,42 @@ describe('ExportDialog (D1-L11)', () => {
     expect(exportAllSessions).not.toHaveBeenCalled();
     expect(screen.queryByTestId('export-success')).toBeNull();
     store.dispose();
+  });
+
+  // The per-export anonymize checkbox is gone: redaction of exported log
+  // lines is the anonymizer mode's External-pathway decision, made in the
+  // backend. The dialog only states the mode and points at its writer.
+  describe('anonymizer mode status line', () => {
+    it.each<[AnonymizerMode, RegExp]>([
+      ['all', /^All — exported log lines are anonymized/],
+      ['external', /^External — exported log lines are anonymized; the viewer shows raw text/],
+      ['none', /^None — exported raw/],
+    ])('states the mode %s and renders no anonymize checkbox', async (mode, expected) => {
+      const { store } = mount({ getExportAllSessionsInfo: () => Promise.resolve(INFO) }, mode);
+      await vi.waitFor(() => expect(screen.getByTestId('export-anonymizer-status')).toBeTruthy());
+      const status = screen.getByTestId('export-anonymizer-status');
+      expect(status.textContent).toMatch(expected);
+      expect(status.getAttribute('data-mode')).toBe(mode);
+      expect(screen.queryByLabelText(/anonymize/i)).toBeNull();
+      // The include toggles are the only checkboxes left.
+      expect(screen.getAllByRole('checkbox')).toHaveLength(3);
+      store.dispose();
+    });
+
+    it('"Change" hands off to the host, which shows the Analyzers panel', async () => {
+      const onChangeMode = vi.fn();
+      const { store } = mount({ getExportAllSessionsInfo: () => Promise.resolve(INFO) }, 'external', onChangeMode);
+      await vi.waitFor(() => expect(screen.getByRole('button', { name: 'Change' })).toBeTruthy());
+      fireEvent.click(screen.getByRole('button', { name: 'Change' }));
+      expect(onChangeMode).toHaveBeenCalledTimes(1);
+      store.dispose();
+    });
+
+    it('renders no "Change" affordance when the host gave none', async () => {
+      const { store } = mount({ getExportAllSessionsInfo: () => Promise.resolve(INFO) });
+      await vi.waitFor(() => expect(screen.getByTestId('export-anonymizer-status')).toBeTruthy());
+      expect(screen.queryByRole('button', { name: 'Change' })).toBeNull();
+      store.dispose();
+    });
   });
 });

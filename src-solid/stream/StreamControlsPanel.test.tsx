@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
-import type { AdbDevice } from '@bridge/types';
+import type { AdbDevice, AnonymizerMode } from '@bridge/types';
 import { StreamControlsPanel } from './StreamControlsPanel';
 import type { LiveStreamStore } from './streamStore';
 import type { StreamSessionStatus, StreamStartOptions } from '../viewer';
@@ -61,19 +61,19 @@ const DEVICE: AdbDevice = { serial: 'emulator-5554', model: 'sdk_gphone64_x86_64
 describe('StreamControlsPanel', () => {
   it('refreshes devices on mount', () => {
     const store = fakeStore();
-    render(() => <StreamControlsPanel store={store} />);
+    render(() => <StreamControlsPanel store={store} anonymizerMode={() => 'external'} />);
     expect(store.refreshDevices).toHaveBeenCalledTimes(1);
   });
 
   it('shows an empty-state hint when no devices are found', () => {
     const store = fakeStore({ devices: [] });
-    render(() => <StreamControlsPanel store={store} />);
+    render(() => <StreamControlsPanel store={store} anonymizerMode={() => 'external'} />);
     expect(screen.getByText(/no devices found/i)).toBeTruthy();
   });
 
   it('lists devices and defaults the selection to the first one', () => {
     const store = fakeStore({ devices: [DEVICE] });
-    render(() => <StreamControlsPanel store={store} />);
+    render(() => <StreamControlsPanel store={store} anonymizerMode={() => 'external'} />);
     expect(screen.getByText('emulator-5554')).toBeTruthy();
     const radio = screen.getByRole('radio') as HTMLInputElement;
     expect(radio.checked).toBe(true);
@@ -81,7 +81,7 @@ describe('StreamControlsPanel', () => {
 
   it('starts a capture with the selected device and package filter', async () => {
     const store = fakeStore({ devices: [DEVICE] });
-    render(() => <StreamControlsPanel store={store} />);
+    render(() => <StreamControlsPanel store={store} anonymizerMode={() => 'external'} />);
 
     fireEvent.input(screen.getByLabelText(/package \/ tag filter/i), { target: { value: 'com.example.app' } });
     fireEvent.click(screen.getByRole('button', { name: /start capture/i }));
@@ -94,7 +94,7 @@ describe('StreamControlsPanel', () => {
     const store = fakeStore({
       status: { phase: 'streaming', sessionId: 's1', sourceName: 'emulator-5554', sourceType: 'Logcat', totalLines: 5 },
     });
-    render(() => <StreamControlsPanel store={store} />);
+    render(() => <StreamControlsPanel store={store} anonymizerMode={() => 'external'} />);
 
     expect(screen.queryByRole('button', { name: /start capture/i })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /stop/i }));
@@ -104,7 +104,7 @@ describe('StreamControlsPanel', () => {
 
   it('disables Save capture until a session exists, then saves to the chosen path', async () => {
     const store = fakeStore({ devices: [DEVICE] });
-    render(() => <StreamControlsPanel store={store} />);
+    render(() => <StreamControlsPanel store={store} anonymizerMode={() => 'external'} />);
 
     const saveButton = () => screen.getByRole('button', { name: /save capture/i }) as HTMLButtonElement;
     expect(saveButton().disabled).toBe(true);
@@ -122,7 +122,7 @@ describe('StreamControlsPanel', () => {
     const store = fakeStore({
       status: { phase: 'streaming', sessionId: 's1', sourceName: 'emulator-5554', sourceType: 'Logcat', totalLines: 5 },
     });
-    render(() => <StreamControlsPanel store={store} />);
+    render(() => <StreamControlsPanel store={store} anonymizerMode={() => 'external'} />);
 
     save.mockResolvedValueOnce(null);
     fireEvent.click(screen.getByRole('button', { name: /save capture/i }));
@@ -136,14 +136,40 @@ describe('StreamControlsPanel', () => {
   // PR3 (e64bc7a9) puts a mode status line where it was.
   it('renders no per-stream anonymize checkbox', () => {
     const store = fakeStore({ devices: [DEVICE] });
-    render(() => <StreamControlsPanel store={store} />);
+    render(() => <StreamControlsPanel store={store} anonymizerMode={() => 'external'} />);
     expect(screen.queryByLabelText(/anonymize/i)).toBeNull();
+    // The device radios are the only inputs besides the package filter.
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+  });
+
+  // The checkbox's replacement: in-chain anonymization of a Ui stream and the
+  // redaction of Save capture both follow the anonymizer mode (decided in the
+  // backend); the panel states what that means for THIS capture. Under
+  // External the load-bearing word is that the capture itself stays raw.
+  it.each<[AnonymizerMode, RegExp]>([
+    ['all', /^All — the capture is anonymized as it arrives/],
+    ['external', /^External — the capture is raw; only Save capture and agents are redacted/],
+    ['none', /^None — the capture, saved files and agents are all raw/],
+  ])('states the anonymizer mode %s for the capture', (mode, expected) => {
+    const store = fakeStore({ devices: [DEVICE] });
+    render(() => <StreamControlsPanel store={store} anonymizerMode={() => mode} />);
+    const status = screen.getByTestId('stream-anonymizer-status');
+    expect(status.textContent).toMatch(expected);
+    expect(status.getAttribute('data-mode')).toBe(mode);
+  });
+
+  it('follows the mode reactively', () => {
+    const [mode, setMode] = createSignal<AnonymizerMode>('external');
+    render(() => <StreamControlsPanel store={fakeStore({ devices: [DEVICE] })} anonymizerMode={mode} />);
+    expect(screen.getByTestId('stream-anonymizer-status').textContent).toMatch(/^External/);
+    setMode('all');
+    expect(screen.getByTestId('stream-anonymizer-status').textContent).toMatch(/^All/);
   });
 
   it('surfaces a devicesError message', () => {
     const store = fakeStore();
     (store as { devicesError: () => string | null }).devicesError = () => 'adb not on PATH';
-    render(() => <StreamControlsPanel store={store} />);
+    render(() => <StreamControlsPanel store={store} anonymizerMode={() => 'external'} />);
     expect(screen.getByRole('alert').textContent).toContain('adb not on PATH');
   });
 });

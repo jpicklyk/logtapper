@@ -1,9 +1,12 @@
 /** @jsxImportSource solid-js */
-import { For, Show, createSignal, onMount } from 'solid-js';
+import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
+import { anonymizerModeDescription, anonymizerModeLabel } from '../analyzers';
 import type { SettingsStore } from './settingsStore';
 import styles from './settings.module.css';
 export interface PiiTabProps { store: SettingsStore }
 export function PiiTab(props: PiiTabProps) {
+  const mode = createMemo(() => props.store.anonymizerMode());
+  const off = createMemo(() => mode() === 'none');
   const [testText, setTestText] = createSignal('');
   const [testError, setTestError] = createSignal<string | null>(null);
   const [sessionId, setSessionId] = createSignal('');
@@ -21,11 +24,28 @@ export function PiiTab(props: PiiTabProps) {
   };
   return (
     <div class={styles.panel} data-testid="pii-tab">
+      {/* Read-only mirror: the mode has ONE writer in the UI, the pinned PII
+          card on the Analyzers panel, so two surfaces never disagree about
+          what the user set. Same words as that card's description line. */}
+      <div class={styles.section}>
+        <div class={styles.sectionTitle}>Anonymizer</div>
+        <div class={styles.row}>
+          <span data-testid="pii-mode-line" class={off() ? styles.warningText : undefined}>
+            Mode: <strong>{anonymizerModeLabel(mode())}</strong> — {anonymizerModeDescription(mode())}
+          </span>
+        </div>
+        <span class={styles.labelHint}>Change it on the Analyzers panel (the PII Anonymizer card).</span>
+      </div>
       <Show when={props.store.anonymizerConfig()} fallback={<span class={styles.labelHint}>Loading configuration…</span>}>
         {(config) => (
           <div class={styles.section}>
             <div class={styles.sectionTitle}>Detectors</div>
             <span class={styles.labelHint}>Which PII patterns are found; applies to future pipeline runs and exports.</span>
+            <Show when={off()}>
+              <span class={styles.warningText} data-testid="pii-off-hint">
+                The anonymizer is off — detectors take effect again once the mode is All or External.
+              </span>
+            </Show>
             <For each={config().detectors}>
               {(d) => (
                 <div class={styles.row}>
@@ -41,6 +61,11 @@ export function PiiTab(props: PiiTabProps) {
       </Show>
       <div class={styles.section}>
         <div class={styles.sectionTitle}>Test Anonymizer</div>
+        <Show when={off()}>
+          <span class={styles.warningText}>
+            The anonymizer is off — this shows what the detectors <em>would</em> redact.
+          </span>
+        </Show>
         <textarea class={styles.input} rows={3} placeholder="Paste a log line to see what would be redacted…" value={testText()} onInput={(e) => setTestText(e.currentTarget.value)} />
         <button type="button" class={styles.button} disabled={!testText().trim()} onClick={handleTest}>Test</button>
         <Show when={testError()}><p class={styles.error} role="alert">{testError()}</p></Show>

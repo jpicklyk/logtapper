@@ -145,8 +145,17 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
 
   // ── Reset on a view revision bump ────────────────────────────────────────
   // Same reset as above — the rendered index space may have been remapped under
-  // a stable `sourceId` — plus an immediate forceFetch, because nothing else
-  // moves the scroll geometry afterwards to trigger one.
+  // a stable `sourceId` — plus an immediate fetch, because nothing else moves
+  // the scroll geometry afterwards to trigger one.
+  //
+  // `forceFetch()` alone is not that fetch: the scheduler consumes its pending
+  // range on every execute, so with the window unmoved there is nothing left
+  // for it to run and it returns early. Clear its dedup, then re-report the
+  // *current* window so it has a range again. A line-set change never showed
+  // this — its new `totalLines` re-runs the report effect below anyway — but a
+  // pure content refresh (the anonymizer mode entering or leaving `All`, whose
+  // cache clear is followed by exactly this bump) moved no geometry and left
+  // the viewer on skeletons.
   const revision = options.revision;
   if (revision) {
     createEffect(
@@ -157,7 +166,13 @@ export function createCacheBinding(options: CacheBindingOptions): CacheBinding {
           fetchInFlight = false;
           initialFetchDone = false;
           bumpCacheVersion();
-          if (!disposed) scheduler.forceFetch();
+          if (disposed) return;
+          scheduler.forceFetch();
+          const range = untrack(visibleRange);
+          if (range) {
+            const base = untrack(virtualBase);
+            scheduler.reportScroll(base + range.start, base + range.end, untrack(liveTotalLines));
+          }
         },
         { defer: true },
       ),

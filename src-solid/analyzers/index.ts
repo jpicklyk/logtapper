@@ -35,7 +35,17 @@ export type { VarGroup } from '@processors';
 export { AnalyzersPanel } from './AnalyzersPanel';
 export type { AnalyzersPanelProps } from './AnalyzersPanel';
 export { AnalyzerCard } from './AnalyzerCard';
-export type { AnalyzerCardProps } from './AnalyzerCard';
+export type { AnalyzerCardProps, AnonymizerControlBinding } from './AnalyzerCard';
+// The anonymizer mode's labels and one-line consequences live with the control
+// that writes the mode; Settings → PII mirrors them read-only.
+export {
+  AGENTS_READ_RAW_WARNING,
+  ANONYMIZER_MODE_OPTIONS,
+  AnonymizerModeControl,
+  anonymizerModeDescription,
+  anonymizerModeLabel,
+} from './AnonymizerModeControl';
+export type { AnonymizerModeControlProps } from './AnonymizerModeControl';
 export { AnalyzerDetail } from './AnalyzerDetail';
 export type { AnalyzerDetailProps } from './AnalyzerDetail';
 export { AddAnalyzer } from './AddAnalyzer';

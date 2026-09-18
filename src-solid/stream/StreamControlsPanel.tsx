@@ -1,12 +1,31 @@
 /** @jsxImportSource solid-js */
 import { For, Show, createEffect, createMemo, createSignal, on, onMount } from 'solid-js';
+import type { Accessor } from 'solid-js';
+import type { AnonymizerMode } from '@bridge/types';
 import { save } from '@tauri-apps/plugin-dialog';
 import type { LiveStreamStore } from './streamStore';
 import styles from './StreamControlsPanel.module.css';
 
 export interface StreamControlsPanelProps {
   store: LiveStreamStore;
+  /** The global anonymizer mode (`settingsStore.anonymizerMode`), read-only
+   *  here; the pinned PII card on the Analyzers panel is its writer. */
+  anonymizerMode: Accessor<AnonymizerMode>;
 }
+
+/**
+ * What a Ui-started stream does under each mode, replacing the per-stream
+ * "Anonymize PII while streaming" checkbox. The backend decides (a Ui stream is
+ * an Internal pathway: in-chain `__pii_anonymizer` only under All; `Save
+ * capture…` is External: redacted unless None) — this only states it. The
+ * External line is the load-bearing one: the *capture* the viewer shows stays
+ * raw, and only what leaves the tool is redacted.
+ */
+const STREAM_MODE_STATUS: Record<AnonymizerMode, string> = {
+  all: 'All — the capture is anonymized as it arrives; saved files and agents see the same tokens',
+  external: 'External — the capture is raw; only Save capture and agents are redacted',
+  none: 'None — the capture, saved files and agents are all raw',
+};
 
 function defaultCaptureName(sourceName: string): string {
   const stem = sourceName.replace(/[^\w.-]+/g, '_') || 'capture';
@@ -142,9 +161,9 @@ export function StreamControlsPanel(props: StreamControlsPanelProps) {
         />
       </section>
 
-      {/* TODO(PR3 e64bc7a9): mode status line — the per-stream "Anonymize PII while
-          streaming" checkbox is gone; in-chain anonymization follows the anonymizer
-          mode (Analyzers panel), and Save capture redacts under External/All. */}
+      <p class={styles.modeStatus} data-testid="stream-anonymizer-status" data-mode={props.anonymizerMode()}>
+        {STREAM_MODE_STATUS[props.anonymizerMode()]}
+      </p>
 
       <Show when={startError()}>
         <p class={styles.error} role="alert">{startError()}</p>

@@ -13,6 +13,12 @@ vi.mock('@viewport/copyText', () => ({
   writeClipboard: vi.fn(),
 }));
 import { buildCopyText, writeClipboard } from '@viewport/copyText';
+// The clipboard is an External pathway: the assembled text is passed through
+// the backend's `anonymize_text` for the session before it is written.
+vi.mock('@bridge/commands', () => ({
+  anonymizeText: vi.fn((_sessionId: string, text: string) => Promise.resolve(`<${text}>`)),
+}));
+import { anonymizeText } from '@bridge/commands';
 
 // ── jsdom layout stubs ─────────────────────────────────────────────────────
 // jsdom has no layout: clientHeight is always 0 and scrollTop is a no-op, so
@@ -411,7 +417,7 @@ describe('LogViewer keyboard navigation', () => {
 // ── Copy ───────────────────────────────────────────────────────────────────
 
 describe('LogViewer copy', () => {
-  it('Ctrl+C builds the copy text from the current selection and writes it', () => {
+  it('Ctrl+C builds the copy text from the current selection and writes it', async () => {
     const src = makeSource(100);
     const { container } = render(() => <LogViewer dataSource={src} totalLineCount={100} />);
 
@@ -426,7 +432,37 @@ describe('LogViewer copy', () => {
     expect(selection.mode).toBe('line');
     expect([...selection.selected]).toEqual([3]);
     expect(getText(3)).toBe('line 3');
-    expect(writeClipboard).toHaveBeenCalledWith('COPIED');
+    // A bare viewer (no session) has nothing to redact against; the write is
+    // still a promise continuation, hence the wait.
+    await vi.waitFor(() => expect(writeClipboard).toHaveBeenCalledWith('COPIED'));
+    expect(anonymizeText).not.toHaveBeenCalled();
+  });
+
+  it('with a session, awaits anonymizeText for that session and writes ITS result', async () => {
+    const src = makeSource(100);
+    const { container } = render(() => <LogViewer dataSource={src} totalLineCount={100} sessionId="s1" />);
+    fireEvent.click(rows(container).find((r) => r.getAttribute('data-line') === '3')!);
+    fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
+
+    expect(anonymizeText).toHaveBeenCalledWith('s1', 'COPIED');
+    // Nothing is written until the redaction resolves.
+    expect(writeClipboard).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(writeClipboard).toHaveBeenCalledWith('<COPIED>'));
+    expect(writeClipboard).toHaveBeenCalledTimes(1);
+  });
+
+  it('a rejected anonymizeText writes nothing and reports through onError', async () => {
+    vi.mocked(anonymizeText).mockRejectedValueOnce(new Error('Forbidden'));
+    const onError = vi.fn();
+    const src = makeSource(100);
+    const { container } = render(() => (
+      <LogViewer dataSource={src} totalLineCount={100} sessionId="s1" onError={onError} />
+    ));
+    fireEvent.click(rows(container).find((r) => r.getAttribute('data-line') === '3')!);
+    fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
+
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith('Copy failed: Error: Forbidden'));
+    expect(writeClipboard).not.toHaveBeenCalled();
   });
 
   it('does not copy when nothing is selected', () => {
@@ -435,6 +471,7 @@ describe('LogViewer copy', () => {
     fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
     expect(buildCopyText).not.toHaveBeenCalled();
     expect(writeClipboard).not.toHaveBeenCalled();
+    expect(anonymizeText).not.toHaveBeenCalled();
   });
 
   it('shift+click extends the selection from the anchor', () => {

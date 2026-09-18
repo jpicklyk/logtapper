@@ -1,11 +1,12 @@
 /** @jsxImportSource solid-js */
 import { For, Show, createEffect, createMemo, createSignal, on } from 'solid-js';
-import type { JSX } from 'solid-js';
+import type { Accessor, JSX } from 'solid-js';
 import { groupProcessorsByPack, resolveChainProcessors } from '@bridge/types';
-import type { ProcessorSummary } from '@bridge/types';
+import type { AnonymizerMode, ProcessorSummary } from '@bridge/types';
 import type { CallerLike } from '../ui';
 import { AddAnalyzer } from './AddAnalyzer';
 import { AnalyzerCard } from './AnalyzerCard';
+import type { AnonymizerControlBinding } from './AnalyzerCard';
 import { AnalyzerDetail } from './AnalyzerDetail';
 import type { AnalyzerController, AnalyzerStore } from './analyzerStore';
 import styles from './analyzers.module.css';
@@ -20,11 +21,27 @@ export interface AnalyzersPanelProps {
    *  journal (`pipeline.run`). Omitted entirely when the caller has no such
    *  wiring — the badge is then simply not shown, per W4a/A2's contract. */
   lastRunCaller?: (sessionId: string) => CallerLike | null;
+  /**
+   * The global anonymizer mode (`settingsStore.anonymizerMode`) and its one
+   * writer, rendered as the pinned PII Anonymizer card's segmented control.
+   * The analyzer store never learns about the mode — it is a pipeline-chain
+   * store — so both arrive as props from the settings store via `App.tsx`.
+   */
+  anonymizerMode: Accessor<AnonymizerMode>;
+  setAnonymizerMode: (mode: AnonymizerMode) => Promise<void>;
+  /** `McpStatus.running` — shows the agents-read-raw warning under `None`. */
+  bridgeRunning?: Accessor<boolean>;
+  /** An agent is connected right now (presence's orb is not `detached`);
+   *  switching to `None` then confirms first. */
+  agentConnected?: Accessor<boolean>;
+  /** `settingsStore.anonymizerConfig() === null` — the control stays disabled
+   *  until the persisted document is in hand to spread the mode into. */
+  anonymizerLoading?: Accessor<boolean>;
 }
 
 /**
  * The `analyzers` surface: header (run/stop, add, reset), the active set as
- * cards grouped by pack, the pinned anonymizer's display-only trailing row,
+ * cards grouped by pack, the pinned anonymizer's trailing row (the mode control),
  * and the detail/add-analyzer drawers. Mounted through the shell's `analyzers`
  * slot (region on standard+, drawer on compact — S1's placement, not decided
  * here).
@@ -96,6 +113,16 @@ export function AnalyzersPanel(props: AnalyzersPanelProps): JSX.Element {
 
   const indexOf = (id: string): number => chain().order.indexOf(id);
 
+  /** Read in the card's render (through `renderCard`'s JSX getters), so every
+   *  accessor here is tracked by the card, not resolved once. */
+  const anonymizerBinding = (): AnonymizerControlBinding => ({
+    mode: props.anonymizerMode(),
+    setMode: props.setAnonymizerMode,
+    bridgeRunning: props.bridgeRunning?.() ?? false,
+    agentConnected: props.agentConnected?.() ?? false,
+    loading: props.anonymizerLoading?.() ?? false,
+  });
+
   const renderCard = (processor: ProcessorSummary, pinned = false): JSX.Element => (
     <AnalyzerCard
       store={props.store}
@@ -103,6 +130,7 @@ export function AnalyzersPanel(props: AnalyzersPanelProps): JSX.Element {
       sessionId={props.sessionId}
       processor={processor}
       pinned={pinned}
+      anonymizer={pinned ? anonymizerBinding() : undefined}
       disabled={!pinned && chain().disabled.includes(processor.id)}
       running={running()}
       progress={progress().get(processor.id)}

@@ -122,7 +122,7 @@ vi.mock('@bridge/commands', () => ({
   writeTextFile: vi.fn(() => Promise.resolve()),
   getSections: vi.fn(() => Promise.resolve([])),
   getDumpstateMetadata: vi.fn(() => Promise.resolve(null)),
-  getMcpStatus: vi.fn(() => Promise.resolve({ running: false, port: 0, idleSecs: null, agentRawAccess: false })),
+  getMcpStatus: vi.fn(() => Promise.resolve({ running: false, port: 0, idleSecs: null, agentRawAccess: false, anonymizerMode: 'external', effectiveAgentRaw: false })),
   getActivity: vi.fn(() => Promise.resolve([])),
   getFocus: vi.fn(() => Promise.resolve(null)),
   setFocus: vi.fn(() => Promise.resolve(null)),
@@ -167,8 +167,9 @@ vi.mock('@bridge/commands', () => ({
   renameWorkspace: vi.fn(),
   deleteWorkspace: vi.fn(() => Promise.resolve()),
   restoreWorkspaceSession: vi.fn(() => Promise.resolve()),
-  getAnonymizerConfig: vi.fn(() => Promise.resolve({ detectors: [] })),
+  getAnonymizerConfig: vi.fn(() => Promise.resolve({ detectors: [], mode: 'external' })),
   setAnonymizerConfig: vi.fn(() => Promise.resolve()),
+  anonymizeText: vi.fn((_sessionId: string, text: string) => Promise.resolve(text)),
   testAnonymizer: vi.fn(() => Promise.resolve({ anonymized: '', replacements: [] })),
   getPiiMappings: vi.fn(() => Promise.resolve({})),
   getFileAssociationStatus: vi.fn(() => Promise.resolve([])),
@@ -642,6 +643,107 @@ describe('App', () => {
 
     expect(refreshSpies.refreshCatalog).toHaveBeenCalledTimes(1);
     expect(refreshSpies.refreshInstalled).toHaveBeenCalledTimes(1);
+  });
+
+  // The anonymizer mode's one in-app consequence: under `All` the backend
+  // redacts the Ui's own `get_lines` pages, so entering or leaving `All`
+  // must throw away every open session's cached text and refetch — exactly
+  // what `replace()` does for a reopen. A change between External and None
+  // changes nothing the viewer shows, so it must NOT refetch.
+  it('entering or leaving anonymizer mode All refetches every open session; External<->None does not', async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const { getLines, loadLogFile, listProcessors, setAnonymizerConfig } = await import('@bridge/commands');
+
+    const makeLoad = (path: string): LoadResult => ({
+      sessionId: path,
+      sourceId: path,
+      sourceName: path,
+      filePath: path,
+      totalLines: 5,
+      fileSize: 0,
+      firstTimestamp: null,
+      lastTimestamp: null,
+      sourceType: 'Logcat',
+      isStreaming: false,
+      isIndexing: false,
+      hasCrlf: false,
+      encoding: 'UTF-8',
+    });
+    // The pinned PII card only renders when the catalog carries the anonymizer.
+    vi.mocked(listProcessors).mockResolvedValue([
+      {
+        id: '__pii_anonymizer', name: 'PII Anonymizer', version: '1.0.0', description: '', tags: [], builtin: true,
+        processorType: 'transformer', group: null, varsMeta: [], deprecated: false, hasSchema: false,
+        trackerSections: [], sourceTypes: [],
+      },
+    ] as never);
+    vi.mocked(open).mockResolvedValueOnce('/a.log').mockResolvedValueOnce('/b.log');
+    vi.mocked(loadLogFile).mockImplementation((path: string) => Promise.resolve([makeLoad(path)]));
+    vi.mocked(getLines).mockResolvedValue({ lines: [], totalLines: 5 } as never);
+    // Wide tier: the analyzers surface is the `details` column, so the pinned
+    // card is on screen next to the viewer without opening a drawer.
+    Object.defineProperty(window, 'innerWidth', { value: 2600, configurable: true });
+    // jsdom has no layout, so a viewer's viewport is 0 rows tall and it never
+    // fetches a page — give the grid a height (as `LogViewer.test.tsx` does) so
+    // a refetch is observable as a `getLines` call. Restored below.
+    const clientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: HTMLElement) { return this.getAttribute('role') === 'grid' ? 220 : 0; },
+    });
+    try {
+      await modeSwitchScenario();
+    } finally {
+      if (clientHeight) Object.defineProperty(HTMLElement.prototype, 'clientHeight', clientHeight);
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientHeight;
+    }
+
+    async function modeSwitchScenario(): Promise<void> {
+      render(() => <App />);
+      const openButton = within(screen.getByTestId('top-bar')).getByRole('button', { name: /^open file/i }) as HTMLButtonElement;
+      fireEvent.click(openButton);
+      await waitFor(() => expect(loadLogFile).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(openButton.disabled).toBe(false));
+      fireEvent.click(openButton);
+      await waitFor(() => expect(loadLogFile).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(openButton.disabled).toBe(false));
+
+      // Only a mounted pane fetches (an unmounted session's cleared cache is
+      // refilled the moment it is shown), so put both sessions on screen: the
+      // split's secondary pane shows '/a.log' beside the focused '/b.log'.
+      fireEvent.click(screen.getByRole('button', { name: /split view/i }));
+      fireEvent.change(screen.getByLabelText('Secondary pane session'), { target: { value: '/a.log' } });
+      expect(screen.getAllByRole('grid')).toHaveLength(2);
+      await waitFor(() => expect(vi.mocked(getLines).mock.calls.some(([req]) => (req as { sessionId: string }).sessionId === '/a.log')).toBe(true));
+
+      const radios = await screen.findAllByRole('radio');
+      expect(radios.map((r) => r.textContent)).toEqual(['All', 'External', 'None']);
+      // The control ignores a selection while its previous write is settling.
+      const settled = () => waitFor(() => expect(screen.getByRole('radiogroup').getAttribute('aria-busy')).toBeNull());
+      const sessionsFetched = (since: number): string[] =>
+        [...new Set(vi.mocked(getLines).mock.calls.slice(since).map(([req]) => (req as { sessionId: string }).sessionId))].sort();
+
+      // External -> All: both sessions refetch.
+      let mark = vi.mocked(getLines).mock.calls.length;
+      fireEvent.click(radios[0]);
+      await waitFor(() => expect(setAnonymizerConfig).toHaveBeenCalledWith(expect.objectContaining({ mode: 'all' })));
+      await waitFor(() => expect(sessionsFetched(mark)).toEqual(['/a.log', '/b.log']));
+
+      // All -> None: both refetch again (the viewer goes back to raw).
+      await settled();
+      mark = vi.mocked(getLines).mock.calls.length;
+      fireEvent.click(radios[2]);
+      await waitFor(() => expect(setAnonymizerConfig).toHaveBeenCalledWith(expect.objectContaining({ mode: 'none' })));
+      await waitFor(() => expect(sessionsFetched(mark)).toEqual(['/a.log', '/b.log']));
+
+      // None -> External: nothing the viewer shows changed, so no refetch.
+      await settled();
+      mark = vi.mocked(getLines).mock.calls.length;
+      fireEvent.click(radios[1]);
+      await waitFor(() => expect(setAnonymizerConfig).toHaveBeenCalledWith(expect.objectContaining({ mode: 'external' })));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(sessionsFetched(mark)).toEqual([]);
+    }
   });
 });
 

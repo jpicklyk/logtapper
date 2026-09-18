@@ -12,6 +12,13 @@
 }
 .section { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border-subtle); }
 .checkboxRow { display: flex; align-items: center; gap: 6px; }
+/* The anonymizer-mode status line that replaced the per-export checkbox: the
+   mode is read-only here, "Change" goes to its one writer (the Analyzers panel).
+   `None` is the only state that ships raw PII, hence the warning colour. */
+.modeStatus { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 0; color: var(--text-muted); line-height: 1.45; }
+.modeStatus[data-mode='none'] { color: var(--warning); }
+.linkButton { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; cursor: pointer; }
+.linkButton:hover { text-decoration: underline; }
 .error {
   margin: 0;
   padding: 6px 8px;

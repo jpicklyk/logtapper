@@ -123,9 +123,14 @@ export function PresencePanel(props: PresencePanelProps): JSX.Element {
           </span>
         </div>
 
-        <Show when={store().agentRawAccess()}>
+        {/* Keyed off the backend's `effectiveAgentRaw`, not the raw-access
+            checkbox alone: the anonymizer mode `None` opens the same door, and
+            the backend is the one place the two gates are combined. */}
+        <Show when={store().effectiveAgentRaw()}>
           <div class={styles.rawBanner} role="status" data-testid="raw-banner">
-            <strong class={styles.rawTitle}>Raw access ON</strong>
+            <strong class={styles.rawTitle}>
+              {store().agentRawAccess() ? 'Raw access ON' : 'Anonymizer OFF'}
+            </strong>
             <span class={styles.rawBody}>
               {clientName()} reads un-anonymized log text — emails, IPs, IMEIs and serials are not
               tokenized.

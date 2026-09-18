@@ -1,10 +1,11 @@
 /** @jsxImportSource solid-js */
 import { Show, createEffect, createSignal, onCleanup } from 'solid-js';
 import type { JSX } from 'solid-js';
-import type { CorrelatorResult, PipelineRunSummary, ProcessorSummary } from '@bridge/types';
+import type { AnonymizerMode, CorrelatorResult, PipelineRunSummary, ProcessorSummary } from '@bridge/types';
 import type { CallerLike } from '../ui';
 import { CallerBadge, callerClient, normalizeCaller } from '../ui';
 import type { AnalyzerController, AnalyzerProgress, AnalyzerStore } from './analyzerStore';
+import { AnonymizerModeControl } from './AnonymizerModeControl';
 import styles from './analyzers.module.css';
 
 const TYPE_LABEL: Record<string, string> = {
@@ -30,8 +31,13 @@ export interface AnalyzerCardProps {
   running: boolean;
   progress?: AnalyzerProgress;
   summary?: PipelineRunSummary;
-  /** Display-only trailing row for the pinned anonymizer — no toggle, reorder or remove. */
+  /** Trailing row for the pinned anonymizer — no toggle, reorder or remove;
+   *  its body is the mode control (`anonymizer`) instead of a stat line. */
   pinned?: boolean;
+  /** The global anonymizer mode and its writer, for the pinned card only. The
+   *  panel resolves both from the settings store; a pinned card without them
+   *  (tests, a host with no settings store) keeps the display-only `--`. */
+  anonymizer?: AnonymizerControlBinding;
   index?: number;
   total?: number;
   lastRunCaller?: CallerLike | null;
@@ -46,6 +52,18 @@ export interface AnalyzerCardProps {
   onRemove?: () => void;
   onOpenDeviceState?: (processorId: string) => void;
   onOpenDetail?: (processorId: string) => void;
+}
+
+/** What the pinned card needs to render and drive the mode control. Plain
+ *  values, not accessors: read from the panel's props in its render, so the
+ *  card re-renders through Solid's prop getters like every other prop here. */
+export interface AnonymizerControlBinding {
+  mode: AnonymizerMode;
+  setMode: (mode: AnonymizerMode) => Promise<void>;
+  bridgeRunning: boolean;
+  agentConnected: boolean;
+  /** The config has not loaded yet. */
+  loading: boolean;
 }
 
 /** One analyzer's row: dispatches its stat line on `processorType`, plus the
@@ -182,7 +200,23 @@ export function AnalyzerCard(props: AnalyzerCardProps): JSX.Element {
         )}
       </Show>
 
-      <Show when={!props.summary?.skipped}>
+      {/* The pinned anonymizer's body is the global mode control, not a
+          per-run stat: a transformer has no summary worth a line, and this is
+          the one place in the UI the mode is written (Settings → PII only
+          mirrors it). */}
+      <Show when={props.pinned && props.anonymizer}>
+        {(binding) => (
+          <AnonymizerModeControl
+            mode={binding().mode}
+            onChange={binding().setMode}
+            bridgeRunning={binding().bridgeRunning}
+            agentConnected={binding().agentConnected}
+            disabled={binding().loading}
+          />
+        )}
+      </Show>
+
+      <Show when={!props.summary?.skipped && !(props.pinned && props.anonymizer)}>
         <div class={styles.statLine}>
           <Show when={props.processor.processorType === 'reporter'}>
             <span>

@@ -10,6 +10,9 @@
 .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .labelHint { color: var(--text-muted); line-height: 1.4; }
+/* "The anonymizer is off" — a state the user chose, worth the warning colour
+   but not an error box. */
+.warningText { color: var(--warning); line-height: 1.4; }
 .input, .select {
   padding: 3px 6px;
   border: 1px solid var(--border);

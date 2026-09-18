@@ -1,7 +1,8 @@
 import { createSignal } from 'solid-js';
 import { describe, expect, it, vi } from 'vitest';
 import { createSettingsStore } from './settingsStore';
-import type { AnonymizerTestResult, McpStatus, UserTheme } from '@bridge/types';
+import type { SettingsCommands } from './settingsStore';
+import type { AnonymizerConfig, AnonymizerMode, AnonymizerTestResult, McpStatus, UserTheme } from '@bridge/types';
 function noStatus() {
   const [status] = createSignal<McpStatus | null>(null);
   return status;
@@ -98,6 +99,97 @@ describe('settingsStore', () => {
     expect(store.testResult()).toEqual(result);
     store.dispose();
   });
+
+  describe('anonymizer mode', () => {
+    const CONFIG: AnonymizerConfig = {
+      mode: 'external',
+      detectors: [{ id: 'email', label: 'Email', tier: 'strict', fpHint: 'low', enabled: true, patterns: [{ label: 'Email', regex: 'x', builtin: true, enabled: true }] }],
+    };
+    /** A store whose config has loaded (`refreshAnonymizerConfig` resolved). */
+    async function loaded(overrides: { setAnonymizerConfig?: SettingsCommands['setAnonymizerConfig']; onChanged?: (p: AnonymizerMode, n: AnonymizerMode) => void; refreshMcpStatus?: () => void } = {}) {
+      const setAnonymizerConfig = overrides.setAnonymizerConfig ?? vi.fn(() => Promise.resolve());
+      const getAnonymizerConfig = vi.fn(() => Promise.resolve(CONFIG));
+      const store = createSettingsStore({
+        mcpStatus: noStatus(),
+        storage: memoryStorage(),
+        commands: { getAnonymizerConfig, setAnonymizerConfig },
+        onAnonymizerModeChanged: overrides.onChanged,
+        refreshMcpStatus: overrides.refreshMcpStatus,
+      });
+      store.refreshAnonymizerConfig();
+      await vi.waitFor(() => expect(store.anonymizerConfig()).not.toBeNull());
+      return { store, setAnonymizerConfig, getAnonymizerConfig };
+    }
+
+    it('reads the persisted mode, defaulting to External while the config is loading', async () => {
+      const store = createSettingsStore({ mcpStatus: noStatus(), storage: memoryStorage(), commands: { getAnonymizerConfig: () => new Promise(() => undefined) } });
+      expect(store.anonymizerConfig()).toBeNull();
+      expect(store.anonymizerMode()).toBe('external');
+      store.dispose();
+      const { store: ready } = await loaded();
+      expect(ready.anonymizerMode()).toBe('external');
+      ready.dispose();
+    });
+
+    it('setAnonymizerMode writes the WHOLE config with the new mode (detectors ride along) and fires the callback', async () => {
+      const onChanged = vi.fn();
+      const refreshMcpStatus = vi.fn();
+      const { store, setAnonymizerConfig } = await loaded({ onChanged, refreshMcpStatus });
+      await store.setAnonymizerMode('all');
+      expect(setAnonymizerConfig).toHaveBeenCalledWith({ ...CONFIG, mode: 'all' });
+      expect(store.anonymizerMode()).toBe('all');
+      expect(onChanged).toHaveBeenCalledWith('external', 'all');
+      // `effectiveAgentRaw` moves with the mode — re-read `McpStatus` like `setAgentRawAccess` does.
+      expect(refreshMcpStatus).toHaveBeenCalled();
+      store.dispose();
+    });
+
+    it('is optimistic: the mode shows before the write resolves', async () => {
+      let resolve!: () => void;
+      const setAnonymizerConfig = vi.fn(() => new Promise<void>((r) => { resolve = r; }));
+      const { store } = await loaded({ setAnonymizerConfig });
+      const pending = store.setAnonymizerMode('none');
+      expect(store.anonymizerMode()).toBe('none');
+      resolve();
+      await pending;
+      store.dispose();
+    });
+
+    it('reverts to the previous mode when the write is rejected, records the error, and does not fire the callback', async () => {
+      const onChanged = vi.fn();
+      const setAnonymizerConfig = vi.fn(() => Promise.reject(new Error('read-only')));
+      const { store, getAnonymizerConfig } = await loaded({ setAnonymizerConfig, onChanged });
+      await expect(store.setAnonymizerMode('none')).rejects.toThrow('read-only');
+      expect(store.anonymizerMode()).toBe('external');
+      expect(store.error()).toBe('Error: read-only');
+      expect(onChanged).not.toHaveBeenCalled();
+      // And re-reads the backend's truth, as `toggleDetector` does.
+      expect(getAnonymizerConfig).toHaveBeenCalledTimes(2);
+      store.dispose();
+    });
+
+    it('is a no-op for the current mode and before the config has loaded', async () => {
+      const setAnonymizerConfig = vi.fn(() => Promise.resolve());
+      const onChanged = vi.fn();
+      const unloaded = createSettingsStore({ mcpStatus: noStatus(), storage: memoryStorage(), commands: { setAnonymizerConfig }, onAnonymizerModeChanged: onChanged });
+      await unloaded.setAnonymizerMode('all');
+      unloaded.dispose();
+      const { store } = await loaded({ setAnonymizerConfig, onChanged });
+      await store.setAnonymizerMode('external');
+      expect(setAnonymizerConfig).not.toHaveBeenCalled();
+      expect(onChanged).not.toHaveBeenCalled();
+      store.dispose();
+    });
+
+    it('toggleDetector keeps the persisted mode (the backend replaces the whole document)', async () => {
+      const { store, setAnonymizerConfig } = await loaded();
+      await store.setAnonymizerMode('all');
+      await store.toggleDetector('email', false);
+      expect(setAnonymizerConfig).toHaveBeenLastCalledWith({ mode: 'all', detectors: [{ ...CONFIG.detectors[0], enabled: false }] });
+      store.dispose();
+    });
+  });
+
   it('theme round-trip: export, modify, import — the imported theme appears in the list', async () => {
     const theme: UserTheme = { name: 'Midnight', base: 'dark', tokens: { '--accent': '#ff0000' } };
     let written: string | null = null;
