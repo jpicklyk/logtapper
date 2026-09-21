@@ -19,7 +19,7 @@ winget install jpicklyk.LogTapper
 **Windows (Scoop):**
 
 ```
-scoop bucket add jpicklyk https://github.com/jpicklyk/scoop-bucket
+scoop bucket add logtapper https://github.com/jpicklyk/logtapper-scoop
 scoop install logtapper
 ```
 
@@ -27,7 +27,7 @@ scoop install logtapper
 the cask needs `--no-quarantine` until it is:
 
 ```
-brew install --cask --no-quarantine jpicklyk/tap/logtapper
+brew install --cask --no-quarantine jpicklyk/logtapper/logtapper
 ```
 
 Scoop installs update with `scoop update logtapper` — the in-app updater is disabled for

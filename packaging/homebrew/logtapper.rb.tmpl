@@ -32,7 +32,7 @@ cask "logtapper" do
 
   caveats <<~EOS
     LogTapper is not yet notarized by Apple. Either install with
-      brew install --cask --no-quarantine jpicklyk/tap/logtapper
+      brew install --cask --no-quarantine jpicklyk/logtapper/logtapper
     or, after installing, clear the quarantine flag once:
       xattr -d -r com.apple.quarantine /Applications/LogTapper.app
   EOS
