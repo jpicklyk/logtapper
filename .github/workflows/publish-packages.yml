@@ -59,12 +59,6 @@ jobs:
       - name: Render the cask
         run: node scripts/render-packaging.mjs --version "$VERSION" --out out
 
-      - name: brew style
-        run: brew style --cask out/homebrew/Casks/logtapper.rb
-
-      - name: brew audit (fails the job on audit errors, not warnings)
-        run: brew audit --cask --online out/homebrew/Casks/logtapper.rb
-
       - name: Checkout jpicklyk/homebrew-logtapper
         uses: actions/checkout@v4
         with:
@@ -74,10 +68,27 @@ jobs:
           token: ${{ secrets.PACKAGING_PAT }}
           path: tap
 
-      - name: Publish the rendered cask
+      # `brew style` / `brew audit` refuse a cask given as a bare file path
+      # ("Homebrew requires casks to be in a tap", seen on the first run), so
+      # the checkout is registered as the tap itself: a symlink under
+      # Library/Taps is how Homebrew's own setup-homebrew action does it. The
+      # rendered cask is copied in first so the lint runs on what will be pushed.
+      - name: Register the checkout as the jpicklyk/logtapper tap
         run: |
           mkdir -p tap/Casks
           cp out/homebrew/Casks/logtapper.rb tap/Casks/logtapper.rb
+          taps="$(brew --repository)/Library/Taps/jpicklyk"
+          mkdir -p "$taps"
+          ln -s "$PWD/tap" "$taps/homebrew-logtapper"
+
+      - name: brew style
+        run: brew style --cask jpicklyk/logtapper/logtapper
+
+      - name: brew audit (fails the job on audit errors, not warnings)
+        run: brew audit --cask --online jpicklyk/logtapper/logtapper
+
+      - name: Publish the rendered cask
+        run: |
           git -C tap config user.name "github-actions[bot]"
           git -C tap config user.email "github-actions[bot]@users.noreply.github.com"
           git -C tap add Casks/logtapper.rb
