@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "logtapper",
-      "version": "0.4.3",
+      "version": "0.4.4",
       "description": "Attach the LogTapper MCP server to Claude Code, investigate live log sessions by chat, and publish line-anchored analyses back into the app.",
       "author": {
         "name": "jpicklyk",

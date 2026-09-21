@@ -9,6 +9,7 @@ LogTapper instance and work with live log sessions by chat.
 | Skill | Invoke | What it does |
 |---|---|---|
 | `attach-mcp` | `/logtapper:attach-mcp` — or just *"attach to the LogTapper MCP"* | Registers the MCP endpoint LogTapper serves (`http://127.0.0.1:40405/mcp`) with Claude Code at **user scope**, falling back to the bundled binary or a dev checkout over stdio. |
+| `log-analysis` | `/logtapper:log-analysis` — or just ask about the logs (*"why is X failing on this device"*, *"compare these two captures"*) | Systematic investigation of the sessions open in LogTapper: pipeline results before raw lines, working-vs-failing comparison, multi-boot timeline discipline for dumpstates, and publishing line-anchored analyses back into the app. |
 
 Once attached, LogTapper's tools appear under the `logtapper` namespace
 (`mcp__logtapper__*`): list sessions, search log lines with context, run
@@ -44,12 +45,21 @@ are internal to the bundled MCP server.
 ## Requirements
 
 - **LogTapper installed and running**, with the MCP Bridge enabled in
-  *Settings → General → MCP Integration* (listens on `127.0.0.1:40404`).
+  *Settings → General → MCP Integration*. While the bridge is on, LogTapper
+  serves its MCP server at `http://127.0.0.1:40405/mcp`.
 - Claude Code with the `claude` CLI on PATH.
 
 ## Install
 
-The plugin is distributed through the marketplace in the LogTapper repo:
+The plugin is distributed through the marketplace in the LogTapper repo. Inside
+a Claude Code session:
+
+```
+/plugin marketplace add jpicklyk/logtapper
+/plugin install logtapper@logtapper-plugins
+```
+
+Or from a terminal:
 
 ```bash
 claude plugin marketplace add jpicklyk/logtapper
@@ -64,12 +74,21 @@ attach to the LogTapper MCP
 
 ## How the MCP connection works
 
-LogTapper ships its MCP server **with the desktop app** — a compiled `logtapper-mcp`
-binary next to the app executable in released builds, or the
-`node --experimental-strip-types mcp-server/src/index.ts` server in a source
-checkout. Because that path is machine-specific, the plugin does **not** hard-code
-an MCP config; the `attach-mcp` skill detects the right launcher and registers it
-for you.
+LogTapper runs its MCP server **itself** while the bridge is enabled and serves
+it over Streamable HTTP at a fixed local URL. That URL is the whole
+configuration: `attach-mcp` registers it at user scope, so it always reaches the
+server that shipped with the running LogTapper and nothing needs re-registering
+after an update. The plugin does **not** hard-code an MCP config — registration
+happens through `claude mcp add`, which writes the correct file for your Claude
+Code install.
+
+If HTTP is not an option (a tool that wraps Claude Code and only supports
+stdio, say), the skill falls back to launching the `logtapper-mcp` binary
+installed next to the app executable, or
+`node --experimental-strip-types mcp-server/src/index.ts` from a source checkout.
+Those paths are machine-specific, which is why the URL is the default. See
+[Connect LogTapper to Claude Code](../../docs/mcp/claude-code.md) for the
+manual commands, verification, and troubleshooting.
 
 ## License
 
