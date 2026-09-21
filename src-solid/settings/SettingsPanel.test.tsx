@@ -8,8 +8,9 @@ import type {
 import type { AppliedUserTheme, Density, ThemeController, ThemeMode } from '../theme';
 import { SettingsPanel } from './SettingsPanel';
 import type { SettingsStore } from './settingsStore';
+import { createUpdateStore } from './updateStore';
 import type { AppUpdateStatus, UpdateStore } from './updateStore';
-import type { AppUpdateInfo } from '@bridge/updater';
+import type { AppUpdateInfo, AppUpdateProgress } from '@bridge/updater';
 import type { PacksStore } from '../packs/packsStore';
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(), save: vi.fn() }));
 afterEach(cleanup);
@@ -473,5 +474,67 @@ describe('GeneralTab Updates section', () => {
     expect(section.getByTestId('update-status').textContent).toBe('Version 0.13.0 is available.');
     expect((section.getByTestId('install-update') as HTMLButtonElement).disabled).toBe(false);
     expect(section.queryByTestId('release-notes')).toBeNull();
+  });
+});
+
+describe('GeneralTab Updates section — first Install click under a Chromium-strict <progress>', () => {
+  /**
+   * jsdom lets `progress.value = undefined` through; Chromium throws
+   * "The provided double value is non-finite". Solid runs the render effect
+   * synchronously inside the store's `setProgress`, so in the built app that
+   * TypeError escaped `install()` before it reached `setStatus('downloading')`
+   * and the first click did nothing (live finding, 2026-09-21). Emulate the
+   * strict setter and drive the REAL store so the whole path is exercised.
+   */
+  function strictProgressSetters(): () => void {
+    const proto = HTMLProgressElement.prototype;
+    const originals = ['value', 'max'].map((k) => [k, Object.getOwnPropertyDescriptor(proto, k)!] as const);
+    for (const [k, d] of originals) {
+      Object.defineProperty(proto, k, {
+        ...d,
+        set(this: HTMLProgressElement, v: unknown) {
+          if (typeof v !== 'number' || !Number.isFinite(v)) throw new TypeError(`Failed to set the '${k}' property on 'HTMLProgressElement': The provided double value is non-finite.`);
+          d.set!.call(this, v);
+        },
+      });
+    }
+    return () => { for (const [k, d] of originals) Object.defineProperty(proto, k, d); };
+  }
+
+  it('starts the download on the very first click even when the server sends no Content-Length', async () => {
+    const restore = strictProgressSetters();
+    try {
+      let release!: () => void;
+      const install = vi.fn(async (onProgress: (p: AppUpdateProgress) => void) => {
+        onProgress({ phase: 'started', total: null });
+        onProgress({ phase: 'progress', received: 4096, total: null });
+        await new Promise<void>((r) => { release = r; });
+      });
+      const updates = createUpdateStore({
+        startupCheck: false,
+        api: {
+          appVersion: () => Promise.resolve('0.12.0'),
+          checkForAppUpdate: () => Promise.resolve({ version: '0.12.1', currentVersion: '0.12.0', notes: null, date: null }),
+          installAppUpdate: install,
+        },
+      });
+      render(() => <SettingsPanel store={fakeStore()} updates={updates} />);
+      const section = within(screen.getByTestId('updates-section'));
+      await updates.check();
+      expect(section.getByTestId('update-status').textContent).toBe('Version 0.12.1 is available.');
+
+      fireEvent.click(section.getByTestId('install-update'));
+      await Promise.resolve();
+      expect(install).toHaveBeenCalledTimes(1);
+      expect(section.getByTestId('update-status').textContent).toBe('Downloading… 0.0 MB');
+      const bar = section.getByTestId('update-progress') as HTMLProgressElement;
+      expect(bar.hasAttribute('value')).toBe(false);
+      expect(bar.hasAttribute('max')).toBe(false);
+      release();
+      await Promise.resolve();
+      updates.dispose();
+    } finally {
+      restore();
+    }
   });
 });
