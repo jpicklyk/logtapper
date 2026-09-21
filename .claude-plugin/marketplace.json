@@ -8,9 +8,27 @@
   "plugins": [
     {
       "name": "logtapper",
+      "version": "0.4.1",
+      "description": "Attach the LogTapper MCP server to Claude Code, investigate live log sessions by chat, and publish line-anchored analyses back into the app.",
+      "author": {
+        "name": "jpicklyk",
+        "url": "https://github.com/jpicklyk"
+      },
+      "homepage": "https://github.com/jpicklyk/logtapper",
+      "repository": "https://github.com/jpicklyk/logtapper",
+      "license": "GPL-3.0-or-later",
+      "keywords": [
+        "logtapper",
+        "logs",
+        "android",
+        "logcat",
+        "bugreport",
+        "mcp",
+        "log-analysis"
+      ],
+      "category": "developer-tools",
       "source": "./plugins/logtapper",
-      "description": "Attach the LogTapper MCP server to Claude Code and work with live log sessions by chat.",
-      "author": { "name": "jpicklyk" }
+      "strict": true
     }
   ]
 }
