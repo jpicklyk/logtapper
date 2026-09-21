@@ -1,0 +1,148 @@
+name: Publish packages
+
+# Bumps the Homebrew cask and Scoop manifest to a new release. Runs on the
+# draft -> published transition (the same moment `latest.json` starts
+# resolving for the in-app updater) so publishing the release is the single
+# trigger for every install channel, and on workflow_dispatch so the
+# maintainer can re-run a version (idempotent: the commit step below is a
+# no-op when the rendered file didn't change) or seed the tap/bucket repos
+# before the first real release.
+#
+# See `plans/package-manager-channels.md` for the full design. The winget
+# job is `continue-on-error: true` until the first manifest (created and
+# submitted by hand, per that plan's §5) has merged into
+# microsoft/winget-pkgs — `wingetcreate update` has nothing to update before
+# that exists.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the v"
+        required: true
+
+concurrency: publish-packages-${{ inputs.version || github.event.release.tag_name }}
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          RAW="${{ inputs.version || github.event.release.tag_name }}"
+          echo "version=${RAW#v}" >> "$GITHUB_OUTPUT"
+
+  homebrew:
+    needs: resolve-version
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.resolve-version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Render the cask
+        run: node scripts/render-packaging.mjs --version "$VERSION" --out out
+
+      - name: brew style
+        run: brew style --cask out/homebrew/Casks/logtapper.rb
+
+      - name: brew audit (fails the job on audit errors, not warnings)
+        run: brew audit --cask --online out/homebrew/Casks/logtapper.rb
+
+      - name: Checkout jpicklyk/homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: jpicklyk/homebrew-tap
+          # Fine-grained PAT, Contents: read/write on homebrew-tap + scoop-bucket only.
+          # GITHUB_TOKEN can't push to a different repo.
+          token: ${{ secrets.PACKAGING_PAT }}
+          path: tap
+
+      - name: Publish the rendered cask
+        run: |
+          mkdir -p tap/Casks
+          cp out/homebrew/Casks/logtapper.rb tap/Casks/logtapper.rb
+          git -C tap config user.name "github-actions[bot]"
+          git -C tap config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C tap add Casks/logtapper.rb
+          if [ -n "$(git -C tap status --porcelain)" ]; then
+            git -C tap commit -m "logtapper $VERSION"
+            git -C tap push
+          else
+            echo "tap/Casks/logtapper.rb already at $VERSION, skipping commit+push"
+          fi
+
+  scoop:
+    needs: resolve-version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.resolve-version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Render the manifest
+        run: node scripts/render-packaging.mjs --version "$VERSION" --out out
+
+      - name: Checkout jpicklyk/scoop-bucket
+        uses: actions/checkout@v4
+        with:
+          repository: jpicklyk/scoop-bucket
+          # Same fine-grained PAT as the homebrew job.
+          token: ${{ secrets.PACKAGING_PAT }}
+          path: bucket-repo
+
+      - name: Publish the rendered manifest
+        run: |
+          mkdir -p bucket-repo/bucket
+          cp out/scoop/bucket/logtapper.json bucket-repo/bucket/logtapper.json
+          git -C bucket-repo config user.name "github-actions[bot]"
+          git -C bucket-repo config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C bucket-repo add bucket/logtapper.json
+          if [ -n "$(git -C bucket-repo status --porcelain)" ]; then
+            git -C bucket-repo commit -m "logtapper $VERSION"
+            git -C bucket-repo push
+          else
+            echo "bucket/logtapper.json already at $VERSION, skipping commit+push"
+          fi
+
+  winget:
+    needs: resolve-version
+    runs-on: windows-latest
+    # See the workflow-level comment: soft-fails until the first manifest is
+    # merged into microsoft/winget-pkgs. Flip this off once that PR lands.
+    continue-on-error: true
+    env:
+      VERSION: ${{ needs.resolve-version.outputs.version }}
+    steps:
+      - name: Download wingetcreate
+        shell: pwsh
+        run: Invoke-WebRequest -Uri https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+
+      - name: Update and submit the winget manifest
+        shell: pwsh
+        # Classic PAT with `public_repo` — wingetcreate forks microsoft/winget-pkgs under
+        # the token's account and opens the PR from there; fine-grained tokens aren't
+        # reliably accepted for that fork+PR flow.
+        run: |
+          $url = "https://github.com/jpicklyk/LogTapper/releases/download/v$env:VERSION/LogTapper_${env:VERSION}_x64-setup.exe"
+          .\wingetcreate.exe update jpicklyk.LogTapper --version $env:VERSION --urls $url --submit --token ${{ secrets.WINGET_PAT }}

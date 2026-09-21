@@ -1,0 +1,23 @@
+{
+  "version": "{{VERSION}}",
+  "description": "Android log file analyzer with AI-assisted analysis",
+  "homepage": "https://github.com/jpicklyk/LogTapper",
+  "license": "GPL-3.0-or-later",
+  "notes": [
+    "LogTapper needs the Microsoft Edge WebView2 Runtime. Windows 11 ships it;",
+    "on Windows 10 install it from https://developer.microsoft.com/microsoft-edge/webview2/",
+    "Updates come from 'scoop update logtapper'; the in-app updater is disabled for Scoop installs."
+  ],
+  "url": "https://github.com/jpicklyk/LogTapper/releases/download/v{{VERSION}}/LogTapper_{{VERSION}}_x64-setup.exe",
+  "hash": "{{SHA256_NSIS}}",
+  "pre_install": [
+    "Expand-7zipArchive \"$dir\\$fname\" \"$dir\" -Removal",
+    "Remove-Item \"$dir\\`$PLUGINSDIR\" -Recurse -Force -ErrorAction SilentlyContinue"
+  ],
+  "bin": [["log-tapper.exe", "logtapper"]],
+  "shortcuts": [["log-tapper.exe", "LogTapper"]],
+  "checkver": "github",
+  "autoupdate": {
+    "url": "https://github.com/jpicklyk/LogTapper/releases/download/v$version/LogTapper_$version_x64-setup.exe"
+  }
+}

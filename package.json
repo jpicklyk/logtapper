@@ -22,7 +22,8 @@
     "check:types": "npm run gen:types && git diff --exit-code -- src-shared/bridge/generated && tsc --noEmit",
     "build:mcpb": "npm --prefix mcp-server run build:mcpb",
     "version:check": "node scripts/bump-version.mjs --check",
-    "version:bump": "node scripts/bump-version.mjs"
+    "version:bump": "node scripts/bump-version.mjs",
+    "test:scripts": "node --test scripts/*.test.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.2",
