@@ -1,7 +1,7 @@
 {
   "name": "logtapper",
   "displayName": "LogTapper",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Companion tools for the LogTapper desktop log-analysis app. Attach the LogTapper MCP server to Claude Code so you can query live log sessions, run processors, and inspect state-tracker events by chat.",
   "author": {
     "name": "jpicklyk",
