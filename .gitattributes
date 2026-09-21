@@ -12,6 +12,8 @@
 *.yaml  text eol=lf
 *.yml   text eol=lf
 *.md    text eol=lf
+*.mjs   text eol=lf
+*.tmpl  text eol=lf
 
 # Binary files — no line ending conversion
 *.png   binary

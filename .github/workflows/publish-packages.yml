@@ -22,7 +22,9 @@ on:
         description: "Version without the v"
         required: true
 
-concurrency: publish-packages-${{ inputs.version || github.event.release.tag_name }}
+# Normalised to the tag form so a dispatch re-run of 0.14.0 shares a group with the
+# release run for v0.14.0 instead of pushing alongside it.
+concurrency: publish-packages-${{ github.event.release.tag_name || format('v{0}', inputs.version) }}
 
 permissions:
   contents: read
@@ -36,9 +38,9 @@ jobs:
       - name: Resolve version
         id: version
         shell: bash
-        run: |
-          RAW="${{ inputs.version || github.event.release.tag_name }}"
-          echo "version=${RAW#v}" >> "$GITHUB_OUTPUT"
+        env:
+          RAW: ${{ inputs.version || github.event.release.tag_name }}
+        run: echo "version=${RAW#v}" >> "$GITHUB_OUTPUT"
 
   homebrew:
     needs: resolve-version
@@ -143,6 +145,8 @@ jobs:
         # Classic PAT with `public_repo` — wingetcreate forks microsoft/winget-pkgs under
         # the token's account and opens the PR from there; fine-grained tokens aren't
         # reliably accepted for that fork+PR flow.
+        env:
+          WINGET_PAT: ${{ secrets.WINGET_PAT }}
         run: |
           $url = "https://github.com/jpicklyk/LogTapper/releases/download/v$env:VERSION/LogTapper_${env:VERSION}_x64-setup.exe"
-          .\wingetcreate.exe update jpicklyk.LogTapper --version $env:VERSION --urls $url --submit --token ${{ secrets.WINGET_PAT }}
+          .\wingetcreate.exe update jpicklyk.LogTapper --version $env:VERSION --urls $url --submit --token $env:WINGET_PAT

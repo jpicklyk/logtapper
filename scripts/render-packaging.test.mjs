@@ -4,7 +4,7 @@
 // unit-test against — same shape as `bump-version.mjs`). Uses `node:os`'s
 // tmpdir rather than a fixed path so parallel runs don't collide.
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -95,4 +95,29 @@ test('--check passes on the committed templates', () => {
   assert.match(stdout, /packaging\/homebrew\/logtapper\.rb\.tmpl: ok/);
   assert.match(stdout, /packaging\/scoop\/logtapper\.json\.tmpl: ok/);
   assert.match(stdout, /all templates render cleanly/);
+});
+
+test('a malformed placeholder fails the render instead of surviving into the output', () => {
+  // Copy the real templates into a scratch root and break one of them the way a
+  // hand edit would: spaces inside the braces, which the old check let through.
+  const scratch = mkdtempSync(join(tmpdir(), 'render-packaging-broken-'));
+  const outDir = join(scratch, 'out');
+  try {
+    const repo = fileURLToPath(new URL('..', import.meta.url));
+    cpSync(join(repo, 'packaging'), join(scratch, 'packaging'), { recursive: true });
+    cpSync(join(repo, 'package.json'), join(scratch, 'package.json'));
+    const tmpl = join(scratch, 'packaging', 'scoop', 'logtapper.json.tmpl');
+    writeFileSync(tmpl, readFileSync(tmpl, 'utf8').replace('{{SHA256_NSIS}}', '{{ SHA256_NSIS }}'));
+
+    const result = spawnSync(process.execPath, [script, '--check'], {
+      encoding: 'utf8',
+      env: { ...process.env, RENDER_PACKAGING_ROOT: scratch },
+    });
+    assert.notEqual(result.status, 0, 'a broken template must fail --check');
+    assert.match(result.stderr, /unrendered placeholder/);
+    assert.match(result.stderr, /\{\{ SHA256_NSIS \}\}/);
+    assert.equal(existsSync(join(outDir, 'scoop', 'bucket', 'logtapper.json')), false);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 });

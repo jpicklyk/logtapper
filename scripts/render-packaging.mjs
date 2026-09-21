@@ -30,7 +30,9 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+// RENDER_PACKAGING_ROOT lets the test point at a directory holding a broken
+// template; nothing else should set it.
+const root = process.env.RENDER_PACKAGING_ROOT ?? join(dirname(fileURLToPath(import.meta.url)), '..');
 const REPO = 'jpicklyk/LogTapper';
 
 // Placeholder name -> the release asset it hashes, as a function of version.
@@ -90,8 +92,10 @@ function render(text, values) {
   return text.replace(/\{\{(\w+)\}\}/g, (whole, key) => (key in values ? values[key] : whole));
 }
 
+// Anything that still looks like a placeholder opener counts, so a malformed
+// token such as `{{ VERSION }}` or `{{SHA-256}}` cannot slip through rendering.
 function unrenderedPlaceholders(text) {
-  return [...new Set([...text.matchAll(/\{\{\w+\}\}/g)].map((m) => m[0]))];
+  return [...new Set([...text.matchAll(/\{\{[^}\n]*\}?\}?/g)].map((m) => m[0]))];
 }
 
 function writeRendered(outDir, version, hashes) {
