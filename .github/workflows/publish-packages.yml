@@ -65,11 +65,11 @@ jobs:
       - name: brew audit (fails the job on audit errors, not warnings)
         run: brew audit --cask --online out/homebrew/Casks/logtapper.rb
 
-      - name: Checkout jpicklyk/homebrew-tap
+      - name: Checkout jpicklyk/homebrew-logtapper
         uses: actions/checkout@v4
         with:
-          repository: jpicklyk/homebrew-tap
-          # Fine-grained PAT, Contents: read/write on homebrew-tap + scoop-bucket only.
+          repository: jpicklyk/homebrew-logtapper
+          # Fine-grained PAT, Contents: read/write on homebrew-logtapper + logtapper-scoop only.
           # GITHUB_TOKEN can't push to a different repo.
           token: ${{ secrets.PACKAGING_PAT }}
           path: tap
@@ -105,10 +105,10 @@ jobs:
       - name: Render the manifest
         run: node scripts/render-packaging.mjs --version "$VERSION" --out out
 
-      - name: Checkout jpicklyk/scoop-bucket
+      - name: Checkout jpicklyk/logtapper-scoop
         uses: actions/checkout@v4
         with:
-          repository: jpicklyk/scoop-bucket
+          repository: jpicklyk/logtapper-scoop
           # Same fine-grained PAT as the homebrew job.
           token: ${{ secrets.PACKAGING_PAT }}
           path: bucket-repo

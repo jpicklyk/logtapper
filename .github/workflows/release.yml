@@ -94,8 +94,8 @@ jobs:
           releaseName: LogTapper v__VERSION__
           releaseBody: |
             **Windows (winget):** `winget install jpicklyk.LogTapper`
-            **Windows (Scoop):** `scoop bucket add jpicklyk https://github.com/jpicklyk/scoop-bucket` then `scoop install logtapper`
-            **macOS (Homebrew):** `brew install --cask --no-quarantine jpicklyk/tap/logtapper`
+            **Windows (Scoop):** `scoop bucket add logtapper https://github.com/jpicklyk/logtapper-scoop` then `scoop install logtapper`
+            **macOS (Homebrew):** `brew install --cask --no-quarantine jpicklyk/logtapper/logtapper`
 
             Or see the assets below to download the installer for your platform directly.
 

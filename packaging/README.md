@@ -4,8 +4,8 @@
 Scoop manifest for LogTapper, kept here as the single source of truth and rendered by
 `scripts/render-packaging.mjs` for each release. `.github/workflows/publish-packages.yml`
 runs the renderer on every published release and pushes the rendered files to the two
-publish-target repos (`jpicklyk/homebrew-tap` as `Casks/logtapper.rb`,
-`jpicklyk/scoop-bucket` as `bucket/logtapper.json`) — this repo never ships those files
+publish-target repos (`jpicklyk/homebrew-logtapper` as `Casks/logtapper.rb`,
+`jpicklyk/logtapper-scoop` as `bucket/logtapper.json`) — this repo never ships those files
 directly, and neither target repo carries anything else. Both target repos must exist
 with at least one commit (create them with a README) before the workflow runs —
 `actions/checkout` cannot clone an empty repository; the `Casks/` and `bucket/`
