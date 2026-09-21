@@ -241,16 +241,32 @@ describe('createUpdateStore — Scoop-managed installs', () => {
     expect(api.check).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses a manual check and an install once managed, without touching the bridge', async () => {
+  it('refuses a manual check once managed, without touching the bridge', async () => {
     const api = fakeApi({ appUpdatePolicy: () => Promise.resolve({ managedBy: 'scoop' }) });
     const store = make({ api });
-    await Promise.resolve();
+    await flush();
     expect(store.managedBy()).toBe('scoop');
     await store.check();
-    await store.install();
     expect(api.check).not.toHaveBeenCalled();
-    expect(api.install).not.toHaveBeenCalled();
     expect(store.status()).toBe('idle');
+    expect(store.error()).toBeNull();
+  });
+
+  it('refuses an install once managed even with an update already on offer', async () => {
+    // The policy answer is held back so a check can land `available` first;
+    // otherwise install() would bail on the empty offer and prove nothing.
+    const policy = deferred<AppUpdatePolicy>();
+    const api = fakeApi({ appUpdatePolicy: () => policy.promise });
+    api.check.mockResolvedValue(INFO);
+    const store = make({ api, startupCheck: false });
+    await store.check();
+    expect(store.status()).toBe('available');
+    policy.resolve({ managedBy: 'scoop' });
+    await flush();
+    expect(store.managedBy()).toBe('scoop');
+    await store.install();
+    expect(api.install).not.toHaveBeenCalled();
+    expect(store.status()).toBe('available');
     expect(store.error()).toBeNull();
   });
 });

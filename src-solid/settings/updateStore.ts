@@ -159,21 +159,18 @@ export function createUpdateStore(deps: UpdateStoreDeps = {}): UpdateStore {
      * hit the update endpoint on its own, even before the frontend gets a
      * chance to hide the controls.
      */
-    void api.appUpdatePolicy().then(
-      (p) => {
+    void api
+      .appUpdatePolicy()
+      // No Tauri host (tests, browser preview): treat as unmanaged so
+      // existing behavior (and existing tests) is unaffected.
+      .then((p) => p.managedBy, () => null)
+      .then((manager) => {
         if (disposed) return;
-        setManagedBy(p.managedBy);
-        if (startupCheck && p.managedBy === null) {
+        setManagedBy(manager);
+        if (startupCheck && manager === null) {
           startupTimer = setTimeout(() => { void runCheck(false); }, startupDelayMs);
         }
-      },
-      () => {
-        // No Tauri host (tests, browser preview): treat as unmanaged so
-        // existing behavior (and existing tests) is unaffected.
-        if (disposed) return;
-        if (startupCheck) startupTimer = setTimeout(() => { void runCheck(false); }, startupDelayMs);
-      },
-    );
+      });
 
     return {
       status, currentVersion, managedBy, available, progress, error,

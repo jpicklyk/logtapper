@@ -98,15 +98,20 @@ function unrenderedPlaceholders(text) {
   return [...new Set([...text.matchAll(/\{\{[^}\n]*\}?\}?/g)].map((m) => m[0]))];
 }
 
+/** Read, render and verify one template; throws naming any surviving placeholder. */
+function renderTemplate(template, values) {
+  const rendered = render(readFileSync(join(root, template.src), 'utf8'), values);
+  const leftover = unrenderedPlaceholders(rendered);
+  if (leftover.length > 0) {
+    throw new Error(`${template.src}: unrendered placeholder(s) ${leftover.join(', ')}`);
+  }
+  return rendered;
+}
+
 function writeRendered(outDir, version, hashes) {
   const values = { VERSION: version, ...hashes };
   for (const t of TEMPLATES) {
-    const text = readFileSync(join(root, t.src), 'utf8');
-    const rendered = render(text, values);
-    const leftover = unrenderedPlaceholders(rendered);
-    if (leftover.length > 0) {
-      throw new Error(`${t.src}: unrendered placeholder(s) ${leftover.join(', ')}`);
-    }
+    const rendered = renderTemplate(t, values);
     const outPath = join(outDir, t.out);
     mkdirSync(dirname(outPath), { recursive: true });
     writeFileSync(outPath, rendered);
@@ -117,16 +122,15 @@ function writeRendered(outDir, version, hashes) {
 function check() {
   const version = packageJsonVersion();
   const dummy = '0'.repeat(64);
-  const values = { VERSION: version, SHA256_ARM: dummy, SHA256_X64: dummy, SHA256_NSIS: dummy };
+  const values = { VERSION: version, ...Object.fromEntries(Object.keys(ASSETS).map((k) => [k, dummy])) };
   let failed = false;
   for (const t of TEMPLATES) {
-    const text = readFileSync(join(root, t.src), 'utf8');
-    const leftover = unrenderedPlaceholders(render(text, values));
-    if (leftover.length > 0) {
-      console.error(`${t.src}: unrendered placeholder(s) ${leftover.join(', ')}`);
-      failed = true;
-    } else {
+    try {
+      renderTemplate(t, values);
       console.log(`${t.src}: ok`);
+    } catch (err) {
+      console.error(err.message);
+      failed = true;
     }
   }
   if (failed) process.exit(1);

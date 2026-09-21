@@ -83,36 +83,38 @@ pub fn get_app_update_policy() -> AppUpdatePolicy {
 mod tests {
     use super::*;
 
+    // Forward slashes: a backslash-only string is a single component off
+    // Windows, and these must pass on every platform cargo test runs on.
     #[test]
     fn detects_scoop_apps_layout() {
-        assert!(is_scoop_managed(Path::new(r"C:\Users\x\scoop\apps\logtapper\current\log-tapper.exe")));
+        assert!(is_scoop_managed(Path::new("C:/Users/x/scoop/apps/logtapper/current/log-tapper.exe")));
     }
 
     #[test]
     fn is_case_insensitive() {
-        assert!(is_scoop_managed(Path::new(r"D:\tools\Scoop\Apps\logtapper\current\log-tapper.exe")));
+        assert!(is_scoop_managed(Path::new("D:/tools/Scoop/Apps/logtapper/current/log-tapper.exe")));
     }
 
     #[test]
     fn nsis_install_is_not_managed() {
-        assert!(!is_scoop_managed(Path::new(r"C:\Program Files\LogTapper\log-tapper.exe")));
+        assert!(!is_scoop_managed(Path::new("C:/Program Files/LogTapper/log-tapper.exe")));
     }
 
     #[test]
     fn scoop_shim_is_not_an_app_dir() {
-        assert!(!is_scoop_managed(Path::new(r"C:\scoop\shims\x.exe")));
+        assert!(!is_scoop_managed(Path::new("C:/scoop/shims/x.exe")));
     }
 
     #[test]
     fn relocated_scoop_root_is_detected_by_the_current_junction() {
-        assert!(is_scoop_managed(Path::new(r"D:\pkgs\apps\logtapper\current\log-tapper.exe")));
+        assert!(is_scoop_managed(Path::new("D:/pkgs/apps/logtapper/current/log-tapper.exe")));
     }
 
     #[test]
     fn a_versioned_dir_under_a_relocated_root_is_not_enough() {
         // Without `scoop` in the path only the shim's `current` junction is
         // proof; a stray `apps/logtapper/0.13.1` tree could be anyone's.
-        assert!(!is_scoop_managed(Path::new(r"D:\pkgs\apps\logtapper\0.13.1\log-tapper.exe")));
+        assert!(!is_scoop_managed(Path::new("D:/pkgs/apps/logtapper/0.13.1/log-tapper.exe")));
     }
 }
 
