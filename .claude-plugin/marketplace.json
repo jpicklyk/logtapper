@@ -1,5 +1,7 @@
 {
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "logtapper-plugins",
+  "version": "1.0.0",
   "owner": {
     "name": "jpicklyk",
     "email": "jpicklyk@gmail.com"
@@ -8,7 +10,7 @@
   "plugins": [
     {
       "name": "logtapper",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "description": "Attach the LogTapper MCP server to Claude Code, investigate live log sessions by chat, and publish line-anchored analyses back into the app.",
       "author": {
         "name": "jpicklyk",
