@@ -410,14 +410,15 @@ describe('GeneralTab Updates section', () => {
     const [available, setAvailable] = createSignal<AppUpdateInfo | null>(null);
     const [progress, setProgress] = createSignal<{ received: number; total: number | null } | null>(null);
     const [error, setError] = createSignal<string | null>(null);
+    const [managedBy, setManagedBy] = createSignal<string | null>(null);
     const store: UpdateStore = {
-      status, available, progress, error,
+      status, available, progress, error, managedBy,
       currentVersion: () => '0.12.0',
       check: vi.fn(() => Promise.resolve()),
       install: vi.fn(() => Promise.resolve()),
       dispose: vi.fn(),
     };
-    return { store, setStatus, setAvailable, setProgress, setError };
+    return { store, setStatus, setAvailable, setProgress, setError, setManagedBy };
   }
 
   it('is omitted entirely when no update store is supplied', () => {
@@ -474,6 +475,18 @@ describe('GeneralTab Updates section', () => {
     expect(section.getByTestId('update-status').textContent).toBe('Version 0.13.0 is available.');
     expect((section.getByTestId('install-update') as HTMLButtonElement).disabled).toBe(false);
     expect(section.queryByTestId('release-notes')).toBeNull();
+  });
+
+  it('shows a managed-by message instead of check/install controls when Scoop owns the install', () => {
+    const u = fakeUpdates();
+    u.setManagedBy('scoop');
+    u.setAvailable({ version: '0.13.0', currentVersion: '0.12.0', notes: 'Fixes the thing.', date: null });
+    render(() => <SettingsPanel store={fakeStore()} updates={u.store} />);
+    const section = within(screen.getByTestId('updates-section'));
+    expect(section.getByTestId('updates-managed').textContent).toContain('Updates are managed by Scoop');
+    expect(section.getByTestId('updates-managed').textContent).toContain('scoop update logtapper');
+    expect(section.queryByRole('button', { name: 'Check for updates' })).toBeNull();
+    expect(section.queryByTestId('install-update')).toBeNull();
   });
 });
 

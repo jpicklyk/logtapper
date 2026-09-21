@@ -673,6 +673,7 @@ pub fn run() {
             commands::mcp::get_mcp_http_info,
             commands::app_update::check_app_update,
             commands::app_update::install_app_update,
+            commands::app_update::get_app_update_policy,
             commands::mcp::set_mcp_http_port,
             // Shared focus context + agent navigation requests (B1)
             commands::focus::set_focus,

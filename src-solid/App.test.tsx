@@ -123,6 +123,7 @@ vi.mock('@bridge/commands', () => ({
   getSections: vi.fn(() => Promise.resolve([])),
   getDumpstateMetadata: vi.fn(() => Promise.resolve(null)),
   getMcpStatus: vi.fn(() => Promise.resolve({ running: false, port: 0, idleSecs: null, agentRawAccess: false, anonymizerMode: 'external', effectiveAgentRaw: false })),
+  getAppUpdatePolicy: vi.fn(() => Promise.resolve({ managedBy: null })),
   getActivity: vi.fn(() => Promise.resolve([])),
   getFocus: vi.fn(() => Promise.resolve(null)),
   setFocus: vi.fn(() => Promise.resolve(null)),

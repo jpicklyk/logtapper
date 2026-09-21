@@ -181,52 +181,70 @@ export function GeneralTab(props: GeneralTabProps) {
           return (
             <div class={styles.section} data-testid="updates-section">
               <div class={styles.sectionTitle}>Updates</div>
-              <div class={styles.row}>
-                <div class={styles.label}>
-                  <span data-testid="app-version">LogTapper {updates().currentVersion() ?? ''}</span>
-                  <span class={styles.labelHint} data-testid="update-status">{updateStatusLine(updates())}</span>
-                </div>
-                <button type="button" class={styles.button} disabled={busy()} onClick={() => reported(updates().check())}>
-                  Check for updates
-                </button>
-              </div>
-              <Show when={updates().available()}>
-                {(info) => (
+              <Show
+                when={updates().managedBy()}
+                fallback={
                   <>
                     <div class={styles.row}>
                       <div class={styles.label}>
-                        <span>Install version {info().version}</span>
-                        <span class={styles.labelHint}>Downloads and verifies the update, then restarts LogTapper.</span>
+                        <span data-testid="app-version">LogTapper {updates().currentVersion() ?? ''}</span>
+                        <span class={styles.labelHint} data-testid="update-status">{updateStatusLine(updates())}</span>
                       </div>
-                      <button type="button" class={styles.primaryButton} disabled={installing()} data-testid="install-update" onClick={() => reported(updates().install())}>
-                        Install and restart
+                      <button type="button" class={styles.button} disabled={busy()} onClick={() => reported(updates().check())}>
+                        Check for updates
                       </button>
                     </div>
-                    <Show when={updates().progress()}>
-                      {(p) => (
-                        // Two elements, not one with `value={… ? n : undefined}`:
-                        // `HTMLProgressElement.value = undefined` throws in
-                        // Chromium ("non-finite double"), Solid runs this render
-                        // effect synchronously inside the store's `setProgress`,
-                        // and the exception escaped `install()` before it set
-                        // `downloading` — the first Install click did nothing
-                        // (found live on 2026-09-21; jsdom does not enforce it).
-                        <Show
-                          when={p().total !== null && p().total! > 0}
-                          fallback={<progress class={styles.progress} data-testid="update-progress" />}
-                        >
-                          <progress class={styles.progress} data-testid="update-progress" value={p().received} max={p().total!} />
-                        </Show>
+                    <Show when={updates().available()}>
+                      {(info) => (
+                        <>
+                          <div class={styles.row}>
+                            <div class={styles.label}>
+                              <span>Install version {info().version}</span>
+                              <span class={styles.labelHint}>Downloads and verifies the update, then restarts LogTapper.</span>
+                            </div>
+                            <button type="button" class={styles.primaryButton} disabled={installing()} data-testid="install-update" onClick={() => reported(updates().install())}>
+                              Install and restart
+                            </button>
+                          </div>
+                          <Show when={updates().progress()}>
+                            {(p) => (
+                              // Two elements, not one with `value={… ? n : undefined}`:
+                              // `HTMLProgressElement.value = undefined` throws in
+                              // Chromium ("non-finite double"), Solid runs this render
+                              // effect synchronously inside the store's `setProgress`,
+                              // and the exception escaped `install()` before it set
+                              // `downloading` — the first Install click did nothing
+                              // (found live on 2026-09-21; jsdom does not enforce it).
+                              <Show
+                                when={p().total !== null && p().total! > 0}
+                                fallback={<progress class={styles.progress} data-testid="update-progress" />}
+                              >
+                                <progress class={styles.progress} data-testid="update-progress" value={p().received} max={p().total!} />
+                              </Show>
+                            )}
+                          </Show>
+                          <Show when={info().notes}>
+                            {(notes) => <pre class={styles.releaseNotes} data-testid="release-notes">{notes()}</pre>}
+                          </Show>
+                        </>
                       )}
                     </Show>
-                    <Show when={info().notes}>
-                      {(notes) => <pre class={styles.releaseNotes} data-testid="release-notes">{notes()}</pre>}
+                    <Show when={updates().error()}>
+                      {(message) => <div class={styles.error} role="alert" data-testid="update-error">{message()}</div>}
                     </Show>
                   </>
+                }
+              >
+                {(manager) => (
+                  <div class={styles.row} data-testid="updates-managed">
+                    <div class={styles.label}>
+                      <span data-testid="app-version">LogTapper {updates().currentVersion() ?? ''}</span>
+                      <span class={styles.labelHint}>
+                        Updates are managed by {manager() === 'scoop' ? 'Scoop' : manager()} — run `{manager()} update logtapper`
+                      </span>
+                    </div>
+                  </div>
                 )}
-              </Show>
-              <Show when={updates().error()}>
-                {(message) => <div class={styles.error} role="alert" data-testid="update-error">{message()}</div>}
               </Show>
             </div>
           );

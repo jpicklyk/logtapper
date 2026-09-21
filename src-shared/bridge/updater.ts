@@ -19,16 +19,18 @@
  */
 
 import { getVersion } from '@tauri-apps/api/app';
-import { checkAppUpdate, installAppUpdate as installAppUpdateCommand } from './commands';
-import type { AppUpdateInfo, AppUpdateProgress } from './types';
+import { checkAppUpdate, getAppUpdatePolicy as getAppUpdatePolicyCommand, installAppUpdate as installAppUpdateCommand } from './commands';
+import type { AppUpdateInfo, AppUpdatePolicy, AppUpdateProgress } from './types';
 
-export type { AppUpdateInfo, AppUpdateProgress };
+export type { AppUpdateInfo, AppUpdatePolicy, AppUpdateProgress };
 
 /** The functions a consumer injects in tests — `updateStore.ts` takes a `Partial` of this. */
 export interface AppUpdateApi {
   checkForAppUpdate(): Promise<AppUpdateInfo | null>;
   installAppUpdate(onProgress: (p: AppUpdateProgress) => void): Promise<void>;
   appVersion(): Promise<string>;
+  /** Whether a package manager (Scoop) owns this install; `managedBy` is `null` for a normal install. */
+  appUpdatePolicy(): Promise<AppUpdatePolicy>;
 }
 
 /**
@@ -57,4 +59,13 @@ export function installAppUpdate(onProgress: (p: AppUpdateProgress) => void): Pr
 /** The running app's version, as `tauri.conf.json` declares it. */
 export function appVersion(): Promise<string> {
   return getVersion();
+}
+
+/**
+ * Whether this install is managed by a package manager (Scoop today). The
+ * store reads this once at construction and, when set, never issues a check
+ * or install call — that manager owns replacing the binary.
+ */
+export function appUpdatePolicy(): Promise<AppUpdatePolicy> {
+  return getAppUpdatePolicyCommand();
 }

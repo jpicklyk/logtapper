@@ -4,11 +4,12 @@
  * one, progress accumulation, and the retry path after a failed install.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AppUpdateApi, AppUpdateInfo, AppUpdateProgress } from '@bridge/updater';
+import type { AppUpdateApi, AppUpdateInfo, AppUpdatePolicy, AppUpdateProgress } from '@bridge/updater';
 import { createUpdateStore } from './updateStore';
 import type { UpdateStore } from './updateStore';
 
 const INFO: AppUpdateInfo = { version: '0.13.0', currentVersion: '0.12.0', notes: 'fixes', date: null };
+const UNMANAGED: AppUpdatePolicy = { managedBy: null };
 
 /** A deferred so a test can hold a check open and resolve it when it chooses. */
 function deferred<T>() {
@@ -26,6 +27,7 @@ function fakeApi(over: Partial<AppUpdateApi> = {}): AppUpdateApi & { check: Retu
     checkForAppUpdate: () => check(),
     installAppUpdate: (cb) => install(cb),
     appVersion: () => Promise.resolve('0.12.0'),
+    appUpdatePolicy: () => Promise.resolve(UNMANAGED),
     ...over,
   };
 }
@@ -202,5 +204,41 @@ describe('createUpdateStore', () => {
     expect(api.check).toHaveBeenCalledTimes(1);
     d.resolve();
     await p;
+  });
+});
+
+describe('createUpdateStore — Scoop-managed installs', () => {
+  it('reflects the backend policy in managedBy()', async () => {
+    const api = fakeApi({ appUpdatePolicy: () => Promise.resolve({ managedBy: 'scoop' }) });
+    const store = make({ api, startupCheck: false });
+    expect(store.managedBy()).toBeNull();
+    await flush();
+    expect(store.managedBy()).toBe('scoop');
+  });
+
+  it('stays null when the policy fetch fails (no Tauri host, e.g. tests/browser preview)', async () => {
+    const api = fakeApi({ appUpdatePolicy: () => Promise.reject(new Error('no host')) });
+    const store = make({ api, startupCheck: false });
+    await flush();
+    expect(store.managedBy()).toBeNull();
+  });
+
+  it('never runs the silent launch check for a managed install', async () => {
+    vi.useFakeTimers();
+    const api = fakeApi({ appUpdatePolicy: () => Promise.resolve({ managedBy: 'scoop' }) });
+    const store = make({ api, startupCheck: true, startupDelayMs: 10 });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(api.check).not.toHaveBeenCalled();
+    expect(store.status()).toBe('idle');
+    expect(store.managedBy()).toBe('scoop');
+  });
+
+  it('still runs the silent launch check once the policy says unmanaged', async () => {
+    vi.useFakeTimers();
+    const api = fakeApi();
+    const store = make({ api, startupCheck: true, startupDelayMs: 10 });
+    await vi.advanceTimersByTimeAsync(10);
+    expect(api.check).toHaveBeenCalledTimes(1);
+    void store;
   });
 });
