@@ -14,8 +14,8 @@
 
 .indexRow {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  flex-direction: column;
+  gap: 2px;
   width: 100%;
   padding: 5px 8px;
   font: inherit;
@@ -36,13 +36,22 @@
   border-color: var(--accent);
 }
 
+/* The title is the row's identity: full width, wrapping to a second line
+   before it clips, so the metadata beneath never takes its space. */
 .indexTitle {
-  flex: 1;
-  min-width: 0;
-  font-weight: 500;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  font-weight: 500;
+}
+
+.indexMetaRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
 }
 
 .indexMeta {
@@ -53,12 +62,10 @@
 }
 
 /* The session label is a file name and can be long. It gives way (with an
-   ellipsis) before the title does and never takes more than the title's
-   share of the row; the age stays `flex: none`. */
+   ellipsis) before the age does; the age stays `flex: none`. */
 .indexSession {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 45%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
