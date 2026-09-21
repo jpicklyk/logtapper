@@ -204,11 +204,19 @@ export function GeneralTab(props: GeneralTabProps) {
                     </div>
                     <Show when={updates().progress()}>
                       {(p) => (
-                        <progress
-                          class={styles.progress}
-                          value={p().total !== null && p().total! > 0 ? p().received : undefined}
-                          max={p().total !== null && p().total! > 0 ? p().total! : undefined}
-                        />
+                        // Two elements, not one with `value={… ? n : undefined}`:
+                        // `HTMLProgressElement.value = undefined` throws in
+                        // Chromium ("non-finite double"), Solid runs this render
+                        // effect synchronously inside the store's `setProgress`,
+                        // and the exception escaped `install()` before it set
+                        // `downloading` — the first Install click did nothing
+                        // (found live on 2026-09-21; jsdom does not enforce it).
+                        <Show
+                          when={p().total !== null && p().total! > 0}
+                          fallback={<progress class={styles.progress} data-testid="update-progress" />}
+                        >
+                          <progress class={styles.progress} data-testid="update-progress" value={p().received} max={p().total!} />
+                        </Show>
                       )}
                     </Show>
                     <Show when={info().notes}>
