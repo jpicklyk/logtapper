@@ -34,7 +34,7 @@ Notes:
 ### Or let the plugin do it
 
 ```
-/plugin marketplace add jpicklyk/logtapper
+/plugin marketplace add https://github.com/jpicklyk/logtapper
 /plugin install logtapper@logtapper-plugins
 ```
 

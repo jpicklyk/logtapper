@@ -79,14 +79,14 @@ and publishing line-anchored findings back into the app.
 Install it from the marketplace in this repo. Inside a Claude Code session:
 
 ```
-/plugin marketplace add jpicklyk/logtapper
+/plugin marketplace add https://github.com/jpicklyk/logtapper
 /plugin install logtapper@logtapper-plugins
 ```
 
 Or from a terminal:
 
 ```bash
-claude plugin marketplace add jpicklyk/logtapper
+claude plugin marketplace add https://github.com/jpicklyk/logtapper
 ```
 
 ```bash

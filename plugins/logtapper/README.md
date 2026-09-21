@@ -55,14 +55,14 @@ The plugin is distributed through the marketplace in the LogTapper repo. Inside
 a Claude Code session:
 
 ```
-/plugin marketplace add jpicklyk/logtapper
+/plugin marketplace add https://github.com/jpicklyk/logtapper
 /plugin install logtapper@logtapper-plugins
 ```
 
 Or from a terminal:
 
 ```bash
-claude plugin marketplace add jpicklyk/logtapper
+claude plugin marketplace add https://github.com/jpicklyk/logtapper
 claude plugin install logtapper@logtapper-plugins
 ```
 
