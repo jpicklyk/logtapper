@@ -49,10 +49,10 @@ jobs:
       VERSION: ${{ needs.resolve-version.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
 
@@ -60,7 +60,7 @@ jobs:
         run: node scripts/render-packaging.mjs --version "$VERSION" --out out
 
       - name: Checkout jpicklyk/homebrew-logtapper
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: jpicklyk/homebrew-logtapper
           # Fine-grained PAT, Contents: read/write on homebrew-logtapper + logtapper-scoop only.
@@ -106,10 +106,10 @@ jobs:
       VERSION: ${{ needs.resolve-version.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
 
@@ -117,7 +117,7 @@ jobs:
         run: node scripts/render-packaging.mjs --version "$VERSION" --out out
 
       - name: Checkout jpicklyk/logtapper-scoop
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: jpicklyk/logtapper-scoop
           # Same fine-grained PAT as the homebrew job.
