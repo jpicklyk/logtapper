@@ -46,6 +46,8 @@ import type {
   McpOpenAllowlist,
   McpBundleInfo,
   McpHttpInfo,
+  AppUpdateInfo,
+  AppUpdateProgress,
   SaveWorkspaceV4Options,
   SyncWorkspaceEnvelopeOptions,
   LoadWorkspaceV4Result,
@@ -834,6 +836,27 @@ export function getMcpSidecarPath(): Promise<string | null> {
  */
 export function getMcpHttpInfo(): Promise<McpHttpInfo> {
   return invoke('get_mcp_http_info');
+}
+
+// ── In-app update ───────────────────────────────────────────────────────────
+// Driven from Rust (`commands/app_update.rs`) rather than the updater plugin's
+// JS API, so the app's own exit cleanup — killing the MCP sidecar whose exe the
+// installer overwrites — runs before the installer takes over.
+
+/** Ask the release endpoint for a newer version; `null` when current. The found update is held backend-side for `installAppUpdate`. */
+export function checkAppUpdate(): Promise<AppUpdateInfo | null> {
+  return invoke('check_app_update');
+}
+
+/**
+ * Download, verify, install and hand off to the new build. Resolves only on
+ * failure paths worth showing (the success path exits this process); a
+ * rejected install keeps the update on hand so calling again is a retry.
+ */
+export function installAppUpdate(onEvent: (event: AppUpdateProgress) => void): Promise<void> {
+  const channel = new Channel<AppUpdateProgress>();
+  channel.onmessage = onEvent;
+  return invoke('install_app_update', { onEvent: channel });
 }
 
 /**

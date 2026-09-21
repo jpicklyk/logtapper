@@ -734,4 +734,79 @@ mod tests {
 
         assert!(find_sidecar_in(&gone).is_none(), "unreadable dir must yield None, not panic");
     }
+
+    // -------------------------------------------------------------------------
+    // stop_mcp_http_server — the exit-path mechanism
+    // -------------------------------------------------------------------------
+
+    /// A long-lived stand-in for the sidecar: something that stays up until
+    /// killed, on either platform, with no window.
+    fn spawn_long_lived_child() -> std::process::Child {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            std::process::Command::new("cmd")
+                .args(["/C", "ping -n 60 127.0.0.1 >NUL"])
+                .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+                .spawn()
+                .expect("spawn cmd")
+        }
+        #[cfg(not(windows))]
+        {
+            std::process::Command::new("sleep").arg("60").spawn().expect("spawn sleep")
+        }
+    }
+
+    /// The update path: on Windows the updater plugin launches the installer
+    /// and exits this process without going through `RunEvent::Exit`, so
+    /// `on_app_exit` runs from the plugin's `on_before_exit` hook and calls
+    /// this. The sidecar's exe is one of the files the installer overwrites;
+    /// if the child is still alive when this returns, the install fails with
+    /// NSIS "Error opening file for writing" (live finding, 2026-09-21). So:
+    /// after the call the child must be dead — not merely signalled — and the
+    /// slot empty, and a second call must be a no-op.
+    #[test]
+    fn stop_mcp_http_server_kills_a_running_sidecar_before_returning() {
+        let state = make_state();
+        let child = spawn_long_lived_child();
+        let pid = child.id();
+        *state.mcp_http_server.lock().unwrap() = Some(child);
+
+        stop_mcp_http_server(&state);
+
+        assert!(state.mcp_http_server.lock().unwrap().is_none(), "slot must be cleared");
+        // `stop` waited on the child, so its exit is already reaped; the pid
+        // must not answer as a live process any more. `tasklist`/`kill -0`
+        // are the only portable-enough probes without a new dependency.
+        #[cfg(windows)]
+        let alive = {
+            let out = std::process::Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+                .output()
+                .expect("tasklist");
+            String::from_utf8_lossy(&out.stdout).contains(&pid.to_string())
+        };
+        #[cfg(not(windows))]
+        let alive = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(!alive, "sidecar pid {pid} must be dead after stop_mcp_http_server");
+
+        stop_mcp_http_server(&state); // idempotent
+        assert!(state.mcp_http_server.lock().unwrap().is_none());
+    }
+
+    /// `stop` bumps the spawn generation so a supervisor thread mid-retry
+    /// abandons its attempt instead of re-registering a child after the exit
+    /// path already ran. Pinned separately because the kill above would pass
+    /// even if this regressed.
+    #[test]
+    fn stop_mcp_http_server_advances_the_spawn_generation() {
+        let state = make_state();
+        let before = state.mcp_http_generation.load(Ordering::SeqCst);
+        stop_mcp_http_server(&state);
+        assert_eq!(state.mcp_http_generation.load(Ordering::SeqCst), before + 1);
+    }
 }
