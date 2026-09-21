@@ -6,11 +6,12 @@ description: >-
   compare logs that are loaded in LogTapper — dumpstates, bugreports, logcat, or
   kernel logs — even if they just say "check the logs", "why is X failing on this
   device", "compare these two captures", or name a symptom (crash, disconnect,
-  enumeration failure, config not applied). Also use it when asked to publish or
-  write analysis findings back into LogTapper. It encodes the investigation
-  ladder (pipeline results before raw lines), comparative working-vs-failing
-  methodology, multi-boot timeline discipline for dumpstates, and the
-  line-anchored analysis publishing workflow.
+  enumeration failure, config not applied). Also use it when asked to publish,
+  write, critique, tighten, or edit analysis findings in LogTapper. It encodes
+  the investigation ladder (pipeline results before raw lines), comparative
+  working-vs-failing methodology, multi-boot timeline discipline for dumpstates,
+  the line-anchored analysis publishing workflow, and the writing rules an
+  analysis must meet before it is published.
 ---
 
 # LogTapper Log Analysis
@@ -193,21 +194,78 @@ the boot attribution wrong produces a false timeline.
 When an investigation concludes (or the user asks to save/submit the analysis),
 publish it as an analysis artifact so it lives with the session:
 
-- `logtapper_analyses` `action: "publish"` with `session_id`, `title`, and
-  `sections` — each section has `heading`, markdown `body`, optional
-  `severity` (`Info`/`Warning`/`Error`/`Critical`), and `references` with
-  `lineNumber` (+ optional `endLine`) and a `label`.
+- `logtapper_analyses` `action: "publish"` with `title` and `sections` — each
+  section has `heading`, markdown `body`, optional `severity`
+  (`Info`/`Warning`/`Error`/`Critical`), and `references` with `lineNumber`
+  (+ optional `endLine`), a `label`, and a `sessionId`.
 - Use `highlightType: "Anchor"` for the smoking-gun lines (the divergence
   step, the failure line, the empty-state line) and `"Annotation"` for
   supporting context. Anchors are what a reviewer clicks first.
-- References must point into the artifact's own `session_id`. Evidence from a
-  different session (e.g., the board log) goes in the body text with the file
-  and approximate line named.
+- Analyses are workspace-owned, not session-owned: one artifact can anchor
+  lines in several sessions (a comparative report cites both captures). Put
+  `sessionId` on every reference. Passing `session_id` on the call is only a
+  fallback — it stamps references that lack their own and, on `publish`,
+  verifies the session exists. A reference with neither stays unattributed:
+  it displays, but it is not clickable in any session.
 - `action: "update"` replaces the **entire** `sections` array — resend all
-  sections, not just the changed one.
+  sections, not just the changed one — and resend `sessionId` on every
+  reference (or pass `session_id` on the call) or the update de-attributes
+  them.
+- `action: "export"` writes one analysis as a self-contained Markdown hand-off
+  with the referenced lines inlined (`context_lines` around each). The
+  destination's parent directory must already be in the MCP open allowlist.
 - Typical section shape: TL;DR (severity reflecting the outcome) → timeline →
   root cause (Critical, anchored) → alternatives evaluated/excluded →
-  recommended actions (Warning).
+  requests (no severity; see the writing rules).
+
+## Analysis writing rules
+
+The reader is an engineer who will click the anchors. The prose exists to say
+what a line proves and why it matters; everything else is noise. Apply these
+before `publish` and again when asked to critique or tighten an analysis.
+
+- **The analysis is the escalation, not advice about one.** Support attaches
+  it when handing a defect to R&D, so its reader is the R&D engineer. Never
+  write "escalate to R&D", "raise with the vendor", "open a ticket", or
+  "support should…" — those tell the reader to do what they are already
+  doing. State the finding and the concrete asks (what to identify, confirm,
+  or fix) directly, as requests, in the document's own voice.
+- **Make each argument once.** A mechanism ("the embedded flag is only set
+  from LPA results in AOSP, but here it flipped with no LPA query") belongs in
+  the evidence section that proves it. The summary and the conclusion point at
+  that section in half a sentence — they do not restate it.
+- **Summary = symptom, finding, differentiator, suspected cause, in that
+  order.** One line each, causes cross-referenced to their evidence sections
+  ("(Evidence 2)"). If the summary is more than a third of the document, it is
+  duplicating the evidence.
+- **Raw identifiers live on the referenced line, not in the body.** ATR hex,
+  ICCIDs, EIDs, MAC/IP tokens, full stack frames: the anchor carries them.
+  The body says what property of the value matters ("ATR TB3=0x82 present" /
+  "no TB3"), not the value.
+- **One claim per evidence bullet, and say what it rules out.** "No ATR,
+  voltage or EF read errors" is worth keeping precisely because it is a
+  negative finding that exonerates hardware.
+- **Timestamps only where ordering is the point.** The references already fix
+  the position; a list of every clock time an event recurred adds nothing.
+  Keep the count ("opened three times; every time:") and drop the times.
+- **Context must be used.** Device, build and app version always stay (they
+  are how R&D reproduces). Everything else — boot length, clock jumps, capture
+  duration — stays only if a later sentence depends on it. A NITZ jump that no
+  cited timestamp crosses is not context.
+- **Out-of-scope findings get one sentence, at the end.** Their job is to
+  pre-empt "did you check X?" — not to list what was seen while checking.
+  Anything without an evidence section behind it belongs here, not in the
+  requests list.
+- **Severity is for evidence, not for asks.** Leave `severity` off a
+  requests/next-steps section; an ask is not a warning.
+- **Cut the connective tissue.** "(two parts)" before a two-item list,
+  "compared across 14/15/16 … unchanged across versions … no post-14 change"
+  three ways, subsystems that "agree" — say it once, plainly. Rewrite double
+  negatives ("does not log X, so it was not Y") as the positive fact and its
+  evidence.
+- **The best sentence is the differentiator.** "Same device, slot, boot and
+  app version; the only difference is the eUICC flag on the card" — find that
+  sentence in your control evidence and promote it to the summary.
 
 ## Report structure
 
@@ -222,6 +280,5 @@ Key evidence sections (short, one claim each, quotes + line numbers)
 Conclusion (numbered findings, then recommended actions)
 ```
 
-Keep log snippets to one-liners except the single decisive block. State what
-each piece of evidence *rules out*, not just what it shows — exoneration is
-usually the most valuable output for the stakeholder.
+Keep log snippets to one-liners except the single decisive block; the writing
+rules above apply to reports as much as to published analyses.
