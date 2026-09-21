@@ -18,8 +18,9 @@ export interface AnalysesIndexProps {
 }
 
 /**
- * The workspace pane's analyses index: one row per artifact, newest first,
- * with the session it draws on and its age. Titles only — the reader stays
+ * The workspace pane's analyses index: one row per artifact, newest first.
+ * The title owns the row (up to two lines); the session it draws on and its
+ * age sit on a muted line beneath so they never squeeze it. Titles only — the reader stays
  * on the `analyses` surface (a document wants a column, not a drawer), so a
  * click selects the artifact in the shared store and `AnalysesPanel` opens
  * its reader in response (its `selected` effect).
@@ -56,14 +57,16 @@ export function AnalysesIndex(props: AnalysesIndexProps): JSX.Element {
               onClick={() => open(artifact)}
             >
               <span class={styles.indexTitle}>{artifact.title}</span>
-              <Show when={sessionLabel(artifact)}>
-                {(label) => (
-                  <span class={`${styles.indexMeta} ${styles.indexSession}`} title={label()}>
-                    {label()}
-                  </span>
-                )}
-              </Show>
-              <span class={styles.indexMeta}>{relativeTime(artifact.createdAt)}</span>
+              <span class={styles.indexMetaRow}>
+                <Show when={sessionLabel(artifact)}>
+                  {(label) => (
+                    <span class={`${styles.indexMeta} ${styles.indexSession}`} title={label()}>
+                      {label()}
+                    </span>
+                  )}
+                </Show>
+                <span class={styles.indexMeta}>{relativeTime(artifact.createdAt)}</span>
+              </span>
             </button>
           )}
         </For>
