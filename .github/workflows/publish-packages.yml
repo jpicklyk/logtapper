@@ -85,6 +85,11 @@ jobs:
         run: brew style --cask jpicklyk/logtapper/logtapper
 
       - name: brew audit (fails the job on audit errors, not warnings)
+        env:
+          # --online queries the GitHub API for the homepage/url checks; from a
+          # shared runner IP the anonymous 60/hour limit is already spent
+          # (seen on run 35643998859). The job token is read-only and enough.
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: brew audit --cask --online jpicklyk/logtapper/logtapper
 
       - name: Publish the rendered cask
