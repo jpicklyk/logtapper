@@ -7,6 +7,8 @@ All Tauri communication goes through this directory. Components and hooks **neve
 
 - `commands.ts` — thin `invoke()` wrappers; one function per Rust `#[tauri::command]`
 - `events.ts` — typed `listen()` wrappers for all Tauri events
+- `externalLinks.ts`, `updater.ts` — framework-free faces of a Tauri plugin (opener,
+  updater + process); the plugin's own types stay behind them
 - `types.ts` — the import surface for IPC types (~127 importers): re-exports from
   `generated/` plus narrowing aliases and a small set of hand-written types that have no
   Rust struct or that ts-rs cannot express — each carries a one-line comment explaining why

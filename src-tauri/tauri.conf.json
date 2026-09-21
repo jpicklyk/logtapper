@@ -49,6 +49,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "resources": {
       "../marketplace/marketplace.json": "marketplace/marketplace.json",
       "../mcp-server/dist/logtapper.mcpb": "mcp/logtapper.mcpb"
@@ -83,5 +84,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQzNThEQkQ3NzU3QTcyMUQKUldRZGNucDExOXRZUSsyWDJjcW1PSHI5MWMwZmoxTCs0TVFDWHVyeFlnZlhia0ZtaFN1Qk41cHUK",
+      "endpoints": [
+        "https://github.com/jpicklyk/LogTapper/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -20,7 +20,9 @@
     "lint:all": "npm run lint && npm run lint:rust && npm run check:types",
     "gen:types": "cargo test --manifest-path src-tauri/Cargo.toml --test export_bindings",
     "check:types": "npm run gen:types && git diff --exit-code -- src-shared/bridge/generated && tsc --noEmit",
-    "build:mcpb": "npm --prefix mcp-server run build:mcpb"
+    "build:mcpb": "npm --prefix mcp-server run build:mcpb",
+    "version:check": "node scripts/bump-version.mjs --check",
+    "version:bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.2",
@@ -32,6 +34,8 @@
     "@fontsource/geist": "^5.2.8",
     "@tauri-apps/api": "~2.10.0",
     "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-process": "~2.3.1",
+    "@tauri-apps/plugin-updater": "~2.12.0",
     "@tauri-apps/plugin-window-state": "^2.4.1",
     "clsx": "^2.1.1",
     "rehype-sanitize": "6.0.0",

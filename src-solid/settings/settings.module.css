@@ -34,6 +34,10 @@
 .primaryButton { composes: button; border-color: var(--accent-border); color: var(--text-on-accent); background: var(--accent); }
 .statusDot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--status-color, var(--text-dimmed)); }
 .statusRow { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
+/* Update download. An indeterminate <progress> (no Content-Length) keeps the same box. */
+.progress { width: 100%; height: 6px; accent-color: var(--accent); }
+/* Release notes from the manifest: plain text, never rendered as markdown here. */
+.releaseNotes { margin: 0; padding: 6px 8px; max-height: 160px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; color: var(--text-muted); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm, 3px); background: var(--surface-raised); }
 .error { margin: 0; padding: 6px 8px; border: 1px solid var(--danger); border-radius: var(--radius-sm, 3px); color: var(--danger); background: var(--danger-muted); }
 .errorBanner { composes: error; display: flex; align-items: flex-start; gap: 6px; }
 .errorBannerText { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
