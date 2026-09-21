@@ -263,6 +263,30 @@ async fn startup_update_check(handle: tauri::AppHandle) {
     }
 }
 
+/// Everything that must happen before this process goes away, from either of
+/// the two exits: a real quit (`RunEvent::Exit`) or the updater handing off to
+/// the installer (`on_before_exit`, which on Windows bypasses the run loop).
+///
+/// - Q5 — the async auto-save scheduler's debounce window (up to DEBOUNCE_MS)
+///   dies with the tokio runtime, so a mutation scheduled in that window and not
+///   yet flushed would otherwise be lost.
+/// - The HTTP MCP sidecar has its own parent-pid watchdog, but it polls every
+///   5 s and the NSIS installer starts writing within milliseconds of this
+///   process exiting; the sidecar's own exe is one of the files it writes.
+///   Killing the child here is what lets the update install proceed — see
+///   `commands::mcp::stop_mcp_http_server`'s test for the mechanism and
+///   `tests/nsis_hooks.rs` for the installer-side belt-and-braces. Reaching
+///   this from the updater path is why `commands::app_update` builds the
+///   `Updater` itself instead of letting the plugin's JS API do it.
+pub(crate) fn on_app_exit(app_handle: &tauri::AppHandle) {
+    let state = app_handle.state::<std::sync::Arc<AppState>>();
+    if workspace::autosave::has_pending_flush(&state) {
+        log::info!("[autosave] pending mutation(s) on exit; flushing synchronously");
+        workspace::autosave::flush_now_blocking(app_handle);
+    }
+    commands::mcp::stop_mcp_http_server(&state);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -288,11 +312,11 @@ pub fn run() {
         // a link. See webview_guard.rs for why a chrome-less window makes this
         // unrecoverable rather than merely surprising.
         .plugin(webview_guard::plugin())
-        // In-app updates (Settings > General). The frontend drives check/install
-        // through the plugin's own JS API under `updater:default`; nothing here
-        // touches raw log text or any agent gate.
+        // In-app updates (Settings > General). The plugin only supplies the
+        // `Updater`; `commands::app_update` drives it so `on_app_exit` runs
+        // before the installer takes over. The frontend never calls the
+        // plugin's own commands (no `updater:*` capability is granted).
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Configure window decorations per platform.
             // Windows/Linux: remove native title bar — the frontend renders custom controls.
@@ -647,6 +671,8 @@ pub fn run() {
             commands::mcp::start_mcp_bridge,
             commands::mcp::stop_mcp_bridge,
             commands::mcp::get_mcp_http_info,
+            commands::app_update::check_app_update,
+            commands::app_update::install_app_update,
             commands::mcp::set_mcp_http_port,
             // Shared focus context + agent navigation requests (B1)
             commands::focus::set_focus,
@@ -665,22 +691,9 @@ pub fn run() {
         .expect("error building tauri application")
         .run(|#[allow(unused_variables)] app_handle, event| {
             match event {
-                tauri::RunEvent::Exit => {
-                    // Q5 — the async auto-save scheduler's debounce window (up
-                    // to DEBOUNCE_MS) dies with the tokio runtime on exit, so
-                    // any mutation scheduled in that window and not yet
-                    // flushed would otherwise be lost. `RunEvent::Exit` (not
-                    // `ExitRequested`, which can be vetoed) is the final exit
-                    // path, so this fires exactly once for a real quit.
-                    let state = app_handle.state::<std::sync::Arc<AppState>>();
-                    if workspace::autosave::has_pending_flush(&state) {
-                        log::info!("[autosave] pending mutation(s) on exit; flushing synchronously");
-                        workspace::autosave::flush_now_blocking(app_handle);
-                    }
-                    // The HTTP MCP sidecar has its own parent-pid watchdog, but
-                    // a clean quit should not leave it to notice on its own.
-                    commands::mcp::stop_mcp_http_server(&state);
-                }
+                // `RunEvent::Exit` (not `ExitRequested`, which can be vetoed) is
+                // the final exit path, so this fires exactly once for a real quit.
+                tauri::RunEvent::Exit => on_app_exit(app_handle),
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Opened { urls } => {
                     // macOS sends file paths as file:// URLs via this event.

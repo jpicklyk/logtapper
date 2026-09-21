@@ -50,6 +50,13 @@ The one file where `services/`'s abstractions (`EventSink`, `AppPaths`, `Spawner
   in `lib.rs`'s `setup()`, native OS/webview integration with no service-layer equivalent.
 - **MCP bridge start/stop** (`commands/mcp.rs::start_mcp_bridge`) — the one caller of
   `mcp_bridge::BridgeCtx::new(app)`.
+- **In-app update** (`commands/app_update.rs`) — builds the updater plugin's `Updater`
+  from the handle so `lib.rs::on_app_exit` runs in its `on_before_exit` (Windows exits the
+  process from inside the plugin, bypassing `RunEvent::Exit`), and calls `app.restart()`
+  after the macOS/Linux install. The frontend never calls `plugin:updater` directly; a
+  test in `src-shared/bridge/updater.test.ts` fails if it does. The sidecar the exit
+  cleanup kills is the file the installer overwrites — `tests/nsis_hooks.rs` pins the
+  installer-side fallback for builds that predate this.
 
 Everything else that used to need `AppHandle` — event emission, path resolution,
 spawning, ADB batch delivery — now goes through the trait objects above.

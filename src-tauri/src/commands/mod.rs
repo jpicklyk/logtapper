@@ -20,6 +20,7 @@ pub mod activity;
 pub mod adapters;
 pub mod adb;
 pub mod analysis;
+pub mod app_update;
 pub mod anonymizer;
 pub mod bookmark;
 pub mod bridge_access;
@@ -202,6 +203,10 @@ pub struct AppState {
     /// Bumped by every stop/restart so a spawn supervisor thread from before
     /// the stop discards the child it was about to hand over.
     pub mcp_http_generation: std::sync::atomic::AtomicU64,
+    /// The update `app_update::check_app_update` last found, held for
+    /// `install_app_update`. `None` until a check finds one; a failed install
+    /// puts it back so the next call is a retry.
+    pub pending_app_update: Mutex<Option<tauri_plugin_updater::Update>>,
     /// YAML content for session-scoped processors imported from .lts files.
     /// Keyed by scoped ID like `wifi-state@lts-{session-uuid}`.
     /// Ephemeral — removed when the session closes.
@@ -323,6 +328,7 @@ impl AppState {
             mcp_http_port: Mutex::new(mcp::MCP_HTTP_PORT),
             mcp_http_last_error: Mutex::new(None),
             mcp_http_generation: std::sync::atomic::AtomicU64::new(0),
+            pending_app_update: Mutex::new(None),
             lts_processor_yamls: Mutex::new(HashMap::new()),
             workspace_envelope: Mutex::new(None),
             autosave_tx: Mutex::new(None),

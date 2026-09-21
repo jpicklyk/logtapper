@@ -56,7 +56,8 @@
     },
     "windows": {
       "nsis": {
-        "installMode": "both"
+        "installMode": "both",
+        "installerHooks": "./nsis/hooks.nsh"
       }
     },
     "fileAssociations": [

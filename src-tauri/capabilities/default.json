@@ -16,8 +16,6 @@
     "core:window:allow-set-title",
     "dialog:allow-open",
     "dialog:allow-save",
-    "updater:default",
-    "process:allow-restart",
     {
       "identifier": "opener:allow-open-url",
       "allow": [{ "url": "http://*" }, { "url": "https://*" }, { "url": "mailto:*" }]

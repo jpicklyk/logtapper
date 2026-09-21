@@ -1,161 +1,91 @@
 /**
- * `updater.ts` against mocked plugin packages: the `Update` handle lifecycle
- * (kept between check and install, closed on re-check, cleared on install),
- * cumulative progress mapping, and the relaunch after a successful install.
+ * `updater.ts` against a mocked command boundary. The module is deliberately
+ * thin — check and install are Rust commands now (see the module header for
+ * why) — so what this pins is the contract the store relies on: the progress
+ * callback is forwarded unchanged, a failed install rejects with the backend's
+ * message and does not resolve, and nothing here imports the updater plugin.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { DownloadEvent } from '@tauri-apps/plugin-updater';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { AppUpdateInfo, AppUpdateProgress } from './types';
 
-const check = vi.fn<() => Promise<FakeUpdate | null>>();
-const relaunch = vi.fn(() => Promise.resolve());
-const getVersion = vi.fn(() => Promise.resolve('0.12.0'));
-vi.mock('@tauri-apps/plugin-updater', () => ({ check: () => check() }));
-vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: () => relaunch() }));
+const checkAppUpdate = vi.fn<() => Promise<AppUpdateInfo | null>>();
+const installAppUpdate = vi.fn<(cb: (p: AppUpdateProgress) => void) => Promise<void>>();
+const getVersion = vi.fn(() => Promise.resolve('0.13.1'));
+vi.mock('./commands', () => ({
+  checkAppUpdate: () => checkAppUpdate(),
+  installAppUpdate: (cb: (p: AppUpdateProgress) => void) => installAppUpdate(cb),
+}));
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: () => getVersion() }));
 
-/** The slice of the plugin's `Update` class the wrapper touches. */
-class FakeUpdate {
-  closed = false;
-  installed = false;
-  /** Events replayed to the wrapper's `onEvent` during `downloadAndInstall`. */
-  events: DownloadEvent[] = [];
-  failInstall: unknown = null;
-  constructor(
-    public version = '0.13.0',
-    public currentVersion = '0.12.0',
-    public body: string | undefined = 'notes',
-    public date: string | undefined = '2026-09-21T00:00:00Z',
-  ) {}
-  async close(): Promise<void> {
-    this.closed = true;
-  }
-  async downloadAndInstall(onEvent?: (e: DownloadEvent) => void): Promise<void> {
-    for (const e of this.events) onEvent?.(e);
-    if (this.failInstall !== null) throw this.failInstall;
-    this.installed = true;
-  }
-}
+import { appVersion, checkForAppUpdate, installAppUpdate as install } from './updater';
 
-// The module keeps the pending handle in module state; re-import per test so
-// one test's handle never leaks into the next.
-type Updater = typeof import('./updater');
-let updater: Updater;
-beforeEach(async () => {
-  vi.resetModules();
-  updater = await import('./updater');
-});
 afterEach(() => {
-  check.mockReset();
-  relaunch.mockClear();
+  checkAppUpdate.mockReset();
+  installAppUpdate.mockReset();
   getVersion.mockClear();
 });
 
 describe('checkForAppUpdate', () => {
-  it('resolves null when the running version is current', async () => {
-    check.mockResolvedValue(null);
-    await expect(updater.checkForAppUpdate()).resolves.toBeNull();
-  });
-
-  it('maps the plugin handle to plain info', async () => {
-    check.mockResolvedValue(new FakeUpdate());
-    await expect(updater.checkForAppUpdate()).resolves.toEqual({
-      version: '0.13.0',
-      currentVersion: '0.12.0',
-      notes: 'notes',
-      date: '2026-09-21T00:00:00Z',
-    });
-  });
-
-  it('normalises absent or blank notes and date to null', async () => {
-    const update = new FakeUpdate('0.13.0', '0.12.0', '   ');
-    update.date = undefined; // a default parameter would fill it back in
-    check.mockResolvedValue(update);
-    await expect(updater.checkForAppUpdate()).resolves.toEqual({
-      version: '0.13.0',
-      currentVersion: '0.12.0',
-      notes: null,
-      date: null,
-    });
-  });
-
-  it('closes the previous handle when checked again', async () => {
-    const first = new FakeUpdate();
-    check.mockResolvedValueOnce(first).mockResolvedValueOnce(null);
-    await updater.checkForAppUpdate();
-    await updater.checkForAppUpdate();
-    expect(first.closed).toBe(true);
+  it('passes the backend answer through: null when current, the info otherwise', async () => {
+    checkAppUpdate.mockResolvedValueOnce(null);
+    await expect(checkForAppUpdate()).resolves.toBeNull();
+    const info: AppUpdateInfo = { version: '0.13.2', currentVersion: '0.13.1', notes: null, date: null };
+    checkAppUpdate.mockResolvedValueOnce(info);
+    await expect(checkForAppUpdate()).resolves.toEqual(info);
   });
 
   it('propagates an endpoint failure to the caller', async () => {
-    check.mockRejectedValue(new Error('offline'));
-    await expect(updater.checkForAppUpdate()).rejects.toThrow('offline');
+    checkAppUpdate.mockRejectedValueOnce('endpoint unreachable');
+    await expect(checkForAppUpdate()).rejects.toBe('endpoint unreachable');
   });
 });
 
 describe('installAppUpdate', () => {
-  it('rejects when nothing was found first', async () => {
-    await expect(updater.installAppUpdate(() => undefined)).rejects.toThrow(/check for updates first/);
-    expect(relaunch).not.toHaveBeenCalled();
-  });
-
-  it('forwards cumulative progress, installs, then relaunches', async () => {
-    const update = new FakeUpdate();
-    update.events = [
-      { event: 'Started', data: { contentLength: 100 } },
-      { event: 'Progress', data: { chunkLength: 40 } },
-      { event: 'Progress', data: { chunkLength: 60 } },
-      { event: 'Finished' },
-    ];
-    check.mockResolvedValue(update);
-    await updater.checkForAppUpdate();
-    const seen: unknown[] = [];
-    await updater.installAppUpdate((p) => seen.push(p));
-    expect(seen).toEqual([
+  it('forwards every progress event unchanged, in order', async () => {
+    const events: AppUpdateProgress[] = [
       { phase: 'started', total: 100 },
       { phase: 'progress', received: 40, total: 100 },
       { phase: 'progress', received: 100, total: 100 },
       { phase: 'finished' },
-    ]);
-    expect(update.installed).toBe(true);
-    expect(relaunch).toHaveBeenCalledTimes(1);
+    ];
+    installAppUpdate.mockImplementationOnce(async (cb) => { for (const e of events) cb(e); });
+    const seen: AppUpdateProgress[] = [];
+    await install((p) => seen.push(p));
+    expect(seen).toEqual(events);
   });
 
-  it('reports an unknown total when the server sends no Content-Length', async () => {
-    const update = new FakeUpdate();
-    update.events = [{ event: 'Started', data: {} }, { event: 'Progress', data: { chunkLength: 5 } }];
-    check.mockResolvedValue(update);
-    await updater.checkForAppUpdate();
-    const seen: unknown[] = [];
-    await updater.installAppUpdate((p) => seen.push(p));
-    expect(seen).toEqual([
-      { phase: 'started', total: null },
-      { phase: 'progress', received: 5, total: null },
-    ]);
-  });
-
-  it('keeps the handle for a retry when the install fails, and does not relaunch', async () => {
-    const update = new FakeUpdate();
-    update.failInstall = new Error('signature mismatch');
-    check.mockResolvedValue(update);
-    await updater.checkForAppUpdate();
-    await expect(updater.installAppUpdate(() => undefined)).rejects.toThrow('signature mismatch');
-    expect(relaunch).not.toHaveBeenCalled();
-    update.failInstall = null;
-    await expect(updater.installAppUpdate(() => undefined)).resolves.toBeUndefined();
-    expect(relaunch).toHaveBeenCalledTimes(1);
-  });
-
-  it('drops the handle after a successful install', async () => {
-    check.mockResolvedValue(new FakeUpdate());
-    await updater.checkForAppUpdate();
-    await updater.installAppUpdate(() => undefined);
-    await expect(updater.installAppUpdate(() => undefined)).rejects.toThrow(/check for updates first/);
+  it('rejects with the backend message on a failed install (the retry is the backend\'s job)', async () => {
+    installAppUpdate.mockRejectedValueOnce('The signature verification failed');
+    await expect(install(() => undefined)).rejects.toBe('The signature verification failed');
   });
 });
 
 describe('appVersion', () => {
   it('reads the running version from the Tauri app API', async () => {
-    await expect(updater.appVersion()).resolves.toBe('0.12.0');
+    await expect(appVersion()).resolves.toBe('0.13.1');
     expect(getVersion).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('module boundary', () => {
+  it('does not import the updater or process plugins anywhere in the frontend', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const root = path.resolve(__dirname, '..', '..');
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, entry.name);
+        if (entry.isDirectory()) { if (entry.name !== 'generated') walk(p); continue; }
+        if (!/\.(ts|tsx)$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) continue;
+        const src = fs.readFileSync(p, 'utf8');
+        if (/@tauri-apps\/plugin-(updater|process)/.test(src)) offenders.push(path.relative(root, p));
+      }
+    };
+    walk(path.join(root, 'src-shared'));
+    walk(path.join(root, 'src-solid'));
+    // The whole point of driving the update from Rust is that the app's exit
+    // cleanup runs before the installer; a direct plugin call would bypass it.
+    expect(offenders).toEqual([]);
   });
 });

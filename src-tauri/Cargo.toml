@@ -87,11 +87,12 @@ tauri-plugin-opener = "2"
 
 # In-app updates over GitHub Releases. Bundles are verified against the minisign
 # public key in tauri.conf.json (`plugins.updater.pubkey`); the matching private
-# key exists only as a CI secret and in the maintainer's password manager. The
-# process plugin supplies the relaunch after an install on macOS/Linux (the
-# Windows installer exits the app itself). Release steps: README.md "Releasing".
+# key exists only as a CI secret and in the maintainer's password manager. Driven
+# from `commands/app_update.rs`, not the plugin's JS API, so the app's own exit
+# cleanup runs before the installer. `time` formats the manifest's publish date
+# (the plugin already depends on it). Release steps: README.md "Releasing".
 tauri-plugin-updater = "2"
-tauri-plugin-process = "2"
+time = { version = "0.3", features = ["formatting"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
