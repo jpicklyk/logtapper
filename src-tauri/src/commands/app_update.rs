@@ -14,6 +14,8 @@
 //! Nothing here touches raw log text or any agent gate; both commands are
 //! `Ui`-only by construction (there is no bridge route to them).
 
+use std::path::Path;
+
 use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::AppHandle;
@@ -21,6 +23,100 @@ use tauri_plugin_updater::{Update, Updater, UpdaterExt};
 use ts_rs::TS;
 
 use crate::commands::{lock_or_err, AppState};
+
+/// Whether `path` sits inside a Scoop app directory. Scoop's layout is
+/// `<scoop-root>/apps/<app>/current/...`: the root is conventionally named
+/// `scoop`, but `$env:SCOOP` can relocate it to anything (`D:\pkgs`), so the
+/// second pattern keys on the `apps/logtapper/current` run instead — the
+/// `current` junction is Scoop's own and the shim launches through it, which
+/// is the path `current_exe` reports. Case-insensitive because Windows paths
+/// are. `C:\scoop\shims\x.exe` (Scoop's shim dir, not an app dir) is
+/// deliberately `false`.
+fn is_scoop_managed(path: &Path) -> bool {
+    let components: Vec<String> = path
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy().to_lowercase()),
+            _ => None,
+        })
+        .collect();
+    components.windows(2).any(|w| w[0] == "scoop" && w[1] == "apps")
+        || components
+            .windows(3)
+            .any(|w| w[0] == "apps" && w[1] == "logtapper" && w[2] == "current")
+}
+
+/// The package manager this running executable is installed under, if any.
+/// `None` means the normal NSIS-installed layout, where the in-app updater
+/// applies.
+fn managed_by() -> Option<&'static str> {
+    let exe = std::env::current_exe().ok()?;
+    is_scoop_managed(&exe).then_some("scoop")
+}
+
+/// The error both update commands return when [`managed_by`] says this
+/// executable came from a package manager: that manager owns replacing the
+/// binary, and the in-app updater downloading a second copy alongside it
+/// would leave two installs on disk.
+fn managed_update_error(manager: &str) -> String {
+    format!("Updates are managed by {manager}; run `{manager} update logtapper` instead.")
+}
+
+/// What the frontend needs to know before offering the in-app updater at all.
+#[derive(Debug, Clone, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct AppUpdatePolicy {
+    /// The package manager managing this install (currently only `"scoop"`),
+    /// or `None` for a normal NSIS/DMG/AppImage install.
+    pub managed_by: Option<String>,
+}
+
+/// Whether the in-app updater should be offered at all. Called once by the
+/// frontend before the silent launch check and the Settings panel decide
+/// whether to show update controls or a "managed by ..." message.
+#[tauri::command]
+pub fn get_app_update_policy() -> AppUpdatePolicy {
+    AppUpdatePolicy { managed_by: managed_by().map(str::to_string) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Forward slashes: a backslash-only string is a single component off
+    // Windows, and these must pass on every platform cargo test runs on.
+    #[test]
+    fn detects_scoop_apps_layout() {
+        assert!(is_scoop_managed(Path::new("C:/Users/x/scoop/apps/logtapper/current/log-tapper.exe")));
+    }
+
+    #[test]
+    fn is_case_insensitive() {
+        assert!(is_scoop_managed(Path::new("D:/tools/Scoop/Apps/logtapper/current/log-tapper.exe")));
+    }
+
+    #[test]
+    fn nsis_install_is_not_managed() {
+        assert!(!is_scoop_managed(Path::new("C:/Program Files/LogTapper/log-tapper.exe")));
+    }
+
+    #[test]
+    fn scoop_shim_is_not_an_app_dir() {
+        assert!(!is_scoop_managed(Path::new("C:/scoop/shims/x.exe")));
+    }
+
+    #[test]
+    fn relocated_scoop_root_is_detected_by_the_current_junction() {
+        assert!(is_scoop_managed(Path::new("D:/pkgs/apps/logtapper/current/log-tapper.exe")));
+    }
+
+    #[test]
+    fn a_versioned_dir_under_a_relocated_root_is_not_enough() {
+        // Without `scoop` in the path only the shim's `current` junction is
+        // proof; a stray `apps/logtapper/0.13.1` tree could be anyone's.
+        assert!(!is_scoop_managed(Path::new("D:/pkgs/apps/logtapper/0.13.1/log-tapper.exe")));
+    }
+}
 
 /// What the release manifest says about a newer version than the running one.
 #[derive(Debug, Clone, Serialize, TS)]
@@ -90,6 +186,9 @@ pub async fn check_app_update(
     app: AppHandle,
     state: tauri::State<'_, std::sync::Arc<AppState>>,
 ) -> Result<Option<AppUpdateInfo>, String> {
+    if let Some(manager) = managed_by() {
+        return Err(managed_update_error(manager));
+    }
     let update = build_updater(&app)?.check().await.map_err(|e| e.to_string())?;
     let info = update.as_ref().map(AppUpdateInfo::from);
     *lock_or_err(&state.pending_app_update, "pending_app_update")? = update;
@@ -107,6 +206,9 @@ pub async fn install_app_update(
     state: tauri::State<'_, std::sync::Arc<AppState>>,
     on_event: Channel<AppUpdateProgress>,
 ) -> Result<(), String> {
+    if let Some(manager) = managed_by() {
+        return Err(managed_update_error(manager));
+    }
     // Taken out of the slot so no mutex is held across the download.
     let update = lock_or_err(&state.pending_app_update, "pending_app_update")?
         .take()

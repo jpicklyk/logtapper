@@ -10,7 +10,32 @@ A desktop log analysis tool for Android developers, IT staff, and support person
 
 ## Install
 
-Download the latest release for your platform from [GitHub Releases](https://github.com/jpicklyk/logtapper/releases):
+**Windows (winget):**
+
+```
+winget install jpicklyk.LogTapper
+```
+
+**Windows (Scoop):**
+
+```
+scoop bucket add jpicklyk https://github.com/jpicklyk/scoop-bucket
+scoop install logtapper
+```
+
+**macOS (Homebrew):** LogTapper is not yet notarized (see *macOS first launch* below), so
+the cask needs `--no-quarantine` until it is:
+
+```
+brew install --cask --no-quarantine jpicklyk/tap/logtapper
+```
+
+Scoop installs update with `scoop update logtapper` — the in-app updater is disabled for
+them, since Scoop owns the install directory. winget and Homebrew installs self-update like
+any other install (see *Updates* below).
+
+Or download the latest release for your platform directly from
+[GitHub Releases](https://github.com/jpicklyk/logtapper/releases):
 
 - **Windows:** `.exe` (NSIS installer) or `.msi`
 - **macOS:** `.dmg` — pick `aarch64` for Apple Silicon or `x64` for Intel (see the note below)

@@ -6,22 +6,26 @@
  * message and does not resolve, and nothing here imports the updater plugin.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AppUpdateInfo, AppUpdateProgress } from './types';
+import type { AppUpdateInfo, AppUpdatePolicy, AppUpdateProgress } from './types';
 
 const checkAppUpdate = vi.fn<() => Promise<AppUpdateInfo | null>>();
 const installAppUpdate = vi.fn<(cb: (p: AppUpdateProgress) => void) => Promise<void>>();
+const getAppUpdatePolicy = vi.fn<() => Promise<AppUpdatePolicy>>(() => Promise.resolve({ managedBy: null }));
 const getVersion = vi.fn(() => Promise.resolve('0.13.1'));
 vi.mock('./commands', () => ({
   checkAppUpdate: () => checkAppUpdate(),
   installAppUpdate: (cb: (p: AppUpdateProgress) => void) => installAppUpdate(cb),
+  getAppUpdatePolicy: () => getAppUpdatePolicy(),
 }));
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: () => getVersion() }));
 
-import { appVersion, checkForAppUpdate, installAppUpdate as install } from './updater';
+import { appUpdatePolicy, appVersion, checkForAppUpdate, installAppUpdate as install } from './updater';
 
 afterEach(() => {
   checkAppUpdate.mockReset();
   installAppUpdate.mockReset();
+  getAppUpdatePolicy.mockReset();
+  getAppUpdatePolicy.mockImplementation(() => Promise.resolve({ managedBy: null }));
   getVersion.mockClear();
 });
 
@@ -64,6 +68,15 @@ describe('appVersion', () => {
   it('reads the running version from the Tauri app API', async () => {
     await expect(appVersion()).resolves.toBe('0.13.1');
     expect(getVersion).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('appUpdatePolicy', () => {
+  it('passes the backend answer through: null for a normal install, the manager name otherwise', async () => {
+    getAppUpdatePolicy.mockResolvedValueOnce({ managedBy: null });
+    await expect(appUpdatePolicy()).resolves.toEqual({ managedBy: null });
+    getAppUpdatePolicy.mockResolvedValueOnce({ managedBy: 'scoop' });
+    await expect(appUpdatePolicy()).resolves.toEqual({ managedBy: 'scoop' });
   });
 });
 

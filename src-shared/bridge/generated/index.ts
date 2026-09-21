@@ -22,6 +22,7 @@ export type { AnonymizerMode } from './AnonymizerMode';
 export type { AnonymizerTestResult } from './AnonymizerTestResult';
 export type { AppStateFile } from './AppStateFile';
 export type { AppUpdateInfo } from './AppUpdateInfo';
+export type { AppUpdatePolicy } from './AppUpdatePolicy';
 export type { AppUpdateProgress } from './AppUpdateProgress';
 export type { AutoSaveWorkspaceOptions } from './AutoSaveWorkspaceOptions';
 export type { AxisConfig } from './AxisConfig';

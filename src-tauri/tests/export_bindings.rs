@@ -131,6 +131,7 @@ macro_rules! ROOT_TYPES {
             app_lib::commands::mcp::McpHttpInfo,
             app_lib::commands::app_update::AppUpdateInfo,
             app_lib::commands::app_update::AppUpdateProgress,
+            app_lib::commands::app_update::AppUpdatePolicy,
             app_lib::commands::file_associations::FileAssocEntry,
             // --- ADB streaming ------------------------------------------------
             app_lib::commands::adb::AdbDevice,

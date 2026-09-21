@@ -50,6 +50,12 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "publisher": "Jeff Picklyk",
+    "copyright": "Copyright (C) 2026 Jeff Picklyk",
+    "category": "DeveloperTool",
+    "shortDescription": "Android log file analyzer with AI-assisted analysis",
+    "longDescription": "LogTapper opens logcat, bugreport, dumpstate and kernel log captures, runs YAML-defined processors over them, and exposes the results to AI agents over MCP.",
+    "homepage": "https://github.com/jpicklyk/LogTapper",
     "resources": {
       "../marketplace/marketplace.json": "marketplace/marketplace.json",
       "../mcp-server/dist/logtapper.mcpb": "mcp/logtapper.mcpb"

@@ -48,6 +48,7 @@ import type {
   McpHttpInfo,
   AppUpdateInfo,
   AppUpdateProgress,
+  AppUpdatePolicy,
   SaveWorkspaceV4Options,
   SyncWorkspaceEnvelopeOptions,
   LoadWorkspaceV4Result,
@@ -842,6 +843,15 @@ export function getMcpHttpInfo(): Promise<McpHttpInfo> {
 // Driven from Rust (`commands/app_update.rs`) rather than the updater plugin's
 // JS API, so the app's own exit cleanup — killing the MCP sidecar whose exe the
 // installer overwrites — runs before the installer takes over.
+
+/**
+ * Whether this install is managed by a package manager (currently only
+ * Scoop) — the frontend uses this to decide whether to offer the in-app
+ * updater at all before ever calling `checkAppUpdate`/`installAppUpdate`.
+ */
+export function getAppUpdatePolicy(): Promise<AppUpdatePolicy> {
+  return invoke('get_app_update_policy');
+}
 
 /** Ask the release endpoint for a newer version; `null` when current. The found update is held backend-side for `installAppUpdate`. */
 export function checkAppUpdate(): Promise<AppUpdateInfo | null> {

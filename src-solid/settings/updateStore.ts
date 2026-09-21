@@ -50,6 +50,13 @@ export interface UpdateStore {
   status: Accessor<AppUpdateStatus>;
   /** The running version; `null` until the app API answers. */
   currentVersion: Accessor<string | null>;
+  /**
+   * The package manager that owns this install (currently only `"scoop"`),
+   * or `null` for a normal install / before the backend has answered. When
+   * set, the launch check never runs and the panel shows a managed-by
+   * message instead of check/install controls.
+   */
+  managedBy: Accessor<string | null>;
   /** The update on offer while `status()` is `available`, `downloading`, `restarting` or a failed install. */
   available: Accessor<AppUpdateInfo | null>;
   progress: Accessor<AppUpdateProgressState | null>;
@@ -75,10 +82,12 @@ export function createUpdateStore(deps: UpdateStoreDeps = {}): UpdateStore {
   return createRoot((disposeRoot) => {
     const [status, setStatus] = createSignal<AppUpdateStatus>('idle');
     const [currentVersion, setCurrentVersion] = createSignal<string | null>(null);
+    const [managedBy, setManagedBy] = createSignal<string | null>(null);
     const [available, setAvailable] = createSignal<AppUpdateInfo | null>(null);
     const [progress, setProgress] = createSignal<AppUpdateProgressState | null>(null);
     const [error, setError] = createSignal<string | null>(null);
     let disposed = false;
+    let startupTimer: ReturnType<typeof setTimeout> | null = null;
     // A check superseded by a later one (or by dispose) must not write back.
     const checks = createGenerationGuard();
 
@@ -93,7 +102,11 @@ export function createUpdateStore(deps: UpdateStoreDeps = {}): UpdateStore {
      * a person who pressed the button deserves to know why nothing happened.
      */
     const runCheck = async (surfaceErrors: boolean): Promise<void> => {
-      if (disposed || status() === 'checking' || status() === 'downloading' || status() === 'restarting') return;
+      // A managed install has no in-app path at all: the view hides the
+      // controls and the backend refuses, but the store must not depend on
+      // either to hold the rule.
+      if (disposed || managedBy() !== null) return;
+      if (status() === 'checking' || status() === 'downloading' || status() === 'restarting') return;
       const token = checks.bump();
       setError(null);
       setStatus('checking');
@@ -115,7 +128,8 @@ export function createUpdateStore(deps: UpdateStoreDeps = {}): UpdateStore {
     };
 
     const install = async (): Promise<void> => {
-      if (disposed || available() === null || status() === 'downloading' || status() === 'restarting') return;
+      if (disposed || managedBy() !== null || available() === null) return;
+      if (status() === 'downloading' || status() === 'restarting') return;
       setError(null);
       setProgress({ received: 0, total: null });
       setStatus('downloading');
@@ -137,10 +151,29 @@ export function createUpdateStore(deps: UpdateStoreDeps = {}): UpdateStore {
       }
     };
 
-    const startupTimer = startupCheck ? setTimeout(() => { void runCheck(false); }, startupDelayMs) : null;
+    /**
+     * Read once at construction: a managed install never becomes unmanaged
+     * (or vice versa) while the app is running, so there is nothing to
+     * re-poll. The launch check is scheduled only after this resolves and
+     * says the install is unmanaged — a package-manager install must never
+     * hit the update endpoint on its own, even before the frontend gets a
+     * chance to hide the controls.
+     */
+    void api
+      .appUpdatePolicy()
+      // No Tauri host (tests, browser preview): treat as unmanaged so
+      // existing behavior (and existing tests) is unaffected.
+      .then((p) => p.managedBy, () => null)
+      .then((manager) => {
+        if (disposed) return;
+        setManagedBy(manager);
+        if (startupCheck && manager === null) {
+          startupTimer = setTimeout(() => { void runCheck(false); }, startupDelayMs);
+        }
+      });
 
     return {
-      status, currentVersion, available, progress, error,
+      status, currentVersion, managedBy, available, progress, error,
       check: () => runCheck(true),
       install,
       dispose: () => {
