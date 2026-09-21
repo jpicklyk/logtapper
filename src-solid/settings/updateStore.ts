@@ -97,6 +97,61 @@ export function createUpdateStore(deps: UpdateStoreDeps = {}): UpdateStore {
     );
 
     /**
+     * Shared by the launch check and the manual one; only the manual one
+     * reports failure. An offline laptop must not see an error on launch, but
+     * a person who pressed the button deserves to know why nothing happened.
+     */
+    const runCheck = async (surfaceErrors: boolean): Promise<void> => {
+      // A managed install has no in-app path at all: the view hides the
+      // controls and the backend refuses, but the store must not depend on
+      // either to hold the rule.
+      if (disposed || managedBy() !== null) return;
+      if (status() === 'checking' || status() === 'downloading' || status() === 'restarting') return;
+      const token = checks.bump();
+      setError(null);
+      setStatus('checking');
+      try {
+        const info = await api.checkForAppUpdate();
+        if (disposed || !checks.isCurrent(token)) return;
+        setAvailable(info);
+        setStatus(info === null ? 'up-to-date' : 'available');
+      } catch (e) {
+        if (disposed || !checks.isCurrent(token)) return;
+        if (surfaceErrors) {
+          setError(messageOf(e));
+          setStatus('error');
+        } else {
+          console.warn('[appUpdate] launch check failed', e);
+          setStatus('idle');
+        }
+      }
+    };
+
+    const install = async (): Promise<void> => {
+      if (disposed || managedBy() !== null || available() === null) return;
+      if (status() === 'downloading' || status() === 'restarting') return;
+      setError(null);
+      setProgress({ received: 0, total: null });
+      setStatus('downloading');
+      const onProgress = (p: AppUpdateProgress): void => {
+        if (disposed) return;
+        if (p.phase === 'started') setProgress({ received: 0, total: p.total });
+        else if (p.phase === 'progress') setProgress({ received: p.received, total: p.total });
+      };
+      try {
+        await api.installAppUpdate(onProgress);
+        if (!disposed) setStatus('restarting');
+      } catch (e) {
+        if (disposed) return;
+        // `available()` is kept: the bridge keeps its handle too, so the
+        // button is a retry rather than a dead end after a network blip.
+        setProgress(null);
+        setError(messageOf(e));
+        setStatus('error');
+      }
+    };
+
+    /**
      * Read once at construction: a managed install never becomes unmanaged
      * (or vice versa) while the app is running, so there is nothing to
      * re-poll. The launch check is scheduled only after this resolves and
@@ -119,56 +174,6 @@ export function createUpdateStore(deps: UpdateStoreDeps = {}): UpdateStore {
         if (startupCheck) startupTimer = setTimeout(() => { void runCheck(false); }, startupDelayMs);
       },
     );
-
-    /**
-     * Shared by the launch check and the manual one; only the manual one
-     * reports failure. An offline laptop must not see an error on launch, but
-     * a person who pressed the button deserves to know why nothing happened.
-     */
-    const runCheck = async (surfaceErrors: boolean): Promise<void> => {
-      if (disposed || status() === 'checking' || status() === 'downloading' || status() === 'restarting') return;
-      const token = checks.bump();
-      setError(null);
-      setStatus('checking');
-      try {
-        const info = await api.checkForAppUpdate();
-        if (disposed || !checks.isCurrent(token)) return;
-        setAvailable(info);
-        setStatus(info === null ? 'up-to-date' : 'available');
-      } catch (e) {
-        if (disposed || !checks.isCurrent(token)) return;
-        if (surfaceErrors) {
-          setError(messageOf(e));
-          setStatus('error');
-        } else {
-          console.warn('[appUpdate] launch check failed', e);
-          setStatus('idle');
-        }
-      }
-    };
-
-    const install = async (): Promise<void> => {
-      if (disposed || available() === null || status() === 'downloading' || status() === 'restarting') return;
-      setError(null);
-      setProgress({ received: 0, total: null });
-      setStatus('downloading');
-      const onProgress = (p: AppUpdateProgress): void => {
-        if (disposed) return;
-        if (p.phase === 'started') setProgress({ received: 0, total: p.total });
-        else if (p.phase === 'progress') setProgress({ received: p.received, total: p.total });
-      };
-      try {
-        await api.installAppUpdate(onProgress);
-        if (!disposed) setStatus('restarting');
-      } catch (e) {
-        if (disposed) return;
-        // `available()` is kept: the bridge keeps its handle too, so the
-        // button is a retry rather than a dead end after a network blip.
-        setProgress(null);
-        setError(messageOf(e));
-        setStatus('error');
-      }
-    };
 
     return {
       status, currentVersion, managedBy, available, progress, error,

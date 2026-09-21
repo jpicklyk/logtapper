@@ -24,12 +24,14 @@ use ts_rs::TS;
 
 use crate::commands::{lock_or_err, AppState};
 
-/// Whether `path` sits inside a Scoop app directory: a `scoop` path component
-/// immediately followed by `apps` (Scoop's own layout is
-/// `<scoop-root>/apps/<app>/current/...`; `scoop-root` is conventionally named
-/// `scoop` but that name itself is never load-bearing — only the `apps` child
-/// is). Case-insensitive because Windows paths are. `C:\scoop\shims\x.exe`
-/// (Scoop's shim dir, not an app dir) is deliberately `false`.
+/// Whether `path` sits inside a Scoop app directory. Scoop's layout is
+/// `<scoop-root>/apps/<app>/current/...`: the root is conventionally named
+/// `scoop`, but `$env:SCOOP` can relocate it to anything (`D:\pkgs`), so the
+/// second pattern keys on the `apps/logtapper/current` run instead — the
+/// `current` junction is Scoop's own and the shim launches through it, which
+/// is the path `current_exe` reports. Case-insensitive because Windows paths
+/// are. `C:\scoop\shims\x.exe` (Scoop's shim dir, not an app dir) is
+/// deliberately `false`.
 fn is_scoop_managed(path: &Path) -> bool {
     let components: Vec<String> = path
         .components()
@@ -39,6 +41,9 @@ fn is_scoop_managed(path: &Path) -> bool {
         })
         .collect();
     components.windows(2).any(|w| w[0] == "scoop" && w[1] == "apps")
+        || components
+            .windows(3)
+            .any(|w| w[0] == "apps" && w[1] == "logtapper" && w[2] == "current")
 }
 
 /// The package manager this running executable is installed under, if any.
@@ -96,6 +101,18 @@ mod tests {
     #[test]
     fn scoop_shim_is_not_an_app_dir() {
         assert!(!is_scoop_managed(Path::new(r"C:\scoop\shims\x.exe")));
+    }
+
+    #[test]
+    fn relocated_scoop_root_is_detected_by_the_current_junction() {
+        assert!(is_scoop_managed(Path::new(r"D:\pkgs\apps\logtapper\current\log-tapper.exe")));
+    }
+
+    #[test]
+    fn a_versioned_dir_under_a_relocated_root_is_not_enough() {
+        // Without `scoop` in the path only the shim's `current` junction is
+        // proof; a stray `apps/logtapper/0.13.1` tree could be anyone's.
+        assert!(!is_scoop_managed(Path::new(r"D:\pkgs\apps\logtapper\0.13.1\log-tapper.exe")));
     }
 }
 

@@ -236,9 +236,21 @@ describe('createUpdateStore — Scoop-managed installs', () => {
   it('still runs the silent launch check once the policy says unmanaged', async () => {
     vi.useFakeTimers();
     const api = fakeApi();
-    const store = make({ api, startupCheck: true, startupDelayMs: 10 });
+    make({ api, startupCheck: true, startupDelayMs: 10 });
     await vi.advanceTimersByTimeAsync(10);
     expect(api.check).toHaveBeenCalledTimes(1);
-    void store;
+  });
+
+  it('refuses a manual check and an install once managed, without touching the bridge', async () => {
+    const api = fakeApi({ appUpdatePolicy: () => Promise.resolve({ managedBy: 'scoop' }) });
+    const store = make({ api });
+    await Promise.resolve();
+    expect(store.managedBy()).toBe('scoop');
+    await store.check();
+    await store.install();
+    expect(api.check).not.toHaveBeenCalled();
+    expect(api.install).not.toHaveBeenCalled();
+    expect(store.status()).toBe('idle');
+    expect(store.error()).toBeNull();
   });
 });
