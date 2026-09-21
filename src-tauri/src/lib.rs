@@ -288,6 +288,11 @@ pub fn run() {
         // a link. See webview_guard.rs for why a chrome-less window makes this
         // unrecoverable rather than merely surprising.
         .plugin(webview_guard::plugin())
+        // In-app updates (Settings > General). The frontend drives check/install
+        // through the plugin's own JS API under `updater:default`; nothing here
+        // touches raw log text or any agent gate.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Configure window decorations per platform.
             // Windows/Linux: remove native title bar — the frontend renders custom controls.

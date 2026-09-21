@@ -85,6 +85,14 @@ tauri-plugin-window-state = "2"
 # in `capabilities/default.json` — no `open_path`, no `reveal_item_in_dir`.
 tauri-plugin-opener = "2"
 
+# In-app updates over GitHub Releases. Bundles are verified against the minisign
+# public key in tauri.conf.json (`plugins.updater.pubkey`); the matching private
+# key exists only as a CI secret and in the maintainer's password manager. The
+# process plugin supplies the relaunch after an install on macOS/Linux (the
+# Windows installer exits the app itself). Release steps: README.md "Releasing".
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = "0.52"
 windows-sys = { version = "0.59", features = ["Win32_UI_Shell"] }

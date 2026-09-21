@@ -52,3 +52,11 @@ src-tauri/target-it/
 # Bench fixtures (generated; can be gigabytes) — scripts/gen-logcat.mjs writes here
 /bench/
 scripts/fake-adb/adb.exe
+
+# Updater signing key (minisign). Lives in ~/.tauri/ and in GitHub secrets; a copy
+# inside the checkout would be one `git add -A` away from the public repo. The
+# `~/` entry covers a shell that did not expand the tilde in `-w ~/.tauri/...`.
+*.key
+*.key.pub
+.tauri/
+/~/

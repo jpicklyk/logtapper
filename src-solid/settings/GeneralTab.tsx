@@ -4,6 +4,7 @@ import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog';
 import { BASE_THEMES } from '../theme';
 import type { Density, ThemeController, ThemeMode } from '../theme';
 import type { SettingsStore } from './settingsStore';
+import type { UpdateStore } from './updateStore';
 import { McpAgentSetup } from './McpAgentSetup';
 import styles from './settings.module.css';
 const THEME_MODES: readonly ThemeMode[] = ['system', ...BASE_THEMES];
@@ -12,6 +13,8 @@ export interface GeneralTabProps {
   store: SettingsStore;
   /** Optional so a host without a live theme controller (tests) still mounts. */
   theme?: ThemeController;
+  /** App-update state; the Updates section is omitted when absent (tests, browser preview). */
+  updates?: UpdateStore;
 }
 /** Mirrors `useMcpStatus`'s `deriveConnState`, inlined against `props.store.mcpStatus` (A2's own poll). */
 function bridgeLabel(running: boolean, idleSecs: number | null, enabled: boolean): string {
@@ -27,6 +30,24 @@ function bridgeLabel(running: boolean, idleSecs: number | null, enabled: boolean
  */
 function reported(p: Promise<unknown>): void {
   void p.catch(() => undefined);
+}
+/** One line under the version: what the updater last did. Errors get their own alert below. */
+function updateStatusLine(updates: UpdateStore): string {
+  const v = updates.available()?.version;
+  switch (updates.status()) {
+    case 'idle': return 'Checks for updates shortly after launch.';
+    case 'checking': return 'Checking…';
+    case 'up-to-date': return 'Up to date.';
+    case 'available': return `Version ${v} is available.`;
+    case 'downloading': {
+      const p = updates.progress();
+      if (p === null) return 'Downloading…';
+      if (p.total !== null && p.total > 0) return `Downloading… ${Math.min(100, Math.round((p.received / p.total) * 100))}%`;
+      return `Downloading… ${(p.received / 1_048_576).toFixed(1)} MB`;
+    }
+    case 'restarting': return 'Restarting to finish the update…';
+    case 'error': return v ? `Version ${v} is available.` : 'Could not check for updates.';
+  }
 }
 export function GeneralTab(props: GeneralTabProps) {
   onMount(() => {
@@ -152,6 +173,56 @@ export function GeneralTab(props: GeneralTabProps) {
           </For>
           <button type="button" class={styles.button} onClick={() => props.store.openDefaultAppsSettings()}>Windows Default Apps</button>
         </div>
+      </Show>
+      <Show when={props.updates}>
+        {(updates) => {
+          const busy = () => updates().status() === 'checking' || updates().status() === 'downloading' || updates().status() === 'restarting';
+          const installing = () => updates().status() === 'downloading' || updates().status() === 'restarting';
+          return (
+            <div class={styles.section} data-testid="updates-section">
+              <div class={styles.sectionTitle}>Updates</div>
+              <div class={styles.row}>
+                <div class={styles.label}>
+                  <span data-testid="app-version">LogTapper {updates().currentVersion() ?? ''}</span>
+                  <span class={styles.labelHint} data-testid="update-status">{updateStatusLine(updates())}</span>
+                </div>
+                <button type="button" class={styles.button} disabled={busy()} onClick={() => reported(updates().check())}>
+                  Check for updates
+                </button>
+              </div>
+              <Show when={updates().available()}>
+                {(info) => (
+                  <>
+                    <div class={styles.row}>
+                      <div class={styles.label}>
+                        <span>Install version {info().version}</span>
+                        <span class={styles.labelHint}>Downloads and verifies the update, then restarts LogTapper.</span>
+                      </div>
+                      <button type="button" class={styles.primaryButton} disabled={installing()} data-testid="install-update" onClick={() => reported(updates().install())}>
+                        Install and restart
+                      </button>
+                    </div>
+                    <Show when={updates().progress()}>
+                      {(p) => (
+                        <progress
+                          class={styles.progress}
+                          value={p().total !== null && p().total! > 0 ? p().received : undefined}
+                          max={p().total !== null && p().total! > 0 ? p().total! : undefined}
+                        />
+                      )}
+                    </Show>
+                    <Show when={info().notes}>
+                      {(notes) => <pre class={styles.releaseNotes} data-testid="release-notes">{notes()}</pre>}
+                    </Show>
+                  </>
+                )}
+              </Show>
+              <Show when={updates().error()}>
+                {(message) => <div class={styles.error} role="alert" data-testid="update-error">{message()}</div>}
+              </Show>
+            </div>
+          );
+        }}
       </Show>
     </div>
   );

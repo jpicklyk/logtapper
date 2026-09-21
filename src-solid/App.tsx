@@ -42,7 +42,7 @@ import { BookmarksPanel, createBookmarksStore } from './bookmarks';
 import { WatchesPanel, createWatchesStore } from './watches';
 import { Switcher, WorkspaceHome, createWorkspaceStore } from './workspace';
 import { ExportDialog, createExportStore } from './export';
-import { SettingsPanel, createSettingsStore } from './settings';
+import { SettingsPanel, createSettingsStore, createUpdateStore } from './settings';
 import { createPacksStore, UpdatesPrompt } from './packs';
 import { StreamControlsPanel, createLiveStreamStore } from './stream';
 import type { ThemeController } from './theme';
@@ -397,6 +397,10 @@ export function App(props: AppProps) {
     },
   });
   onCleanup(() => settings.dispose());
+  // In-app updates (Settings > General > Updates). Production builds check once
+  // shortly after launch; dev servers never reach the endpoint.
+  const updates = createUpdateStore();
+  onCleanup(() => updates.dispose());
   // The pinned PII card renders the mode from the persisted config, and the
   // General tab's raw-access checkbox is gated on it — load it once here
   // rather than only when Settings → PII mounts.
@@ -887,7 +891,7 @@ export function App(props: AppProps) {
           export: () => (
             <ExportDialog store={exportStore} anonymizerMode={settings.anonymizerMode} onChangeMode={showAnalyzers} />
           ),
-          settings: () => <SettingsPanel store={settings} packs={packs} theme={props.theme} />,
+          settings: () => <SettingsPanel store={settings} packs={packs} theme={props.theme} updates={updates} />,
           'stream-controls': () => (
             <StreamControlsPanel store={liveStream} anonymizerMode={settings.anonymizerMode} />
           ),

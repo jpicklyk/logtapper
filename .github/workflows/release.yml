@@ -57,6 +57,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Verify the five version declarations agree
+        run: node scripts/bump-version.mjs --check
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
@@ -81,6 +84,11 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Minisign key for the in-app updater (`bundle.createUpdaterArtifacts`).
+          # The private key exists only here and in the maintainer's password
+          # manager; the public half is `plugins.updater.pubkey` in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
           releaseName: LogTapper v__VERSION__
@@ -90,6 +98,10 @@ jobs:
             **Windows:** Download the `.exe` (NSIS installer) or `.msi`
             **macOS:** Download the `.dmg` — `aarch64` for Apple Silicon, `x64` for Intel
             **Linux:** Download the `.deb` or `.AppImage`
+
+            Installed builds from this version on update themselves: LogTapper checks for
+            a newer release shortly after launch and from **Settings > General > Updates**.
+            (`.deb` installs still update by hand.)
 
             ### macOS first launch
 

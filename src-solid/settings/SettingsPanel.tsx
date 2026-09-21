@@ -2,6 +2,7 @@
 import { For, Show, createSignal } from 'solid-js';
 import type { ThemeController } from '../theme';
 import type { SettingsStore } from './settingsStore';
+import type { UpdateStore } from './updateStore';
 import { GeneralTab } from './GeneralTab';
 import { PiiTab } from './PiiTab';
 import { ThemesTab } from './ThemesTab';
@@ -16,6 +17,8 @@ export interface SettingsPanelProps {
    *  simply omitted when absent. */
   packs?: PacksStore;
   theme?: ThemeController;
+  /** App-update state for General > Updates; the section is omitted when absent. */
+  updates?: UpdateStore;
 }
 type SettingsTab = 'general' | 'pii' | 'themes' | 'packs';
 const TABS: { id: SettingsTab; label: string }[] = [
@@ -91,7 +94,7 @@ export function SettingsPanel(props: SettingsPanelProps) {
       </div>
       <Show when={active() === 'general'}>
         <div role="tabpanel" id={panelId('general')} aria-labelledby={tabId('general')}>
-          <GeneralTab store={props.store} theme={props.theme} />
+          <GeneralTab store={props.store} theme={props.theme} updates={props.updates} />
         </div>
       </Show>
       <Show when={active() === 'pii'}>

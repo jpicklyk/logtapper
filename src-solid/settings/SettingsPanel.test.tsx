@@ -8,6 +8,8 @@ import type {
 import type { AppliedUserTheme, Density, ThemeController, ThemeMode } from '../theme';
 import { SettingsPanel } from './SettingsPanel';
 import type { SettingsStore } from './settingsStore';
+import type { AppUpdateStatus, UpdateStore } from './updateStore';
+import type { AppUpdateInfo } from '@bridge/updater';
 import type { PacksStore } from '../packs/packsStore';
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(), save: vi.fn() }));
 afterEach(cleanup);
@@ -397,5 +399,79 @@ describe('SourcesTab (D1-L9)', () => {
     fireEvent.click(tab.getByTitle('Remove source'));
     fireEvent.click(tab.getByRole('button', { name: 'Remove?' }));
     expect(store.removeSource).toHaveBeenCalledWith('official');
+  });
+});
+
+describe('GeneralTab Updates section', () => {
+  /** A hand-built `UpdateStore` with signals the test drives directly. */
+  function fakeUpdates() {
+    const [status, setStatus] = createSignal<AppUpdateStatus>('idle');
+    const [available, setAvailable] = createSignal<AppUpdateInfo | null>(null);
+    const [progress, setProgress] = createSignal<{ received: number; total: number | null } | null>(null);
+    const [error, setError] = createSignal<string | null>(null);
+    const store: UpdateStore = {
+      status, available, progress, error,
+      currentVersion: () => '0.12.0',
+      check: vi.fn(() => Promise.resolve()),
+      install: vi.fn(() => Promise.resolve()),
+      dispose: vi.fn(),
+    };
+    return { store, setStatus, setAvailable, setProgress, setError };
+  }
+
+  it('is omitted entirely when no update store is supplied', () => {
+    render(() => <SettingsPanel store={fakeStore()} />);
+    expect(screen.queryByTestId('updates-section')).toBeNull();
+  });
+
+  it('shows the running version and drives a manual check from the button', () => {
+    const u = fakeUpdates();
+    render(() => <SettingsPanel store={fakeStore()} updates={u.store} />);
+    const section = within(screen.getByTestId('updates-section'));
+    expect(section.getByTestId('app-version').textContent).toBe('LogTapper 0.12.0');
+    expect(section.queryByTestId('install-update')).toBeNull();
+    fireEvent.click(section.getByRole('button', { name: 'Check for updates' }));
+    expect(u.store.check).toHaveBeenCalledTimes(1);
+    u.setStatus('checking');
+    expect((section.getByRole('button', { name: 'Check for updates' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(section.getByTestId('update-status').textContent).toBe('Checking…');
+    u.setStatus('up-to-date');
+    expect(section.getByTestId('update-status').textContent).toBe('Up to date.');
+  });
+
+  it('offers the install with notes once a version is available, then reports download progress', () => {
+    const u = fakeUpdates();
+    render(() => <SettingsPanel store={fakeStore()} updates={u.store} />);
+    const section = within(screen.getByTestId('updates-section'));
+    u.setAvailable({ version: '0.13.0', currentVersion: '0.12.0', notes: 'Fixes the thing.', date: null });
+    u.setStatus('available');
+    expect(section.getByTestId('update-status').textContent).toBe('Version 0.13.0 is available.');
+    expect(section.getByTestId('release-notes').textContent).toBe('Fixes the thing.');
+    fireEvent.click(section.getByTestId('install-update'));
+    expect(u.store.install).toHaveBeenCalledTimes(1);
+    u.setProgress({ received: 50, total: 200 });
+    u.setStatus('downloading');
+    expect((section.getByTestId('install-update') as HTMLButtonElement).disabled).toBe(true);
+    expect(section.getByTestId('update-status').textContent).toBe('Downloading… 25%');
+    const bar = section.getByRole('progressbar') as HTMLProgressElement;
+    expect(bar.value).toBe(50);
+    expect(bar.max).toBe(200);
+    u.setStatus('restarting');
+    expect(section.getByTestId('update-status').textContent).toBe('Restarting to finish the update…');
+  });
+
+  it('renders a failed check as an alert and keeps the install offer after a failed install', () => {
+    const u = fakeUpdates();
+    render(() => <SettingsPanel store={fakeStore()} updates={u.store} />);
+    const section = within(screen.getByTestId('updates-section'));
+    u.setError('endpoint unreachable');
+    u.setStatus('error');
+    expect(section.getByRole('alert').textContent).toBe('endpoint unreachable');
+    expect(section.getByTestId('update-status').textContent).toBe('Could not check for updates.');
+    u.setAvailable({ version: '0.13.0', currentVersion: '0.12.0', notes: null, date: null });
+    u.setError('signature mismatch');
+    expect(section.getByTestId('update-status').textContent).toBe('Version 0.13.0 is available.');
+    expect((section.getByTestId('install-update') as HTMLButtonElement).disabled).toBe(false);
+    expect(section.queryByTestId('release-notes')).toBeNull();
   });
 });
