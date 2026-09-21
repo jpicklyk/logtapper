@@ -25,15 +25,18 @@ const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
  * Each entry: the file, and a regex whose FIRST capture group is the version.
  * Anchored so only the app's own version matches — never a dependency's.
  */
+// `\r?` before every line end: a checkout under core.autocrlf rewrites some of
+// these files with CRLF on the way out of git, and `$` under the `m` flag only
+// matches before `\n`.
 const TARGETS = [
-  { file: 'package.json', pattern: /^(?:  "version": ")([^"]+)(?:",)$/m },
+  { file: 'package.json', pattern: /^(?:  "version": ")([^"]+)(?:",)\r?$/m },
   // The root entry and its `packages[""]` mirror — the two lines `npm version`
   // itself would touch.
-  { file: 'package-lock.json', pattern: /^(?:  "version": ")([^"]+)(?:",)$/m },
-  { file: 'package-lock.json', pattern: /^(?:    "": \{\n      "name": "log-tapper",\n      "version": ")([^"]+)(?:",)$/m },
-  { file: 'src-tauri/Cargo.toml', pattern: /^(?:name = "log-tapper"\nversion = ")([^"]+)(?:")$/m },
-  { file: 'src-tauri/Cargo.lock', pattern: /^(?:name = "log-tapper"\nversion = ")([^"]+)(?:")$/m },
-  { file: 'src-tauri/tauri.conf.json', pattern: /^(?:  "version": ")([^"]+)(?:",)$/m },
+  { file: 'package-lock.json', pattern: /^(?:  "version": ")([^"]+)(?:",)\r?$/m },
+  { file: 'package-lock.json', pattern: /^(?:    "": \{\r?\n      "name": "log-tapper",\r?\n      "version": ")([^"]+)(?:",)\r?$/m },
+  { file: 'src-tauri/Cargo.toml', pattern: /^(?:name = "log-tapper"\r?\nversion = ")([^"]+)(?:")\r?$/m },
+  { file: 'src-tauri/Cargo.lock', pattern: /^(?:name = "log-tapper"\r?\nversion = ")([^"]+)(?:")\r?$/m },
+  { file: 'src-tauri/tauri.conf.json', pattern: /^(?:  "version": ")([^"]+)(?:",)\r?$/m },
 ];
 
 function readVersions() {
