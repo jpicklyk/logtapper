@@ -309,6 +309,33 @@ mod elevated {
 
     const UNINSTALL_ROOT: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall";
 
+    /// Names the directories [`install`] creates, so [`sweep_stale_installers`]
+    /// can recognise its own leftovers and nothing else.
+    const TEMP_DIR_PREFIX: &str = "logtapper-update-";
+
+    /// Delete installer directories left by *earlier* elevated updates.
+    ///
+    /// The one this update is about to create cannot clean itself up: the
+    /// installer is still reading from it when this process exits (that is
+    /// what the `keep` below is for), and nothing runs afterwards to remove
+    /// it. Left alone it is one ~37 MB installer per update, forever — three
+    /// were found on a machine after three test updates (2026-09-22).
+    ///
+    /// So each update reclaims the previous one's, bounding the cost to a
+    /// single leftover. Best-effort by design: a directory a still-running
+    /// installer holds open simply survives to the next sweep, and an
+    /// unreadable `%TEMP%` is not a reason to fail an update.
+    fn sweep_stale_installers(temp_dir: &Path) {
+        let Ok(entries) = std::fs::read_dir(temp_dir) else { return };
+        for entry in entries.flatten() {
+            let is_ours = entry.file_name().to_string_lossy().starts_with(TEMP_DIR_PREFIX)
+                && entry.file_type().is_ok_and(|t| t.is_dir());
+            if is_ours {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+
     /// Whether this process is running the registered all-users install, and
     /// so must drive the installer itself (see [`install`]) rather than let
     /// the plugin do it. Independent of elevation: an already-elevated app
@@ -398,6 +425,9 @@ mod elevated {
             return Err("The downloaded update is not a Windows installer executable.".to_string());
         }
 
+        // Reclaim what earlier updates left behind; see [`sweep_stale_installers`].
+        sweep_stale_installers(&std::env::temp_dir());
+
         // A fresh randomly named directory, like the plugin's own temp
         // handling: a fixed `%TEMP%` filename is both predictable (another
         // process could sit on it between the write and the elevated launch)
@@ -405,7 +435,7 @@ mod elevated {
         // so the directory outlives this process, which exits below while the
         // installer is still reading from it.
         let dir = tempfile::Builder::new()
-            .prefix("logtapper-update-")
+            .prefix(TEMP_DIR_PREFIX)
             .tempdir()
             .map_err(|e| format!("Could not create a temporary directory for the installer: {e}"))?
             .keep();
@@ -565,6 +595,33 @@ mod elevated {
         #[test]
         fn parameters_are_the_plugins_passive_mode_set_plus_an_explicit_scope() {
             assert_eq!(installer_parameters(&[]), OsString::from("/P /allusers /UPDATE /R /ARGS"));
+        }
+
+        #[test]
+        fn the_sweep_removes_our_leftovers_and_nothing_else() {
+            let root = tempfile::tempdir().expect("tempdir");
+            let ours = root.path().join(format!("{TEMP_DIR_PREFIX}abc123"));
+            std::fs::create_dir(&ours).expect("create");
+            // A leftover holds the installer it was created for.
+            std::fs::write(ours.join("LogTapper_9.9.9_x64-setup.exe"), b"MZ...").expect("write");
+
+            let someone_elses = root.path().join("tauri-update-xyz");
+            std::fs::create_dir(&someone_elses).expect("create");
+            let similarly_named_file = root.path().join(format!("{TEMP_DIR_PREFIX}notadir"));
+            std::fs::write(&similarly_named_file, b"x").expect("write");
+
+            sweep_stale_installers(root.path());
+
+            assert!(!ours.exists(), "our leftover directory should be gone");
+            assert!(someone_elses.exists(), "another tool's temp dir must be untouched");
+            assert!(similarly_named_file.exists(), "only directories are swept");
+        }
+
+        #[test]
+        fn the_sweep_is_silent_when_the_temp_directory_cannot_be_read() {
+            // An update must not fail because %TEMP% is unreadable.
+            let missing = tempfile::tempdir().expect("tempdir").path().join("gone");
+            sweep_stale_installers(&missing);
         }
 
         #[test]
