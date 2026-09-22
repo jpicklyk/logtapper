@@ -271,7 +271,7 @@ fn install_downloaded(app: &AppHandle, update: &Update, bytes: Vec<u8>) -> Resul
     #[cfg(not(windows))]
     let _ = &app;
     #[cfg(windows)]
-    if elevated::machine_install_needs_elevation(&app.package_info().name) {
+    if elevated::running_machine_install(&app.package_info().name) {
         // Before the hand-off, not inside `before_exit`: see
         // `crate::flush_pending_workspace_writes`.
         crate::flush_pending_workspace_writes(app);
@@ -309,10 +309,22 @@ mod elevated {
 
     const UNINSTALL_ROOT: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall";
 
-    pub(super) fn machine_install_needs_elevation(product_name: &str) -> bool {
+    /// Whether this process is running the registered all-users install, and
+    /// so must drive the installer itself (see [`install`]) rather than let
+    /// the plugin do it. Independent of elevation: an already-elevated app
+    /// still needs the explicit scope switch, because what the plugin omits
+    /// is `/allusers`, not the elevation.
+    pub(super) fn running_machine_install(product_name: &str) -> bool {
         let Ok(exe) = std::env::current_exe() else { return false };
         is_machine_install(&exe, machine_install_location(product_name).as_deref())
-            && !process_is_elevated()
+    }
+
+    /// Whether installing an update will put Windows' elevation prompt in
+    /// front of the person — a machine install being updated by a process
+    /// that is not already elevated. Only drives the Settings hint; the
+    /// install path itself keys on [`running_machine_install`].
+    pub(super) fn machine_install_needs_elevation(product_name: &str) -> bool {
+        running_machine_install(product_name) && !process_is_elevated()
     }
 
     /// `InstallLocation` of the all-users install, if one is registered. The
@@ -404,7 +416,12 @@ mod elevated {
         let args: Vec<OsString> = std::env::args_os().skip(1).collect();
         let parameters = installer_parameters(&args);
         let wide = |s: &OsStr| s.encode_wide().chain(std::iter::once(0)).collect::<Vec<u16>>();
-        let (file, parameters, verb) = (wide(path.as_os_str()), wide(&parameters), wide(OsStr::new("runas")));
+        // `runas` only when there is something to raise: on an
+        // already-elevated process it would be a pointless second hop, and on
+        // an admin account it can re-prompt. `open` inherits this process's
+        // token, which is already what the installer needs.
+        let verb = if process_is_elevated() { "open" } else { "runas" };
+        let (file, parameters, verb) = (wide(path.as_os_str()), wide(&parameters), wide(OsStr::new(verb)));
 
         // SAFETY: all three strings are NUL-terminated wide buffers that outlive the call.
         let result = unsafe {
@@ -440,20 +457,22 @@ mod elevated {
     /// the restart — plus `/allusers`, which the plugin never sends.
     ///
     /// That switch is the difference between elevating and actually updating
-    /// the right install. Tauri's template sets
-    /// `MULTIUSER_INSTALLMODE_DEFAULT_REGISTRY_KEY`/`…_VALUENAME "CurrentUser"`,
-    /// so MultiUser picks its default scope by reading that value — and reads
-    /// HKCU before HKLM. On a machine this bug has already damaged (an
-    /// all-users install plus the per-user copy an earlier update created) the
-    /// per-user key wins, so even an elevated installer updates the per-user
-    /// copy and leaves `Program Files` behind. Measured exactly that way on
-    /// 2026-09-22: elevation alone moved HKCU 0.13.2 → 0.13.4 while HKLM sat
-    /// at 0.13.3. `MULTIUSER_INSTALLMODE_COMMANDLINE` is defined, so the
-    /// switch overrides the registry default; it must precede `/ARGS`, since
-    /// everything after that belongs to the relaunched app.
+    /// the right install, and MultiUser's default can never choose it for us.
+    /// Tauri's template sets `MULTIUSER_INSTALLMODE_DEFAULT_REGISTRY_KEY` with
+    /// `…_VALUENAME "CurrentUser"`; `MultiUser.nsh` reads that value from HKLM
+    /// first and HKCU second, but an all-users install writes a value named
+    /// `AllUsers`, so the HKLM read is *always* empty here. Only the HKCU read
+    /// can decide, and it can only ever flip the mode to per-user — so on any
+    /// machine that has ever had a per-user install, the per-user key wins and
+    /// even an elevated installer updates that copy, leaving `Program Files`
+    /// behind. Measured exactly that way on 2026-09-22: elevation alone moved
+    /// HKCU 0.13.2 → 0.13.4 while HKLM sat at 0.13.3; with the switch, HKLM
+    /// went 0.13.3 → 0.13.4 and the per-user decoy stayed put.
+    /// `MULTIUSER_INSTALLMODE_COMMANDLINE` is defined, and the command-line
+    /// check runs last and unconditionally, so the switch always wins.
     ///
     /// Sending it unconditionally is safe because this whole module only runs
-    /// when [`is_machine_install`] already said the running exe *is* the
+    /// when [`running_machine_install`] already said the running exe *is* the
     /// all-users one.
     pub(super) fn installer_parameters(current_args: &[OsString]) -> OsString {
         let mut out = OsString::from("/P /allusers /UPDATE /R /ARGS");
@@ -550,8 +569,11 @@ mod elevated {
 
         #[test]
         fn the_scope_switch_precedes_args() {
-            // Everything after /ARGS is handed to the relaunched app, so a
-            // scope switch on the wrong side of it silently does nothing.
+            // MultiUser would still see the switch after `/ARGS` (it scans the
+            // whole command line), but the template reads the relaunch
+            // arguments with NSIS `GetOptions`, which stops at the next
+            // unquoted switch — so a trailing `/allusers` would truncate them
+            // and a file opened from the command line would be lost on restart.
             let rendered = installer_parameters(&[OsString::from("x")]).to_string_lossy().to_string();
             let (allusers, args) = (rendered.find("/allusers").unwrap(), rendered.find("/ARGS").unwrap());
             assert!(allusers < args, "{rendered}");
