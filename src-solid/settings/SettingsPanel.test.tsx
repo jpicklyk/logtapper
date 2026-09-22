@@ -411,14 +411,15 @@ describe('GeneralTab Updates section', () => {
     const [progress, setProgress] = createSignal<{ received: number; total: number | null } | null>(null);
     const [error, setError] = createSignal<string | null>(null);
     const [managedBy, setManagedBy] = createSignal<string | null>(null);
+    const [needsElevation, setNeedsElevation] = createSignal(false);
     const store: UpdateStore = {
-      status, available, progress, error, managedBy,
+      status, available, progress, error, managedBy, needsElevation,
       currentVersion: () => '0.12.0',
       check: vi.fn(() => Promise.resolve()),
       install: vi.fn(() => Promise.resolve()),
       dispose: vi.fn(),
     };
-    return { store, setStatus, setAvailable, setProgress, setError, setManagedBy };
+    return { store, setStatus, setAvailable, setProgress, setError, setManagedBy, setNeedsElevation };
   }
 
   it('is omitted entirely when no update store is supplied', () => {
@@ -487,6 +488,24 @@ describe('GeneralTab Updates section', () => {
     expect(section.getByTestId('updates-managed').textContent).toContain('scoop update logtapper');
     expect(section.queryByRole('button', { name: 'Check for updates' })).toBeNull();
     expect(section.queryByTestId('install-update')).toBeNull();
+  });
+
+  it('warns about the administrator prompt next to Install when the install needs elevation', () => {
+    const u = fakeUpdates();
+    u.setNeedsElevation(true);
+    u.setAvailable({ version: '0.13.0', currentVersion: '0.12.0', notes: null, date: null });
+    render(() => <SettingsPanel store={fakeStore()} updates={u.store} />);
+    const section = within(screen.getByTestId('updates-section'));
+    expect(section.getByTestId('update-elevation-hint').textContent).toContain("administrator's credentials");
+    // The controls stay: elevation is a prompt, not a block.
+    expect(section.getByTestId('install-update')).toBeTruthy();
+  });
+
+  it('shows no elevation hint for an ordinary install', () => {
+    const u = fakeUpdates();
+    u.setAvailable({ version: '0.13.0', currentVersion: '0.12.0', notes: null, date: null });
+    render(() => <SettingsPanel store={fakeStore()} updates={u.store} />);
+    expect(within(screen.getByTestId('updates-section')).queryByTestId('update-elevation-hint')).toBeNull();
   });
 });
 

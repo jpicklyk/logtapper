@@ -57,6 +57,12 @@ export interface UpdateStore {
    * message instead of check/install controls.
    */
   managedBy: Accessor<string | null>;
+  /**
+   * Windows, all-users install run by a standard user: installing will show
+   * Windows' administrator-credentials prompt. The section says so up front
+   * rather than surprising the person after the download.
+   */
+  needsElevation: Accessor<boolean>;
   /** The update on offer while `status()` is `available`, `downloading`, `restarting` or a failed install. */
   available: Accessor<AppUpdateInfo | null>;
   progress: Accessor<AppUpdateProgressState | null>;
@@ -83,6 +89,7 @@ export function createUpdateStore(deps: UpdateStoreDeps = {}): UpdateStore {
     const [status, setStatus] = createSignal<AppUpdateStatus>('idle');
     const [currentVersion, setCurrentVersion] = createSignal<string | null>(null);
     const [managedBy, setManagedBy] = createSignal<string | null>(null);
+    const [needsElevation, setNeedsElevation] = createSignal(false);
     const [available, setAvailable] = createSignal<AppUpdateInfo | null>(null);
     const [progress, setProgress] = createSignal<AppUpdateProgressState | null>(null);
     const [error, setError] = createSignal<string | null>(null);
@@ -163,17 +170,19 @@ export function createUpdateStore(deps: UpdateStoreDeps = {}): UpdateStore {
       .appUpdatePolicy()
       // No Tauri host (tests, browser preview): treat as unmanaged so
       // existing behavior (and existing tests) is unaffected.
-      .then((p) => p.managedBy, () => null)
-      .then((manager) => {
+      .catch(() => null)
+      .then((policy) => {
         if (disposed) return;
+        const manager = policy?.managedBy ?? null;
         setManagedBy(manager);
+        setNeedsElevation(policy?.needsElevation ?? false);
         if (startupCheck && manager === null) {
           startupTimer = setTimeout(() => { void runCheck(false); }, startupDelayMs);
         }
       });
 
     return {
-      status, currentVersion, managedBy, available, progress, error,
+      status, currentVersion, managedBy, needsElevation, available, progress, error,
       check: () => runCheck(true),
       install,
       dispose: () => {

@@ -201,6 +201,11 @@ export function GeneralTab(props: GeneralTabProps) {
                             <div class={styles.label}>
                               <span>Install version {info().version}</span>
                               <span class={styles.labelHint}>Downloads and verifies the update, then restarts LogTapper.</span>
+                              <Show when={updates().needsElevation()}>
+                                <span class={styles.labelHint} data-testid="update-elevation-hint">
+                                  This copy is installed for all users, so Windows will ask for an administrator's credentials.
+                                </span>
+                              </Show>
                             </div>
                             <button type="button" class={styles.primaryButton} disabled={installing()} data-testid="install-update" onClick={() => reported(updates().install())}>
                               Install and restart
