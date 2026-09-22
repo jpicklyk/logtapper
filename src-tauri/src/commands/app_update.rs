@@ -267,10 +267,14 @@ pub async fn install_app_update(
 
 /// The plugin's own install, except on Windows when this process cannot write
 /// the install it came from — see [`elevated`].
-#[cfg_attr(not(windows), allow(unused_variables))]
 fn install_downloaded(app: &AppHandle, update: &Update, bytes: Vec<u8>) -> Result<(), String> {
+    #[cfg(not(windows))]
+    let _ = &app;
     #[cfg(windows)]
     if elevated::machine_install_needs_elevation(&app.package_info().name) {
+        // Before the hand-off, not inside `before_exit`: see
+        // `crate::flush_pending_workspace_writes`.
+        crate::flush_pending_workspace_writes(app);
         let exit_handle = app.clone();
         return elevated::install(&bytes, &update.version, move || {
             crate::on_app_exit(&exit_handle);
@@ -301,6 +305,8 @@ mod elevated {
     use std::ffi::{OsStr, OsString};
     use std::path::{Path, PathBuf};
 
+    use crate::commands::bridge_access::canonical_compare_form;
+
     const UNINSTALL_ROOT: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall";
 
     pub(super) fn machine_install_needs_elevation(product_name: &str) -> bool {
@@ -322,19 +328,17 @@ mod elevated {
         Some(PathBuf::from(location.trim().trim_matches('"')))
     }
 
-    /// Whether `exe` lives in the registered all-users install directory. A
-    /// stale HKLM entry for a directory that no longer holds this exe (an
-    /// uninstall that left its key behind) must not force elevation.
+    /// Whether `exe` lives in the registered all-users install directory.
+    /// Compared through [`canonical_compare_form`], which resolves junctions
+    /// and 8.3 names, strips the verbatim prefix and lowercases — and returns
+    /// `None` for a path that does not exist, so a stale HKLM entry left
+    /// behind by an uninstall (live, 2026-09-21) can never force elevation.
     pub(super) fn is_machine_install(exe: &Path, machine_location: Option<&Path>) -> bool {
         let (Some(dir), Some(location)) = (exe.parent(), machine_location) else { return false };
-        normalize(dir) == normalize(location)
-    }
-
-    fn normalize(p: &Path) -> String {
-        p.to_string_lossy()
-            .trim_end_matches(['\\', '/'])
-            .replace('/', "\\")
-            .to_lowercase()
+        match (canonical_compare_form(dir), canonical_compare_form(location)) {
+            (Some(a), Some(b)) => a == b,
+            _ => false,
+        }
     }
 
     fn process_is_elevated() -> bool {
@@ -373,7 +377,27 @@ mod elevated {
         use windows_sys::Win32::UI::Shell::ShellExecuteW;
         use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOW;
 
-        let path = std::env::temp_dir().join(format!("LogTapper_{version}_update.exe"));
+        // The plugin's `extract()` also handles a zip or msi payload; this
+        // path deliberately does not, because the elevated launch only makes
+        // sense for the NSIS exe. Today `tauri-action` publishes exactly that,
+        // and the guard turns a future bundling change into a clear failure
+        // instead of Windows refusing to run a mislabelled `.exe`.
+        if !bytes.starts_with(b"MZ") {
+            return Err("The downloaded update is not a Windows installer executable.".to_string());
+        }
+
+        // A fresh randomly named directory, like the plugin's own temp
+        // handling: a fixed `%TEMP%` filename is both predictable (another
+        // process could sit on it between the write and the elevated launch)
+        // and left behind once per version. `keep` disarms the delete-on-drop
+        // so the directory outlives this process, which exits below while the
+        // installer is still reading from it.
+        let dir = tempfile::Builder::new()
+            .prefix("logtapper-update-")
+            .tempdir()
+            .map_err(|e| format!("Could not create a temporary directory for the installer: {e}"))?
+            .keep();
+        let path = dir.join(format!("LogTapper_{version}_x64-setup.exe"));
         std::fs::write(&path, bytes)
             .map_err(|e| format!("Could not write the installer to {}: {e}", path.display()))?;
 
@@ -398,7 +422,7 @@ mod elevated {
             // ERROR_CANCELLED: the credential prompt was dismissed.
             return Err(if err.raw_os_error() == Some(1223) {
                 "This copy of LogTapper is installed for all users, so Windows needs an administrator's \
-                 credentials to update it. The prompt was cancelled; the download is kept, press Install again to retry."
+                 credentials to update it. The prompt was cancelled; press Install again to retry."
                     .to_string()
             } else {
                 format!("Could not start the elevated installer: {err}")
@@ -464,25 +488,64 @@ mod elevated {
     mod tests {
         use super::*;
 
+        // Real directories, not string literals: the comparison canonicalizes,
+        // so a path that does not exist can never match — which is the whole
+        // staleness guard and cannot be exercised against invented paths.
+
         #[test]
         fn exe_inside_the_registered_location_is_a_machine_install() {
-            let exe = Path::new(r"C:\Program Files\LogTapper\log-tapper.exe");
-            assert!(is_machine_install(exe, Some(Path::new(r"C:\Program Files\LogTapper"))));
-            // Registry values arrive with whatever case and trailing separator the installer wrote.
-            assert!(is_machine_install(exe, Some(Path::new(r"c:\program files\logtapper\"))));
-            assert!(is_machine_install(exe, Some(Path::new("C:/Program Files/LogTapper"))));
+            let install = tempfile::tempdir().expect("tempdir");
+            let exe = install.path().join("log-tapper.exe");
+            assert!(is_machine_install(&exe, Some(install.path())));
+
+            // Registry values arrive with whatever case and separator the
+            // installer wrote; canonicalization absorbs both.
+            let shouted = install.path().to_string_lossy().to_uppercase();
+            assert!(is_machine_install(&exe, Some(Path::new(&shouted))));
+            let slashed = install.path().to_string_lossy().replace('\\', "/");
+            assert!(is_machine_install(&exe, Some(Path::new(&slashed))));
         }
 
         #[test]
-        fn a_per_user_exe_is_not_a_machine_install_even_with_a_stale_hklm_entry() {
-            let exe = Path::new(r"C:\Users\x\AppData\Local\Programs\LogTapper\log-tapper.exe");
-            assert!(!is_machine_install(exe, Some(Path::new(r"C:\Program Files\LogTapper"))));
-            assert!(!is_machine_install(exe, None));
+        fn a_per_user_exe_is_not_a_machine_install() {
+            let per_user = tempfile::tempdir().expect("tempdir");
+            let machine = tempfile::tempdir().expect("tempdir");
+            let exe = per_user.path().join("log-tapper.exe");
+            assert!(!is_machine_install(&exe, Some(machine.path())));
+            assert!(!is_machine_install(&exe, None));
+        }
+
+        #[test]
+        fn a_stale_hklm_location_that_no_longer_exists_never_elevates() {
+            // The live 2026-09-21 case: Program Files was uninstalled but its
+            // HKLM key survived, so `InstallLocation` names a missing directory.
+            let per_user = tempfile::tempdir().expect("tempdir");
+            let gone = tempfile::tempdir().expect("tempdir");
+            let gone_path = gone.path().to_path_buf();
+            drop(gone);
+            assert!(!is_machine_install(&per_user.path().join("log-tapper.exe"), Some(&gone_path)));
         }
 
         #[test]
         fn parameters_match_the_plugins_passive_mode_set() {
             assert_eq!(installer_parameters(&[]), OsString::from("/P /UPDATE /R /ARGS"));
+        }
+
+        #[test]
+        fn the_configured_install_mode_is_the_one_those_parameters_encode() {
+            // `installer_parameters` hardcodes what the plugin derives from
+            // `installMode` (`/P` for passive, `/S` for quiet). Switching the
+            // config without touching this module would silently send the
+            // wrong switch, so the config is pinned here rather than trusted.
+            let config = std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json"),
+            )
+            .expect("read tauri.conf.json");
+            let config: serde_json::Value = serde_json::from_str(&config).expect("parse tauri.conf.json");
+            assert_eq!(
+                config["plugins"]["updater"]["windows"]["installMode"],
+                serde_json::Value::from("passive"),
+            );
         }
 
         #[test]

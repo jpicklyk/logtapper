@@ -279,12 +279,24 @@ async fn startup_update_check(handle: tauri::AppHandle) {
 ///   this from the updater path is why `commands::app_update` builds the
 ///   `Updater` itself instead of letting the plugin's JS API do it.
 pub(crate) fn on_app_exit(app_handle: &tauri::AppHandle) {
+    flush_pending_workspace_writes(app_handle);
+    let state = app_handle.state::<std::sync::Arc<AppState>>();
+    commands::mcp::stop_mcp_http_server(&state);
+}
+
+/// The data half of [`on_app_exit`], on its own because one caller needs it
+/// *earlier* than the rest: `commands::app_update`'s elevated path hands the
+/// installer to Windows and only then tears down, and the installer kills this
+/// process (NSIS `CheckIfAppIsRunning`) on its own schedule. Flushing before
+/// that hand-off keeps a pending mutation out of the race. Idempotent — the
+/// later `on_app_exit` finds nothing pending — and safe to call when the update
+/// never happens, since it only persists writes the app already owes.
+pub(crate) fn flush_pending_workspace_writes(app_handle: &tauri::AppHandle) {
     let state = app_handle.state::<std::sync::Arc<AppState>>();
     if workspace::autosave::has_pending_flush(&state) {
         log::info!("[autosave] pending mutation(s) on exit; flushing synchronously");
         workspace::autosave::flush_now_blocking(app_handle);
     }
-    commands::mcp::stop_mcp_http_server(&state);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

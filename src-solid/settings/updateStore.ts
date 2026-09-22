@@ -170,7 +170,7 @@ export function createUpdateStore(deps: UpdateStoreDeps = {}): UpdateStore {
       .appUpdatePolicy()
       // No Tauri host (tests, browser preview): treat as unmanaged so
       // existing behavior (and existing tests) is unaffected.
-      .then((p) => p, () => null)
+      .catch(() => null)
       .then((policy) => {
         if (disposed) return;
         const manager = policy?.managedBy ?? null;
