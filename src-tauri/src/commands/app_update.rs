@@ -437,9 +437,26 @@ mod elevated {
     /// `plugins.updater.windows.installMode = "passive"` (tauri.conf.json):
     /// `/P`, `/UPDATE`, `/R` (relaunch), then `/ARGS` followed by this
     /// process's own arguments so a file opened from the command line survives
-    /// the restart.
+    /// the restart — plus `/allusers`, which the plugin never sends.
+    ///
+    /// That switch is the difference between elevating and actually updating
+    /// the right install. Tauri's template sets
+    /// `MULTIUSER_INSTALLMODE_DEFAULT_REGISTRY_KEY`/`…_VALUENAME "CurrentUser"`,
+    /// so MultiUser picks its default scope by reading that value — and reads
+    /// HKCU before HKLM. On a machine this bug has already damaged (an
+    /// all-users install plus the per-user copy an earlier update created) the
+    /// per-user key wins, so even an elevated installer updates the per-user
+    /// copy and leaves `Program Files` behind. Measured exactly that way on
+    /// 2026-09-22: elevation alone moved HKCU 0.13.2 → 0.13.4 while HKLM sat
+    /// at 0.13.3. `MULTIUSER_INSTALLMODE_COMMANDLINE` is defined, so the
+    /// switch overrides the registry default; it must precede `/ARGS`, since
+    /// everything after that belongs to the relaunched app.
+    ///
+    /// Sending it unconditionally is safe because this whole module only runs
+    /// when [`is_machine_install`] already said the running exe *is* the
+    /// all-users one.
     pub(super) fn installer_parameters(current_args: &[OsString]) -> OsString {
-        let mut out = OsString::from("/P /UPDATE /R /ARGS");
+        let mut out = OsString::from("/P /allusers /UPDATE /R /ARGS");
         for arg in current_args {
             out.push(" ");
             out.push(escape_nsis_current_exe_arg(arg));
@@ -527,8 +544,17 @@ mod elevated {
         }
 
         #[test]
-        fn parameters_match_the_plugins_passive_mode_set() {
-            assert_eq!(installer_parameters(&[]), OsString::from("/P /UPDATE /R /ARGS"));
+        fn parameters_are_the_plugins_passive_mode_set_plus_an_explicit_scope() {
+            assert_eq!(installer_parameters(&[]), OsString::from("/P /allusers /UPDATE /R /ARGS"));
+        }
+
+        #[test]
+        fn the_scope_switch_precedes_args() {
+            // Everything after /ARGS is handed to the relaunched app, so a
+            // scope switch on the wrong side of it silently does nothing.
+            let rendered = installer_parameters(&[OsString::from("x")]).to_string_lossy().to_string();
+            let (allusers, args) = (rendered.find("/allusers").unwrap(), rendered.find("/ARGS").unwrap());
+            assert!(allusers < args, "{rendered}");
         }
 
         #[test]
@@ -553,7 +579,7 @@ mod elevated {
             let args = [OsString::from(r"D:\logs\my file.log"), OsString::from("--flag/x"), OsString::from("plain")];
             assert_eq!(
                 installer_parameters(&args),
-                OsString::from(r#"/P /UPDATE /R /ARGS "D:\logs\my file.log" "--flag/x" plain"#)
+                OsString::from(r#"/P /allusers /UPDATE /R /ARGS "D:\logs\my file.log" "--flag/x" plain"#)
             );
         }
     }
