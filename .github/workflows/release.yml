@@ -9,7 +9,89 @@ permissions:
   contents: write
 
 jobs:
+  # One draft, created once, before any platform builds.
+  #
+  # Letting each matrix job create-or-find the release is a race: on v0.13.3 two
+  # jobs created two drafts in the same second and the platforms split across
+  # them — Windows and Intel macOS in one, Apple Silicon and Linux in the other,
+  # each with its own partial `latest.json`. Publishing either would have offered
+  # the update to half the installed base. The earlier releases that worked were
+  # luck of the timing. With an explicit `releaseId` every job uploads into the
+  # same release and `tauri-action` merges `latest.json` as it goes.
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Verify the five version declarations agree, and match the tag
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          node scripts/bump-version.mjs --check
+          declared="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "v$declared" ]; then
+            echo "tag $TAG does not match the declared version $declared" >&2
+            exit 1
+          fi
+
+      - name: Create the draft release
+        id: create
+        uses: actions/github-script@v7
+        env:
+          RELEASE_BODY: |
+            **Windows (winget):** `winget install jpicklyk.LogTapper`
+            **Windows (Scoop):** `scoop bucket add logtapper https://github.com/jpicklyk/logtapper-scoop` then `scoop install logtapper`
+            **macOS (Homebrew):** `brew install --cask --no-quarantine jpicklyk/logtapper/logtapper`
+
+            Or see the assets below to download the installer for your platform directly.
+
+            **Windows:** Download the `.exe` (NSIS installer) or `.msi`
+            **macOS:** Download the `.dmg` — `aarch64` for Apple Silicon, `x64` for Intel
+            **Linux:** Download the `.deb` or `.AppImage`
+
+            Installed builds from this version on update themselves: LogTapper checks for
+            a newer release shortly after launch and from **Settings > General > Updates**.
+            (`.deb` installs still update by hand.)
+
+            ### macOS first launch
+
+            LogTapper is not yet notarized, so macOS reports **"LogTapper is damaged and
+            can't be opened"** on first launch. The app is not damaged — this is Gatekeeper
+            blocking an unsigned download, and right-click > Open no longer clears it on
+            current macOS. To install:
+
+            1. Open the `.dmg` and drag **LogTapper** to Applications.
+            2. Eject the disk image.
+            3. Remove the quarantine flag:
+               ```
+               xattr -d -r com.apple.quarantine /Applications/LogTapper.app
+               ```
+            4. Launch LogTapper from Applications.
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: `LogTapper ${tag}`,
+              body: process.env.RELEASE_BODY,
+              draft: true,
+              prerelease: false,
+            });
+            core.setOutput('id', data.id);
+
   build:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -57,9 +139,6 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
-      - name: Verify the five version declarations agree
-        run: node scripts/bump-version.mjs --check
-
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
 
@@ -90,37 +169,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: v__VERSION__
-          releaseName: LogTapper v__VERSION__
-          releaseBody: |
-            **Windows (winget):** `winget install jpicklyk.LogTapper`
-            **Windows (Scoop):** `scoop bucket add logtapper https://github.com/jpicklyk/logtapper-scoop` then `scoop install logtapper`
-            **macOS (Homebrew):** `brew install --cask --no-quarantine jpicklyk/logtapper/logtapper`
-
-            Or see the assets below to download the installer for your platform directly.
-
-            **Windows:** Download the `.exe` (NSIS installer) or `.msi`
-            **macOS:** Download the `.dmg` — `aarch64` for Apple Silicon, `x64` for Intel
-            **Linux:** Download the `.deb` or `.AppImage`
-
-            Installed builds from this version on update themselves: LogTapper checks for
-            a newer release shortly after launch and from **Settings > General > Updates**.
-            (`.deb` installs still update by hand.)
-
-            ### macOS first launch
-
-            LogTapper is not yet notarized, so macOS reports **"LogTapper is damaged and
-            can't be opened"** on first launch. The app is not damaged — this is Gatekeeper
-            blocking an unsigned download, and right-click > Open no longer clears it on
-            current macOS. To install:
-
-            1. Open the `.dmg` and drag **LogTapper** to Applications.
-            2. Eject the disk image.
-            3. Remove the quarantine flag:
-               ```
-               xattr -d -r com.apple.quarantine /Applications/LogTapper.app
-               ```
-            4. Launch LogTapper from Applications.
-          releaseDraft: true
-          prerelease: false
+          # The release itself is created by `create-release`; these jobs only
+          # upload into it, so none of the release-shaping inputs belong here.
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: --target ${{ matrix.target }} --config src-tauri/tauri.ci.conf.json
