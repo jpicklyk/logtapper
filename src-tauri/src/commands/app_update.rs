@@ -69,14 +69,25 @@ pub struct AppUpdatePolicy {
     /// The package manager managing this install (currently only `"scoop"`),
     /// or `None` for a normal NSIS/DMG/AppImage install.
     pub managed_by: Option<String>,
+    /// Windows only: the running exe is an all-users install and this process
+    /// is not elevated, so installing an update will show a credential prompt
+    /// (see [`elevated`]). Always `false` elsewhere.
+    pub needs_elevation: bool,
 }
 
 /// Whether the in-app updater should be offered at all. Called once by the
 /// frontend before the silent launch check and the Settings panel decide
 /// whether to show update controls or a "managed by ..." message.
 #[tauri::command]
-pub fn get_app_update_policy() -> AppUpdatePolicy {
-    AppUpdatePolicy { managed_by: managed_by().map(str::to_string) }
+pub fn get_app_update_policy(app: AppHandle) -> AppUpdatePolicy {
+    #[cfg(windows)]
+    let needs_elevation = elevated::machine_install_needs_elevation(&app.package_info().name);
+    #[cfg(not(windows))]
+    let needs_elevation = {
+        let _ = &app;
+        false
+    };
+    AppUpdatePolicy { managed_by: managed_by().map(str::to_string), needs_elevation }
 }
 
 #[cfg(test)]
@@ -218,8 +229,8 @@ pub async fn install_app_update(
     let mut total: Option<u64> = None;
     let mut started = false;
     let progress = &on_event;
-    let result = update
-        .download_and_install(
+    let downloaded = update
+        .download(
             |chunk, content_length| {
                 if !started {
                     started = true;
@@ -235,16 +246,252 @@ pub async fn install_app_update(
         )
         .await;
 
+    let result = match downloaded {
+        Ok(bytes) => install_downloaded(&app, &update, bytes),
+        Err(e) => Err(e.to_string()),
+    };
+
     match result {
         Ok(()) => {
-            // Windows never gets here: the plugin exited after `on_before_exit`.
+            // Windows never gets here: both install paths exit after `on_before_exit`.
             // macOS/Linux: the new build is in place; same cleanup, then relaunch.
             crate::on_app_exit(&app);
             app.restart()
         }
         Err(e) => {
             *lock_or_err(&state.pending_app_update, "pending_app_update")? = Some(update);
-            Err(e.to_string())
+            Err(e)
+        }
+    }
+}
+
+/// The plugin's own install, except on Windows when this process cannot write
+/// the install it came from — see [`elevated`].
+#[cfg_attr(not(windows), allow(unused_variables))]
+fn install_downloaded(app: &AppHandle, update: &Update, bytes: Vec<u8>) -> Result<(), String> {
+    #[cfg(windows)]
+    if elevated::machine_install_needs_elevation(&app.package_info().name) {
+        let exit_handle = app.clone();
+        return elevated::install(&bytes, &update.version, move || {
+            crate::on_app_exit(&exit_handle);
+            exit_handle.cleanup_before_exit();
+        });
+    }
+    update.install(bytes).map_err(|e| e.to_string())
+}
+
+/// Updating an all-users install from a standard-user process.
+///
+/// `tauri-plugin-updater` runs the downloaded NSIS installer with
+/// `ShellExecuteW("open")`. Tauri's installer is `highestAvailable`, so for a
+/// standard user that is *not* elevated and shows no prompt; NSIS MultiUser then
+/// has no rights to `Program Files`/HKLM and quietly installs a second, per-user
+/// copy next to the untouched all-users one (live finding, 2026-09-21: a
+/// per-machine 0.13.1 "updated" to a per-user 0.13.2 in `%LOCALAPPDATA%`). An
+/// admin account with UAC gets a consent prompt from `open` and never hits this.
+///
+/// So when the running exe is the one registered under HKLM and this process
+/// is not elevated, the installer is launched with the `runas` verb instead —
+/// the credential prompt a standard user needs — with the plugin's exact
+/// argument set for `installMode: passive`. The installer relaunches the app
+/// through `nsis_tauri_utils::RunAsUser`, i.e. as the desktop user, not the
+/// admin. A cancelled prompt keeps the download on hand for a retry.
+#[cfg(windows)]
+mod elevated {
+    use std::ffi::{OsStr, OsString};
+    use std::path::{Path, PathBuf};
+
+    const UNINSTALL_ROOT: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall";
+
+    pub(super) fn machine_install_needs_elevation(product_name: &str) -> bool {
+        let Ok(exe) = std::env::current_exe() else { return false };
+        is_machine_install(&exe, machine_install_location(product_name).as_deref())
+            && !process_is_elevated()
+    }
+
+    /// `InstallLocation` of the all-users install, if one is registered. The
+    /// key name is the product name — what Tauri's NSIS template uses for
+    /// `UNINSTKEY`.
+    fn machine_install_location(product_name: &str) -> Option<PathBuf> {
+        use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ};
+        use winreg::RegKey;
+        let key = RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey_with_flags(format!(r"{UNINSTALL_ROOT}\{product_name}"), KEY_READ)
+            .ok()?;
+        let location: String = key.get_value("InstallLocation").ok()?;
+        Some(PathBuf::from(location.trim().trim_matches('"')))
+    }
+
+    /// Whether `exe` lives in the registered all-users install directory. A
+    /// stale HKLM entry for a directory that no longer holds this exe (an
+    /// uninstall that left its key behind) must not force elevation.
+    pub(super) fn is_machine_install(exe: &Path, machine_location: Option<&Path>) -> bool {
+        let (Some(dir), Some(location)) = (exe.parent(), machine_location) else { return false };
+        normalize(dir) == normalize(location)
+    }
+
+    fn normalize(p: &Path) -> String {
+        p.to_string_lossy()
+            .trim_end_matches(['\\', '/'])
+            .replace('/', "\\")
+            .to_lowercase()
+    }
+
+    fn process_is_elevated() -> bool {
+        use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+        use windows_sys::Win32::Security::{
+            GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+        };
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+        // SAFETY: plain Win32 token query on our own process; every handle we
+        // open is closed, and the out-buffer is exactly `TOKEN_ELEVATION`.
+        unsafe {
+            let mut token: HANDLE = std::ptr::null_mut();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+                return false;
+            }
+            let mut elevation = TOKEN_ELEVATION { TokenIsElevated: 0 };
+            let mut returned = 0u32;
+            let ok = GetTokenInformation(
+                token,
+                TokenElevation,
+                (&mut elevation as *mut TOKEN_ELEVATION).cast(),
+                std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+                &mut returned,
+            );
+            CloseHandle(token);
+            ok != 0 && elevation.TokenIsElevated != 0
+        }
+    }
+
+    /// Write the installer to a temp file and launch it elevated. On success
+    /// this never returns: `before_exit` runs and the process exits, exactly
+    /// as the plugin's own Windows install does.
+    pub(super) fn install(bytes: &[u8], version: &str, before_exit: impl FnOnce()) -> Result<(), String> {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOW;
+
+        let path = std::env::temp_dir().join(format!("LogTapper_{version}_update.exe"));
+        std::fs::write(&path, bytes)
+            .map_err(|e| format!("Could not write the installer to {}: {e}", path.display()))?;
+
+        let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+        let parameters = installer_parameters(&args);
+        let wide = |s: &OsStr| s.encode_wide().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        let (file, parameters, verb) = (wide(path.as_os_str()), wide(&parameters), wide(OsStr::new("runas")));
+
+        // SAFETY: all three strings are NUL-terminated wide buffers that outlive the call.
+        let result = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                verb.as_ptr(),
+                file.as_ptr(),
+                parameters.as_ptr(),
+                std::ptr::null(),
+                SW_SHOW,
+            )
+        };
+        if result as isize <= 32 {
+            let err = std::io::Error::last_os_error();
+            // ERROR_CANCELLED: the credential prompt was dismissed.
+            return Err(if err.raw_os_error() == Some(1223) {
+                "This copy of LogTapper is installed for all users, so Windows needs an administrator's \
+                 credentials to update it. The prompt was cancelled; the download is kept, press Install again to retry."
+                    .to_string()
+            } else {
+                format!("Could not start the elevated installer: {err}")
+            });
+        }
+
+        before_exit();
+        std::process::exit(0);
+    }
+
+    /// The plugin's `updater_parameters` for an NSIS bundle under
+    /// `plugins.updater.windows.installMode = "passive"` (tauri.conf.json):
+    /// `/P`, `/UPDATE`, `/R` (relaunch), then `/ARGS` followed by this
+    /// process's own arguments so a file opened from the command line survives
+    /// the restart.
+    pub(super) fn installer_parameters(current_args: &[OsString]) -> OsString {
+        let mut out = OsString::from("/P /UPDATE /R /ARGS");
+        for arg in current_args {
+            out.push(" ");
+            out.push(escape_nsis_current_exe_arg(arg));
+        }
+        out
+    }
+
+    /// Ported verbatim from `tauri-plugin-updater` 2.12.0 (`updater.rs`), which
+    /// keeps it private: std's Windows argument quoting plus `/`, which NSIS
+    /// would otherwise read as the start of its own option.
+    fn escape_nsis_current_exe_arg(arg: impl AsRef<OsStr>) -> OsString {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+        let arg = arg.as_ref();
+        let mut cmd: Vec<u16> = Vec::new();
+        let quote = arg
+            .as_encoded_bytes()
+            .iter()
+            .any(|c| *c == b' ' || *c == b'\t' || *c == b'/')
+            || arg.is_empty();
+        if quote {
+            cmd.push('"' as u16);
+        }
+        let mut backslashes: usize = 0;
+        for x in arg.encode_wide() {
+            if x == '\\' as u16 {
+                backslashes += 1;
+            } else {
+                if x == '"' as u16 {
+                    // Add n+1 backslashes to total 2n+1 before internal '"'.
+                    cmd.extend((0..=backslashes).map(|_| '\\' as u16));
+                }
+                backslashes = 0;
+            }
+            cmd.push(x);
+        }
+        if quote {
+            // Add n backslashes to total 2n before ending '"'.
+            cmd.extend((0..backslashes).map(|_| '\\' as u16));
+            cmd.push('"' as u16);
+        }
+        OsString::from_wide(&cmd)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn exe_inside_the_registered_location_is_a_machine_install() {
+            let exe = Path::new(r"C:\Program Files\LogTapper\log-tapper.exe");
+            assert!(is_machine_install(exe, Some(Path::new(r"C:\Program Files\LogTapper"))));
+            // Registry values arrive with whatever case and trailing separator the installer wrote.
+            assert!(is_machine_install(exe, Some(Path::new(r"c:\program files\logtapper\"))));
+            assert!(is_machine_install(exe, Some(Path::new("C:/Program Files/LogTapper"))));
+        }
+
+        #[test]
+        fn a_per_user_exe_is_not_a_machine_install_even_with_a_stale_hklm_entry() {
+            let exe = Path::new(r"C:\Users\x\AppData\Local\Programs\LogTapper\log-tapper.exe");
+            assert!(!is_machine_install(exe, Some(Path::new(r"C:\Program Files\LogTapper"))));
+            assert!(!is_machine_install(exe, None));
+        }
+
+        #[test]
+        fn parameters_match_the_plugins_passive_mode_set() {
+            assert_eq!(installer_parameters(&[]), OsString::from("/P /UPDATE /R /ARGS"));
+        }
+
+        #[test]
+        fn current_args_are_quoted_the_way_nsis_expects() {
+            let args = [OsString::from(r"D:\logs\my file.log"), OsString::from("--flag/x"), OsString::from("plain")];
+            assert_eq!(
+                installer_parameters(&args),
+                OsString::from(r#"/P /UPDATE /R /ARGS "D:\logs\my file.log" "--flag/x" plain"#)
+            );
         }
     }
 }

@@ -10,7 +10,7 @@ import type { AppUpdateInfo, AppUpdatePolicy, AppUpdateProgress } from './types'
 
 const checkAppUpdate = vi.fn<() => Promise<AppUpdateInfo | null>>();
 const installAppUpdate = vi.fn<(cb: (p: AppUpdateProgress) => void) => Promise<void>>();
-const getAppUpdatePolicy = vi.fn<() => Promise<AppUpdatePolicy>>(() => Promise.resolve({ managedBy: null }));
+const getAppUpdatePolicy = vi.fn<() => Promise<AppUpdatePolicy>>(() => Promise.resolve({ managedBy: null, needsElevation: false }));
 const getVersion = vi.fn(() => Promise.resolve('0.13.1'));
 vi.mock('./commands', () => ({
   checkAppUpdate: () => checkAppUpdate(),
@@ -25,7 +25,7 @@ afterEach(() => {
   checkAppUpdate.mockReset();
   installAppUpdate.mockReset();
   getAppUpdatePolicy.mockReset();
-  getAppUpdatePolicy.mockImplementation(() => Promise.resolve({ managedBy: null }));
+  getAppUpdatePolicy.mockImplementation(() => Promise.resolve({ managedBy: null, needsElevation: false }));
   getVersion.mockClear();
 });
 
@@ -73,10 +73,10 @@ describe('appVersion', () => {
 
 describe('appUpdatePolicy', () => {
   it('passes the backend answer through: null for a normal install, the manager name otherwise', async () => {
-    getAppUpdatePolicy.mockResolvedValueOnce({ managedBy: null });
-    await expect(appUpdatePolicy()).resolves.toEqual({ managedBy: null });
-    getAppUpdatePolicy.mockResolvedValueOnce({ managedBy: 'scoop' });
-    await expect(appUpdatePolicy()).resolves.toEqual({ managedBy: 'scoop' });
+    getAppUpdatePolicy.mockResolvedValueOnce({ managedBy: null, needsElevation: false });
+    await expect(appUpdatePolicy()).resolves.toEqual({ managedBy: null, needsElevation: false });
+    getAppUpdatePolicy.mockResolvedValueOnce({ managedBy: 'scoop', needsElevation: false });
+    await expect(appUpdatePolicy()).resolves.toEqual({ managedBy: 'scoop', needsElevation: false });
   });
 });
 

@@ -8,4 +8,10 @@ export type AppUpdatePolicy = {
  * The package manager managing this install (currently only `"scoop"`),
  * or `None` for a normal NSIS/DMG/AppImage install.
  */
-managedBy: string | null, };
+managedBy: string | null, 
+/**
+ * Windows only: the running exe is an all-users install and this process
+ * is not elevated, so installing an update will show a credential prompt
+ * (see [`elevated`]). Always `false` elsewhere.
+ */
+needsElevation: boolean, };

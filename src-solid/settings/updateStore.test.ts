@@ -9,7 +9,7 @@ import { createUpdateStore } from './updateStore';
 import type { UpdateStore } from './updateStore';
 
 const INFO: AppUpdateInfo = { version: '0.13.0', currentVersion: '0.12.0', notes: 'fixes', date: null };
-const UNMANAGED: AppUpdatePolicy = { managedBy: null };
+const UNMANAGED: AppUpdatePolicy = { managedBy: null, needsElevation: false };
 
 /** A deferred so a test can hold a check open and resolve it when it chooses. */
 function deferred<T>() {
@@ -209,11 +209,20 @@ describe('createUpdateStore', () => {
 
 describe('createUpdateStore — Scoop-managed installs', () => {
   it('reflects the backend policy in managedBy()', async () => {
-    const api = fakeApi({ appUpdatePolicy: () => Promise.resolve({ managedBy: 'scoop' }) });
+    const api = fakeApi({ appUpdatePolicy: () => Promise.resolve({ managedBy: 'scoop', needsElevation: false }) });
     const store = make({ api, startupCheck: false });
     expect(store.managedBy()).toBeNull();
     await flush();
     expect(store.managedBy()).toBe('scoop');
+  });
+
+  it('reflects needsElevation from the policy and defaults it to false', async () => {
+    const api = fakeApi({ appUpdatePolicy: () => Promise.resolve({ managedBy: null, needsElevation: true }) });
+    const store = make({ api, startupCheck: false });
+    expect(store.needsElevation()).toBe(false);
+    await flush();
+    expect(store.needsElevation()).toBe(true);
+    expect(store.managedBy()).toBeNull();
   });
 
   it('stays null when the policy fetch fails (no Tauri host, e.g. tests/browser preview)', async () => {
@@ -225,7 +234,7 @@ describe('createUpdateStore — Scoop-managed installs', () => {
 
   it('never runs the silent launch check for a managed install', async () => {
     vi.useFakeTimers();
-    const api = fakeApi({ appUpdatePolicy: () => Promise.resolve({ managedBy: 'scoop' }) });
+    const api = fakeApi({ appUpdatePolicy: () => Promise.resolve({ managedBy: 'scoop', needsElevation: false }) });
     const store = make({ api, startupCheck: true, startupDelayMs: 10 });
     await vi.advanceTimersByTimeAsync(10);
     expect(api.check).not.toHaveBeenCalled();
@@ -242,7 +251,7 @@ describe('createUpdateStore — Scoop-managed installs', () => {
   });
 
   it('refuses a manual check once managed, without touching the bridge', async () => {
-    const api = fakeApi({ appUpdatePolicy: () => Promise.resolve({ managedBy: 'scoop' }) });
+    const api = fakeApi({ appUpdatePolicy: () => Promise.resolve({ managedBy: 'scoop', needsElevation: false }) });
     const store = make({ api });
     await flush();
     expect(store.managedBy()).toBe('scoop');
@@ -261,7 +270,7 @@ describe('createUpdateStore — Scoop-managed installs', () => {
     const store = make({ api, startupCheck: false });
     await store.check();
     expect(store.status()).toBe('available');
-    policy.resolve({ managedBy: 'scoop' });
+    policy.resolve({ managedBy: 'scoop', needsElevation: false });
     await flush();
     expect(store.managedBy()).toBe('scoop');
     await store.install();
