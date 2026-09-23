@@ -12,18 +12,34 @@ repo carries anything else. Both target repos must exist with at least one commi
 them with a README) before the workflow runs — `actions/checkout` cannot clone an empty
 repository; the `Casks/` and `bucket/` directories are created on first push.
 
-Before pushing, the Homebrew job lints the rendered cask with `brew style` and
-`brew audit --online`, after a `brew update`. That checks it against the Homebrew users
-have, not the copy baked into the runner image, which can trail it by weeks. The steps
-live in `.github/actions/homebrew-lint/`, and `.github/workflows/verify-homebrew.yml` runs
-the same action on every PR that touches `homebrew/`, the renderer or the action, so a
+Before pushing, the Homebrew job runs `brew update`, then `brew style` and
+`brew audit --online` against the rendered cask, so it is checked against the Homebrew users
+have rather than the copy baked into the runner image, which can trail it by weeks. The
+steps live in `.github/actions/homebrew-lint/`, and `.github/workflows/verify-homebrew.yml`
+runs the same action on every PR that touches `homebrew/`, the renderer or the action, so a
 template change that breaks one of Homebrew's rules fails before merge instead of in the
-publish run. That check renders against the latest published release (or the version
-given to `workflow_dispatch`) and pushes nothing. `--online` downloads the DMG for the
-runner's architecture and checks it against the cask's hash, so it renders with the real
-DMG hashes and only skips the Windows installer download. It runs only when those paths
-change, so a new rule on Homebrew's side still fails an unchanged template in the next
-publish run first; dispatch it to check the latest release against current Homebrew.
+publish run (`--check` below only catches leftover placeholders). That check renders
+against the latest published release (or the version given to `workflow_dispatch`) and
+pushes nothing. `--online` downloads the DMG for the runner's architecture and checks it
+against the cask's hash, so it renders with the real DMG hashes and only skips the Windows
+installer download. It runs only when those paths change, so a new rule on Homebrew's side
+still fails an unchanged template in the next publish run first; dispatch it to check the
+latest release against current Homebrew.
+
+Rules the cask has already run into:
+
+- It must declare itself macOS-only (`Homebrew/OSDependsOn`): `depends_on :macos`, or a
+  versioned `depends_on macos:` on its own. Combining the two is disabled.
+- A versioned `depends_on macos:` must name a release Homebrew still supports. Naming an
+  older one (`:catalina`, once Homebrew's minimum became Big Sur) stops the cask loading
+  for every user.
+- Homebrew removed `--no-quarantine`, so `caveats` must not suggest it.
+
+To republish an existing version after fixing a template, dispatch the workflow on `main`
+with `gh workflow run publish-packages.yml --ref main -f version=0.14.0`. The Homebrew and
+Scoop jobs no-op if nothing changed, the `chocolatey` job skips or tolerates a version the
+feed already has (below), and the `winget` job is `continue-on-error`, failing until the
+first manifest is merged into `microsoft/winget-pkgs`.
 
 Chocolatey has no target repo: `choco pack` builds the `.nupkg` from the rendered
 `chocolatey/` tree and `choco push` uploads it directly to the community feed
