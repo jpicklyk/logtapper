@@ -14,10 +14,19 @@ repository; the `Casks/` and `bucket/` directories are created on first push.
 
 Before pushing, the Homebrew job runs `brew update`, then `brew style` and
 `brew audit --online` against the rendered cask, so it is checked against the Homebrew users
-have rather than the copy baked into the runner image, which can trail it by weeks. Nothing
-else checks Homebrew's rules — `--check` below only catches leftover placeholders — so a
-template change that breaks one first shows up in the publish run, which then skips the
-push. Rules the cask has already run into:
+have rather than the copy baked into the runner image, which can trail it by weeks. The
+steps live in `.github/actions/homebrew-lint/`, and `.github/workflows/verify-homebrew.yml`
+runs the same action on every PR that touches `homebrew/`, the renderer or the action, so a
+template change that breaks one of Homebrew's rules fails before merge instead of in the
+publish run (`--check` below only catches leftover placeholders). That check renders
+against the latest published release (or the version given to `workflow_dispatch`) and
+pushes nothing. `--online` downloads the DMG for the runner's architecture and checks it
+against the cask's hash, so it renders with the real DMG hashes and only skips the Windows
+installer download. It runs only when those paths change, so a new rule on Homebrew's side
+still fails an unchanged template in the next publish run first; dispatch it to check the
+latest release against current Homebrew.
+
+Rules the cask has already run into:
 
 - It must declare itself macOS-only (`Homebrew/OSDependsOn`): `depends_on :macos`, or a
   versioned `depends_on macos:` on its own. Combining the two is disabled.

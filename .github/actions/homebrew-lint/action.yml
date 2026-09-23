@@ -1,0 +1,63 @@
+name: Lint the Homebrew cask
+description: >-
+  Copies a rendered cask into a directory, registers that directory as the
+  jpicklyk/logtapper tap, and runs brew style and brew audit --online on the
+  cask with current Homebrew. publish-packages.yml runs it before pushing the
+  cask and verify-homebrew.yml runs it on pull requests, so the pre-merge check
+  is the same lint that gates a release.
+
+inputs:
+  cask:
+    description: Rendered cask file to lint.
+    required: true
+  tap-dir:
+    description: >-
+      Directory to register as the tap. The cask is copied to its
+      Casks/logtapper.rb, which is the file publish-packages.yml then pushes.
+    required: true
+  github-token:
+    description: Token for brew audit --online's GitHub API checks. Read-only is enough.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The runner image bakes in a Homebrew that can trail users' by weeks:
+    # 0.13.3 passed style and audit on a 2026-08-28 image while current
+    # Homebrew refused to load the cask (`depends_on macos: :catalina` disabled
+    # when its minimum became Big Sur). Updating before the tap is registered
+    # also keeps `brew update` from fetching into publish's tap checkout.
+    - name: Update Homebrew
+      shell: bash
+      run: brew update
+
+    # `brew style` / `brew audit` refuse a cask given as a bare file path
+    # ("Homebrew requires casks to be in a tap"), so the directory is registered
+    # as the tap itself: a symlink under Library/Taps is how Homebrew's own
+    # setup-homebrew action does it.
+    - name: Register the directory as the jpicklyk/logtapper tap
+      shell: bash
+      env:
+        CASK: ${{ inputs.cask }}
+        TAP_DIR: ${{ inputs.tap-dir }}
+      run: |
+        mkdir -p "$TAP_DIR/Casks"
+        cp "$CASK" "$TAP_DIR/Casks/logtapper.rb"
+        taps="$(brew --repository)/Library/Taps/jpicklyk"
+        mkdir -p "$taps"
+        ln -s "$(cd "$TAP_DIR" && pwd)" "$taps/homebrew-logtapper"
+
+    - name: brew style
+      shell: bash
+      run: brew style --cask jpicklyk/logtapper/logtapper
+
+    # Fails on audit errors, not warnings. --online also downloads the DMG for
+    # the runner's architecture and checks it against the cask's sha256.
+    - name: brew audit
+      shell: bash
+      env:
+        # --online queries the GitHub API for the homepage/url checks; from a
+        # shared runner IP the anonymous 60/hour limit is already spent
+        # (seen on run 35643998859).
+        HOMEBREW_GITHUB_API_TOKEN: ${{ inputs.github-token }}
+      run: brew audit --cask --online jpicklyk/logtapper/logtapper
