@@ -167,14 +167,23 @@ jobs:
           $url = "https://github.com/jpicklyk/LogTapper/releases/download/v$env:VERSION/LogTapper_${env:VERSION}_x64-setup.exe"
           .\wingetcreate.exe update jpicklyk.LogTapper --version $env:VERSION --urls $url --submit --token $env:WINGET_PAT
 
-  chocolatey:
+  # Install-tests the exact version about to be pushed on a throwaway Windows
+  # runner (verify-chocolatey.yml). The push below needs it, so a package that
+  # does not install, upgrade and uninstall cleanly never reaches moderation.
+  chocolatey-verify:
     needs: resolve-version
+    uses: ./.github/workflows/verify-chocolatey.yml
+    with:
+      version: ${{ needs.resolve-version.outputs.version }}
+
+  chocolatey:
+    needs: [resolve-version, chocolatey-verify]
     runs-on: windows-latest
     # Soft-fails until the first version is listed on the community feed. That
-    # first version is pushed by this job too, from a manual workflow_dispatch
-    # after the maintainer has sandbox-tested a local `choco pack` (no API key
-    # needed for that), so the key only ever lives in this repo's secrets.
-    # Flip this off once `choco info logtapper` resolves.
+    # first version is pushed by this job too, from a manual workflow_dispatch,
+    # so the key only ever lives in this repo's secrets; chocolatey-verify
+    # stands in for the sandbox test before it. Flip this off once
+    # `choco info logtapper` resolves.
     continue-on-error: true
     env:
       VERSION: ${{ needs.resolve-version.outputs.version }}
