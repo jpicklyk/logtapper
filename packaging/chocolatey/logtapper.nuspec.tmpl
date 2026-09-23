@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>logtapper</id>
+    <version>{{VERSION}}</version>
+    <packageSourceUrl>https://github.com/jpicklyk/LogTapper/tree/main/packaging/chocolatey</packageSourceUrl>
+    <owners>jpicklyk</owners>
+    <title>LogTapper</title>
+    <authors>Jeff Picklyk</authors>
+    <projectUrl>https://github.com/jpicklyk/LogTapper</projectUrl>
+    <iconUrl>https://cdn.jsdelivr.net/gh/jpicklyk/LogTapper@{{ICON_COMMIT}}/src-tauri/icons/128x128.png</iconUrl>
+    <copyright>Copyright (C) 2026 Jeff Picklyk</copyright>
+    <licenseUrl>https://github.com/jpicklyk/LogTapper/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/jpicklyk/LogTapper</projectSourceUrl>
+    <docsUrl>https://github.com/jpicklyk/LogTapper/blob/main/README.md</docsUrl>
+    <bugTrackerUrl>https://github.com/jpicklyk/LogTapper/issues</bugTrackerUrl>
+    <tags>logtapper android logcat bugreport dumpstate log-analysis mcp developer-tool</tags>
+    <summary>Android log file analyzer with AI-assisted analysis</summary>
+    <description><![CDATA[
+LogTapper opens logcat, bugreport, dumpstate and kernel log captures, runs YAML-defined
+processors over them, and exposes the results to AI agents over MCP.
+
+Built for Android developers, IT staff and support personnel:
+
+- Load logcat, bugreport, dumpstate and kernel (dmesg) captures, or stream live from ADB.
+- Search, filter and run custom analysis pipelines powered by a YAML processor system
+  with embedded Rhai scripting.
+- Ships a bundled MCP server so AI agents (Claude Code, Claude Desktop and other MCP
+  clients) get direct tool access to search lines, run pipelines, read state-tracker
+  events, and manage bookmarks and watches -- no separate Node.js install needed.
+
+This package installs LogTapper machine-wide under %ProgramFiles%\LogTapper, registers
+the .lts / .ltw file associations, and pulls the Microsoft Edge WebView2 Runtime on
+Windows 10 if it is missing.
+
+LogTapper updates itself (Settings > General > Updates), so choco list --local-only can
+report an older version than the running app. Run choco upgrade logtapper to reinstall
+the current release and bring the two back in step.
+    ]]></description>
+    <releaseNotes>https://github.com/jpicklyk/LogTapper/releases/tag/v{{VERSION}}</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

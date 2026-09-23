@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Render the Homebrew cask and Scoop manifest templates for a release.
+ * Render the Homebrew cask, Scoop manifest and Chocolatey package templates
+ * for a release.
  *
  *   node scripts/render-packaging.mjs --version 0.14.0 --out dist/packaging
  *   node scripts/render-packaging.mjs --check
@@ -13,11 +14,21 @@
  * the GitHub release and hashing them as they stream in. `publish-packages.yml`
  * runs it without overrides.
  *
- * `--check` never touches the network: it renders the committed templates
- * against the current `package.json` version with dummy hashes and fails if
- * any `{{...}}` token survives — catching a typo'd placeholder name before
- * it reaches CI. `scripts/bump-version.mjs --check` covers the five version
- * files; this covers the two packaging templates.
+ * The Chocolatey nuspec also carries `{{ICON_COMMIT}}`, the commit sha the
+ * jsdelivr icon URL is pinned to: `--icon-commit <sha>` when given, else
+ * `git rev-parse HEAD`, else the literal `main` with a console warning.
+ * `packaging/chocolatey/tools/chocolateyuninstall.ps1` is not a template —
+ * it has no placeholders — so it is copied through verbatim via `COPIES`
+ * rather than rendered, since `choco pack` needs every `tools\**` file
+ * present on disk alongside the rendered install script.
+ *
+ * `--check` never touches the network or the filesystem's git state: it
+ * renders the committed templates against the current `package.json`
+ * version with dummy hashes and a dummy 40-char `ICON_COMMIT`, verifies
+ * every `COPIES` source exists, and fails if any `{{...}}` token survives —
+ * catching a typo'd placeholder name before it reaches CI.
+ * `scripts/bump-version.mjs --check` covers the five version files; this
+ * covers the packaging templates.
  *
  * Deliberately plain string replacement, like `bump-version.mjs` — the
  * templates are hand-formatted (Homebrew's `sha256 arm:` alignment, Scoop's
@@ -25,8 +36,9 @@
  * since it only replaces `{{...}}`) and a JSON/Ruby round-trip would
  * reformat them.
  */
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -45,6 +57,20 @@ const ASSETS = {
 const TEMPLATES = [
   { src: 'packaging/homebrew/logtapper.rb.tmpl', out: 'homebrew/Casks/logtapper.rb' },
   { src: 'packaging/scoop/logtapper.json.tmpl', out: 'scoop/bucket/logtapper.json' },
+  { src: 'packaging/chocolatey/logtapper.nuspec.tmpl', out: 'chocolatey/logtapper.nuspec' },
+  {
+    src: 'packaging/chocolatey/tools/chocolateyinstall.ps1.tmpl',
+    out: 'chocolatey/tools/chocolateyinstall.ps1',
+  },
+];
+
+// Non-template files that still need to land in the output tree so it's a
+// complete, packable `choco pack` input (every `tools\**` file on disk).
+const COPIES = [
+  {
+    src: 'packaging/chocolatey/tools/chocolateyuninstall.ps1',
+    out: 'chocolatey/tools/chocolateyuninstall.ps1',
+  },
 ];
 
 function packageJsonVersion() {
@@ -54,6 +80,22 @@ function packageJsonVersion() {
 
 function releaseAssetUrl(version, asset) {
   return `https://github.com/${REPO}/releases/download/v${version}/${asset}`;
+}
+
+// The Chocolatey nuspec's iconUrl is a jsdelivr URL pinned to a commit sha
+// (not a branch) so the icon can never change under an already-published
+// version. `--icon-commit` wins; otherwise the current HEAD; otherwise
+// `main`, with a warning since that pin can drift.
+function resolveIconCommit(argIconCommit) {
+  if (argIconCommit) return argIconCommit;
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  } catch (err) {
+    console.warn(
+      `warning: git rev-parse HEAD failed (${err.message}); pinning the Chocolatey iconUrl to "main" instead of a commit sha`,
+    );
+    return 'main';
+  }
 }
 
 async function sha256OfUrl(url) {
@@ -108,8 +150,8 @@ function renderTemplate(template, values) {
   return rendered;
 }
 
-function writeRendered(outDir, version, hashes) {
-  const values = { VERSION: version, ...hashes };
+function writeRendered(outDir, version, hashes, iconCommit) {
+  const values = { VERSION: version, ICON_COMMIT: iconCommit, ...hashes };
   for (const t of TEMPLATES) {
     const rendered = renderTemplate(t, values);
     const outPath = join(outDir, t.out);
@@ -119,10 +161,24 @@ function writeRendered(outDir, version, hashes) {
   }
 }
 
+function copyFiles(outDir) {
+  for (const c of COPIES) {
+    const outPath = join(outDir, c.out);
+    mkdirSync(dirname(outPath), { recursive: true });
+    copyFileSync(join(root, c.src), outPath);
+    console.log(`copied ${outPath}`);
+  }
+}
+
 function check() {
   const version = packageJsonVersion();
   const dummy = '0'.repeat(64);
-  const values = { VERSION: version, ...Object.fromEntries(Object.keys(ASSETS).map((k) => [k, dummy])) };
+  const dummyIconCommit = '0'.repeat(40);
+  const values = {
+    VERSION: version,
+    ICON_COMMIT: dummyIconCommit,
+    ...Object.fromEntries(Object.keys(ASSETS).map((k) => [k, dummy])),
+  };
   let failed = false;
   for (const t of TEMPLATES) {
     try {
@@ -130,6 +186,14 @@ function check() {
       console.log(`${t.src}: ok`);
     } catch (err) {
       console.error(err.message);
+      failed = true;
+    }
+  }
+  for (const c of COPIES) {
+    if (existsSync(join(root, c.src))) {
+      console.log(`${c.src}: ok`);
+    } else {
+      console.error(`${c.src}: missing (declared in COPIES)`);
       failed = true;
     }
   }
@@ -147,6 +211,8 @@ function parseArgs(argv) {
       args.version = argv[++i];
     } else if (arg === '--out') {
       args.out = argv[++i];
+    } else if (arg === '--icon-commit') {
+      args.iconCommit = argv[++i];
     } else if (arg === '--sha256') {
       const pair = argv[++i];
       const eq = pair ? pair.indexOf('=') : -1;
@@ -171,14 +237,16 @@ async function main() {
   }
   if (!args.out) {
     console.error(
-      'usage: node scripts/render-packaging.mjs --version X --out <dir> [--sha256 asset=hex ...] | --check',
+      'usage: node scripts/render-packaging.mjs --version X --out <dir> [--sha256 asset=hex ...] [--icon-commit sha] | --check',
     );
     process.exit(2);
   }
   const version = args.version ?? packageJsonVersion();
   const outDir = resolve(args.out);
+  const iconCommit = resolveIconCommit(args.iconCommit);
   const hashes = await resolveHashes(version, args.sha256);
-  writeRendered(outDir, version, hashes);
+  writeRendered(outDir, version, hashes, iconCommit);
+  copyFiles(outDir);
 }
 
 main().catch((err) => {

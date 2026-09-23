@@ -55,6 +55,55 @@ test('overrides render both files with the expected version/hash strings, no net
     // Scoop's own `$version` autoupdate token must survive untouched.
     assert.match(manifest, /LogTapper_\$version_x64-setup\.exe/);
     assert.doesNotMatch(manifest, /\{\{/);
+
+    const nuspec = readFileSync(join(outDir, 'chocolatey/logtapper.nuspec'), 'utf8');
+    assert.match(nuspec, /<version>9\.9\.9<\/version>/);
+    assert.doesNotMatch(nuspec, /\{\{/);
+
+    const installScript = readFileSync(join(outDir, 'chocolatey/tools/chocolateyinstall.ps1'), 'utf8');
+    assert.match(installScript, new RegExp(`checksum64\\s*=\\s*'${nsisHash}'`));
+    assert.match(
+      installScript,
+      /url64bit\s*=\s*'https:\/\/github\.com\/jpicklyk\/LogTapper\/releases\/download\/v9\.9\.9\/LogTapper_9\.9\.9_x64-setup\.exe'/,
+    );
+    assert.doesNotMatch(installScript, /\{\{/);
+
+    // Not a template: chocolateyuninstall.ps1 must be copied through byte-for-byte.
+    const copiedUninstall = readFileSync(join(outDir, 'chocolatey/tools/chocolateyuninstall.ps1'));
+    const sourceUninstall = readFileSync(
+      fileURLToPath(new URL('../packaging/chocolatey/tools/chocolateyuninstall.ps1', import.meta.url)),
+    );
+    assert.deepEqual(copiedUninstall, sourceUninstall);
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test('--icon-commit reaches the nuspec iconUrl', () => {
+  const outDir = mkdtempSync(join(tmpdir(), 'render-packaging-'));
+  try {
+    const { status, stderr } = run([
+      '--version',
+      '9.9.9',
+      '--out',
+      outDir,
+      '--icon-commit',
+      'deadbeef',
+      '--sha256',
+      `LogTapper_9.9.9_aarch64.dmg=${'a'.repeat(64)}`,
+      '--sha256',
+      `LogTapper_9.9.9_x64.dmg=${'b'.repeat(64)}`,
+      '--sha256',
+      `LogTapper_9.9.9_x64-setup.exe=${'c'.repeat(64)}`,
+    ]);
+    assert.equal(status, 0, stderr);
+
+    const nuspec = readFileSync(join(outDir, 'chocolatey/logtapper.nuspec'), 'utf8');
+    assert.match(
+      nuspec,
+      /<iconUrl>https:\/\/cdn\.jsdelivr\.net\/gh\/jpicklyk\/LogTapper@deadbeef\/src-tauri\/icons\/128x128\.png<\/iconUrl>/,
+    );
+    assert.doesNotMatch(nuspec, /\{\{/);
   } finally {
     rmSync(outDir, { recursive: true, force: true });
   }
@@ -94,6 +143,9 @@ test('--check passes on the committed templates', () => {
   assert.equal(status, 0, stderr);
   assert.match(stdout, /packaging\/homebrew\/logtapper\.rb\.tmpl: ok/);
   assert.match(stdout, /packaging\/scoop\/logtapper\.json\.tmpl: ok/);
+  assert.match(stdout, /packaging\/chocolatey\/logtapper\.nuspec\.tmpl: ok/);
+  assert.match(stdout, /packaging\/chocolatey\/tools\/chocolateyinstall\.ps1\.tmpl: ok/);
+  assert.match(stdout, /packaging\/chocolatey\/tools\/chocolateyuninstall\.ps1: ok/);
   assert.match(stdout, /all templates render cleanly/);
 });
 
