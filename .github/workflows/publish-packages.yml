@@ -81,6 +81,13 @@ jobs:
           mkdir -p "$taps"
           ln -s "$PWD/tap" "$taps/homebrew-logtapper"
 
+      # `brew style` / `brew audit` otherwise run the Homebrew baked into the
+      # runner image, which can trail users' by weeks: 0.13.3 passed both on a
+      # 2026-08-28 image while current Homebrew refused to load the cask
+      # (`depends_on macos: :catalina` disabled when its minimum became Big Sur).
+      - name: Update Homebrew
+        run: brew update
+
       - name: brew style
         run: brew style --cask jpicklyk/logtapper/logtapper
 
