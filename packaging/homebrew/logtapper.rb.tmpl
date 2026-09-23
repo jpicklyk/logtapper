@@ -16,7 +16,6 @@ cask "logtapper" do
   end
 
   auto_updates true
-  depends_on macos: :catalina
 
   app "LogTapper.app"
 
@@ -31,9 +30,8 @@ cask "logtapper" do
   ]
 
   caveats <<~EOS
-    LogTapper is not yet notarized by Apple. Either install with
-      brew install --cask --no-quarantine jpicklyk/logtapper/logtapper
-    or, after installing, clear the quarantine flag once:
-      xattr -d -r com.apple.quarantine /Applications/LogTapper.app
+    LogTapper is not yet notarized by Apple, so macOS reports it as damaged
+    on first launch. Clear the quarantine flag once after installing:
+      xattr -d -r com.apple.quarantine #{appdir}/LogTapper.app
   EOS
 end

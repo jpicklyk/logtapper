@@ -27,10 +27,11 @@ scoop install logtapper
 ```
 
 **macOS (Homebrew):** LogTapper is not yet notarized (see *macOS first launch* below), so
-the cask needs `--no-quarantine` until it is:
+clear the quarantine flag once after installing:
 
 ```
-brew install --cask --no-quarantine jpicklyk/logtapper/logtapper
+brew install --cask jpicklyk/logtapper/logtapper
+xattr -d -r com.apple.quarantine /Applications/LogTapper.app
 ```
 
 Scoop installs update with `scoop update logtapper` — the in-app updater is disabled for
