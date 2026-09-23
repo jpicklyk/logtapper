@@ -199,17 +199,25 @@ jobs:
 
       # A re-run for a version already on the feed would 409. Every other job
       # in this workflow is a no-op on re-run; this preserves that.
-      - name: Skip if this version is already on the feed
+      # Skip only an APPROVED version. The Packages(Id,Version) lookup also
+      # returns versions still in moderation (IsApproved=false,
+      # PackageStatus=Submitted; seen on 0.13.3's first push), and a moderator
+      # asking for changes is exactly when a re-run must push again. A version
+      # that does not exist 404s into the catch, so it pushes too.
+      - name: Skip if this version is already approved on the feed
         id: feed
         shell: pwsh
         run: |
           $url = "https://community.chocolatey.org/api/v2/Packages(Id='logtapper',Version='$env:VERSION')"
-          $exists = $false
-          try { Invoke-WebRequest -Uri $url -UseBasicParsing | Out-Null; $exists = $true } catch { }
-          "exists=$exists" >> $env:GITHUB_OUTPUT
+          $approved = $false
+          try {
+            $xml = [xml](Invoke-WebRequest -Uri $url -UseBasicParsing).Content
+            $approved = $xml.SelectSingleNode("//*[local-name()='IsApproved']").InnerText -eq 'true'
+          } catch { }
+          "approved=$approved" >> $env:GITHUB_OUTPUT
 
       - name: Pack and push
-        if: steps.feed.outputs.exists != 'True'
+        if: steps.feed.outputs.approved != 'True'
         shell: pwsh
         env:
           CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
@@ -220,14 +228,13 @@ jobs:
             exit $LASTEXITCODE
           }
 
-          # The feed check above is best-effort: a version that was pushed but
-          # is still pending moderation is NOT returned by the public OData
-          # feed (it only lists approved/listed versions), so a re-run during
-          # moderation sails past the check above and re-pushes here. Chocolatey
-          # then answers with a 409 / "already exists" conflict, which is not a
-          # failure for us — it means the earlier push already landed. Treat
-          # that specific response as a no-op success and anything else as a
-          # real failure.
+          # Only approved versions are skipped above, so this push also runs for
+          # a version still in moderation, which is the resubmission path when
+          # a moderator asks for changes. If Chocolatey refuses because the
+          # version already exists in a state it won't replace (e.g. approved
+          # between the check and here), it answers 409 / "already exists".
+          # That is not a failure for us: treat that one response as a no-op
+          # success and anything else as a real failure.
           #
           # Output and exit code are captured so a 409 can be told apart from a
           # real failure. pwsh 7.x does not turn a native command's non-zero exit

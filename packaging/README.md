@@ -16,12 +16,12 @@ Chocolatey has no target repo: `choco pack` builds the `.nupkg` from the rendere
 `chocolatey/` tree and `choco push` uploads it directly to the community feed
 (community.chocolatey.org). That means the Homebrew/Scoop re-run safety (a clean git
 tree — nothing to commit, so the job no-ops) doesn't apply; instead the `chocolatey` job
-queries the public feed for `Id=logtapper,Version=$VERSION` before packing, and skips the
-pack-and-push step when that version is already listed. A push that lands while the
-version is still pending moderation isn't visible on that public feed yet, so a re-run
-during moderation can still attempt the push — the job additionally tolerates a
-409/"already exists" response from `choco push` as a no-op rather than a failure, since it
-means an earlier run's push already landed. Every version, including the first, is pushed
+looks up `Packages(Id='logtapper',Version='$VERSION')` on the community feed before packing
+and skips the pack-and-push step only when that version is **approved**. That lookup also
+returns versions still in moderation (`IsApproved=false`, `PackageStatus=Submitted`), and
+those are pushed again on a re-run, which is how a fix goes up when a moderator asks for
+changes. If Chocolatey refuses a push because the version already exists, the job treats that
+409/"already exists" response as a no-op rather than a failure. Every version, including the first, is pushed
 by that job — the `CHOCO_API_KEY` secret is the only place the key lives.
 
 No push happens without an install test first. `.github/workflows/verify-chocolatey.yml`
