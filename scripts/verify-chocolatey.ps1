@@ -172,8 +172,12 @@ Set-Content -Path $installScript -Value $tampered -NoNewline
 $tamperedPkg = Join-Path $work 'pkg'
 & choco pack (Join-Path $work 'logtapper.nuspec') --out $tamperedPkg 2>&1 | ForEach-Object { Write-Host "    $_" }
 Check ($LASTEXITCODE -eq 0) "tampered package packs"
-$r = Invoke-Choco @('install', 'logtapper', '--source', $tamperedPkg)
+# --force so this step does not depend on the earlier ones: if an earlier
+# uninstall failed, choco still lists logtapper as installed and would answer
+# "already installed" with exit 0 without ever checking the checksum.
+$r = Invoke-Choco @('install', 'logtapper', '--source', $tamperedPkg, '--force')
 Check ($r.Code -ne 0) "install with a wrong checksum fails (got $($r.Code))"
+Check ($r.Output -match '(?i)checksum') "and it fails on the checksum, not for some other reason"
 Check (-not (Test-Path $AppExe)) "nothing was installed from the tampered package"
 Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 
