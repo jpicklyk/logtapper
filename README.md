@@ -10,7 +10,10 @@ A desktop log analysis tool for Android developers, IT staff, and support person
 
 ## Install
 
-**Windows (winget):**
+**Windows (winget):** *pending approval.* LogTapper's first winget manifest is awaiting review
+by the Microsoft maintainers of `microsoft/winget-pkgs`
+([#438639](https://github.com/microsoft/winget-pkgs/pull/438639)). Until it merges, `winget`
+will not find the package; use Scoop or the direct download below. Once it is approved:
 
 ```
 winget install jpicklyk.LogTapper
