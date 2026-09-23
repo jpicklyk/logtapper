@@ -21,8 +21,10 @@ pack-and-push step when that version is already listed. A push that lands while 
 version is still pending moderation isn't visible on that public feed yet, so a re-run
 during moderation can still attempt the push — the job additionally tolerates a
 409/"already exists" response from `choco push` as a no-op rather than a failure, since it
-means an earlier run's push already landed. See `plans/chocolatey-channel.md` for the full
-design, including why the first version is pushed by hand rather than from CI.
+means an earlier run's push already landed. Every version, including the first, is pushed
+by that job — the `CHOCO_API_KEY` secret is the only place the key lives. Verify a package
+before its first push by rendering it locally and running `choco pack` + `choco install
+logtapper --source .` in a sandbox; neither needs the key.
 
 `chocolatey/logtapper.nuspec.tmpl` and `chocolatey/tools/chocolateyinstall.ps1.tmpl` are
 templates; `chocolatey/tools/chocolateyuninstall.ps1` has no placeholders and is copied

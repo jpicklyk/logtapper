@@ -170,9 +170,11 @@ jobs:
   chocolatey:
     needs: resolve-version
     runs-on: windows-latest
-    # Soft-fails until the first version is listed on the community feed
-    # (pushed by hand, per plans/chocolatey-channel.md sequencing). Flip this
-    # off once `choco info logtapper` resolves.
+    # Soft-fails until the first version is listed on the community feed. That
+    # first version is pushed by this job too, from a manual workflow_dispatch
+    # after the maintainer has sandbox-tested a local `choco pack` (no API key
+    # needed for that), so the key only ever lives in this repo's secrets.
+    # Flip this off once `choco info logtapper` resolves.
     continue-on-error: true
     env:
       VERSION: ${{ needs.resolve-version.outputs.version }}
