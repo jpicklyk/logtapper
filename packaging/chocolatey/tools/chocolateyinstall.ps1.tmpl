@@ -1,0 +1,24 @@
+# render-packaging.mjs's leftover-placeholder check fails the render if a
+# double curly brace opener survives rendering anywhere in this file, other
+# than in the two version/checksum placeholders below. PowerShell splatting
+# syntax (a single opening brace after @) does not trip it, so keep it that
+# way if this file changes.
+$ErrorActionPreference = 'Stop'
+
+$packageArgs = @{
+  packageName    = 'logtapper'
+  fileType       = 'exe'
+  url64bit       = 'https://github.com/jpicklyk/LogTapper/releases/download/v{{VERSION}}/LogTapper_{{VERSION}}_x64-setup.exe'
+  checksum64     = '{{SHA256_NSIS}}'
+  checksumType64 = 'sha256'
+  # NSIS installMode "both": /allusers pins the machine-wide scope Chocolatey
+  # installs for; without it, an elevated silent run only happens to pick it.
+  # /S is NSIS silent. The installer kills a running LogTapper and its MCP
+  # sidecar itself (src-tauri/nsis/hooks.nsh), so upgrading over a running app
+  # is safe and needs no pre-step here.
+  silentArgs     = '/S /allusers'
+  validExitCodes = @(0)
+  softwareName   = 'LogTapper*'
+}
+
+Install-ChocolateyPackage @packageArgs
