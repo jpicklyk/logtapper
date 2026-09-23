@@ -68,36 +68,16 @@ jobs:
           token: ${{ secrets.PACKAGING_PAT }}
           path: tap
 
-      # `brew style` / `brew audit` refuse a cask given as a bare file path
-      # ("Homebrew requires casks to be in a tap", seen on the first run), so
-      # the checkout is registered as the tap itself: a symlink under
-      # Library/Taps is how Homebrew's own setup-homebrew action does it. The
-      # rendered cask is copied in first so the lint runs on what will be pushed.
-      - name: Register the checkout as the jpicklyk/logtapper tap
-        run: |
-          mkdir -p tap/Casks
-          cp out/homebrew/Casks/logtapper.rb tap/Casks/logtapper.rb
-          taps="$(brew --repository)/Library/Taps/jpicklyk"
-          mkdir -p "$taps"
-          ln -s "$PWD/tap" "$taps/homebrew-logtapper"
-
-      # `brew style` / `brew audit` otherwise run the Homebrew baked into the
-      # runner image, which can trail users' by weeks: 0.13.3 passed both on a
-      # 2026-08-28 image while current Homebrew refused to load the cask
-      # (`depends_on macos: :catalina` disabled when its minimum became Big Sur).
-      - name: Update Homebrew
-        run: brew update
-
-      - name: brew style
-        run: brew style --cask jpicklyk/logtapper/logtapper
-
-      - name: brew audit (fails the job on audit errors, not warnings)
-        env:
-          # --online queries the GitHub API for the homepage/url checks; from a
-          # shared runner IP the anonymous 60/hour limit is already spent
-          # (seen on run 35643998859). The job token is read-only and enough.
-          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: brew audit --cask --online jpicklyk/logtapper/logtapper
+      # Copies the rendered cask into the checkout, registers the checkout as
+      # the tap and runs brew style + brew audit --online on current Homebrew,
+      # so the lint runs on exactly the file the next step pushes. PRs that
+      # touch the cask run the same action (verify-homebrew.yml).
+      - name: Lint the cask in the tap checkout
+        uses: ./.github/actions/homebrew-lint
+        with:
+          cask: out/homebrew/Casks/logtapper.rb
+          tap-dir: tap
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish the rendered cask
         run: |

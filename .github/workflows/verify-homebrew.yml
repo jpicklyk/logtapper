@@ -1,0 +1,76 @@
+name: Verify Homebrew cask
+
+# Lints the rendered cask with current Homebrew (`brew style` and
+# `brew audit --online`) before a template change merges. publish-packages.yml's
+# homebrew job runs the same lint, but only after a release is published, so a
+# change that broke one of Homebrew's rules used to surface there first (the
+# `Homebrew/OSDependsOn` offense that blocked the 0.13.3 republish, fixed in
+# #50). Both workflows run the steps in
+# .github/actions/homebrew-lint, so they cannot drift. Nothing is pushed from
+# here: no PAT, no tap checkout.
+#
+# Only runs when these paths change. A new rule on Homebrew's side still fails
+# an unchanged template in the next publish run first; dispatch this workflow to
+# check the latest release against current Homebrew.
+on:
+  pull_request:
+    paths:
+      - 'packaging/homebrew/**'
+      - 'scripts/render-packaging.mjs'
+      - '.github/actions/homebrew-lint/**'
+      - '.github/workflows/verify-homebrew.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Released version to lint, without the v (default: latest release)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # PRs and a bare dispatch lint the templates against the latest published
+      # release, the only assets guaranteed to exist; a PR that bumps the
+      # version has not been released yet.
+      - name: Resolve the version to lint
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          v="$INPUT_VERSION"
+          if [ -z "$v" ]; then
+            v="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          fi
+          v="${v#v}"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "linting logtapper $v"
+
+      # Unlike verify-chocolatey.yml, the DMG hashes are real: `brew audit
+      # --online` downloads the runner's DMG and checks it against the cask. The
+      # NSIS hash only feeds Scoop and Chocolatey, so a dummy skips that download.
+      - name: Render the cask
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node scripts/render-packaging.mjs --version "$VERSION" --out out \
+            --sha256 "LogTapper_${VERSION}_x64-setup.exe=$(printf '%064d' 0)"
+
+      - name: Lint the cask
+        uses: ./.github/actions/homebrew-lint
+        with:
+          cask: out/homebrew/Casks/logtapper.rb
+          tap-dir: tap
+          github-token: ${{ secrets.GITHUB_TOKEN }}

@@ -12,6 +12,19 @@ repo carries anything else. Both target repos must exist with at least one commi
 them with a README) before the workflow runs — `actions/checkout` cannot clone an empty
 repository; the `Casks/` and `bucket/` directories are created on first push.
 
+Before pushing, the Homebrew job lints the rendered cask with `brew style` and
+`brew audit --online`, after a `brew update`. That checks it against the Homebrew users
+have, not the copy baked into the runner image, which can trail it by weeks. The steps
+live in `.github/actions/homebrew-lint/`, and `.github/workflows/verify-homebrew.yml` runs
+the same action on every PR that touches `homebrew/`, the renderer or the action, so a
+template change that breaks one of Homebrew's rules fails before merge instead of in the
+publish run. That check renders against the latest published release (or the version
+given to `workflow_dispatch`) and pushes nothing. `--online` downloads the DMG for the
+runner's architecture and checks it against the cask's hash, so it renders with the real
+DMG hashes and only skips the Windows installer download. It runs only when those paths
+change, so a new rule on Homebrew's side still fails an unchanged template in the next
+publish run first; dispatch it to check the latest release against current Homebrew.
+
 Chocolatey has no target repo: `choco pack` builds the `.nupkg` from the rendered
 `chocolatey/` tree and `choco push` uploads it directly to the community feed
 (community.chocolatey.org). That means the Homebrew/Scoop re-run safety (a clean git
