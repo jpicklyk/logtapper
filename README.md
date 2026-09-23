@@ -34,9 +34,14 @@ brew install --cask jpicklyk/logtapper/logtapper
 xattr -d -r com.apple.quarantine /Applications/LogTapper.app
 ```
 
+Older instructions used `brew install --cask --no-quarantine`; Homebrew has since removed
+that option and rejects it as invalid. If Homebrew reports an error in the cask itself, run
+`brew update` and install again — Homebrew refreshes taps only periodically, so a retry can
+otherwise reuse a cask that has since been fixed.
+
 Scoop installs update with `scoop update logtapper` — the in-app updater is disabled for
 them, since Scoop owns the install directory. winget and Homebrew installs self-update like
-any other install (see *Updates* below).
+any other install (see *Updates* below), so `brew upgrade` leaves LogTapper to that updater.
 
 Or download the latest release for your platform directly from
 [GitHub Releases](https://github.com/jpicklyk/logtapper/releases):
@@ -56,12 +61,13 @@ do not repeat for updates. `.deb` installs are the exception and update by hand.
 
 ### macOS first launch
 
-LogTapper is not yet notarized by Apple, so a downloaded build carries a quarantine
-flag. On first launch macOS reports **"LogTapper is damaged and can't be opened"** and
-offers to move it to the Trash. The app is not damaged — this is Gatekeeper blocking an
-unsigned download. Right-clicking **Open** no longer clears it on current macOS.
+LogTapper is not yet notarized by Apple, so a build installed from the `.dmg` or with
+Homebrew carries a quarantine flag. On first launch macOS reports **"LogTapper is damaged
+and can't be opened"** and offers to move it to the Trash. The app is not damaged — this is
+Gatekeeper blocking an unsigned download. Right-clicking **Open** no longer clears it on
+current macOS.
 
-To install:
+To install from the `.dmg`:
 
 1. Open the `.dmg` and drag **LogTapper** to your Applications folder.
 2. Eject the disk image.
@@ -73,8 +79,9 @@ To install:
 
 4. Launch LogTapper from Applications as normal.
 
-You only need to do this once per installed version. Removing notarization from the
-warning path requires an Apple Developer Program membership; until then this step is the
+A Homebrew install needs only step 3. Either way it is a one-time step: in-app updates do
+not carry the quarantine flag (see *Updates* above). A notarized build would remove the
+step entirely, which needs an Apple Developer Program membership; until then this is the
 supported install route on macOS.
 
 ## MCP Server
