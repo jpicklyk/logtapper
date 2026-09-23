@@ -1,0 +1,95 @@
+name: Verify Chocolatey package
+
+# Install-tests the rendered Chocolatey package on a throwaway windows-latest
+# runner: a fresh VM with choco preinstalled and admin rights, standing in for
+# the sandbox a maintainer would otherwise need. scripts/verify-chocolatey.ps1
+# holds the checks (install location + ARP entry + associations, reinstall
+# over a running app, uninstall incl. the "already removed by hand" path, and
+# a tampered checksum aborting). No API key: nothing is pushed from here.
+#
+# Runs on PRs that touch the package, on demand, and as a gate in front of
+# publish-packages.yml's push (workflow_call), so no release pushes a package
+# that did not install here first. See plans/chocolatey-channel.md.
+on:
+  pull_request:
+    paths:
+      - 'packaging/chocolatey/**'
+      - 'scripts/render-packaging.mjs'
+      - 'scripts/verify-chocolatey.ps1'
+      - '.github/workflows/verify-chocolatey.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Released version to verify, without the v (default: latest release)"
+        required: false
+  workflow_call:
+    inputs:
+      version:
+        description: "Released version to verify, without the v"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    # A modal installer dialog would otherwise hang the job for six hours.
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # PRs and a bare dispatch verify the templates against the latest
+      # published release, the only assets guaranteed to exist; a PR that bumps
+      # the version has not been released yet.
+      - name: Resolve the version to verify
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          $v = $env:INPUT_VERSION
+          if (-not $v) {
+            $v = gh release view --repo $env:GITHUB_REPOSITORY --json tagName --jq .tagName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          $v = $v.Trim().TrimStart('v')
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "verifying logtapper $v"
+
+      # The two DMG hashes only feed the Homebrew cask, so dummies save two
+      # ~36 MB downloads. The NSIS hash is real: it is what the package pins.
+      - name: Render and pack
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $dummy = '0' * 64
+          node scripts/render-packaging.mjs --version $env:VERSION --out out `
+            --sha256 "LogTapper_$($env:VERSION)_aarch64.dmg=$dummy" `
+            --sha256 "LogTapper_$($env:VERSION)_x64.dmg=$dummy"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          choco pack out/chocolatey/logtapper.nuspec --out pkg
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install-test the package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./scripts/verify-chocolatey.ps1 -Version $env:VERSION -RenderedDir out -PackageDir pkg
+
+      - name: Keep the tested package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logtapper-${{ steps.version.outputs.version }}-nupkg
+          path: pkg/*.nupkg
+          if-no-files-found: ignore
