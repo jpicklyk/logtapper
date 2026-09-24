@@ -43,10 +43,13 @@ first manifest is merged into `microsoft/winget-pkgs`.
 
 Chocolatey has no target repo: `choco pack` builds the `.nupkg` from the rendered
 `chocolatey/` tree and `choco push` uploads it directly to the community feed
-(community.chocolatey.org). That means the Homebrew/Scoop re-run safety (a clean git
-tree — nothing to commit, so the job no-ops) doesn't apply; instead the `chocolatey` job
-looks up `Packages(Id='logtapper',Version='$VERSION')` on the community feed before packing
-and skips the pack-and-push step only when that version is **approved**. That lookup also
+(community.chocolatey.org). The pack happens once, in `chocolatey-verify`, and the
+`chocolatey` job pushes that artifact rather than rebuilding it, so the package that reaches
+the feed is byte for byte the one that passed the install test. That also means the
+Homebrew/Scoop re-run safety (a clean git tree — nothing to commit, so the job no-ops)
+doesn't apply; instead the `chocolatey` job looks up
+`Packages(Id='logtapper',Version='$VERSION')` on the community feed and skips the push
+only when that version is **approved**. That lookup also
 returns versions still in moderation (`IsApproved=false`, `PackageStatus=Submitted`), and
 those are pushed again on a re-run, which is how a fix goes up when a moderator asks for
 changes. If Chocolatey refuses a push because the version already exists, the job treats that
@@ -63,9 +66,9 @@ release), and as the `chocolatey-verify` job that `publish-packages.yml`'s push 
 The script installs machine-wide, so only run it by hand on a disposable machine.
 
 `chocolatey/logtapper.nuspec.tmpl` and `chocolatey/tools/chocolateyinstall.ps1.tmpl` are
-templates; `chocolatey/tools/chocolateyuninstall.ps1` has no placeholders and is copied
-through unmodified by the renderer so the output directory is a complete, packable
-`choco pack` input.
+templates; `chocolatey/tools/chocolateyuninstall.ps1` has no placeholders, so rendering it
+is a verbatim copy. It is listed with the templates so the output directory is a complete,
+packable `choco pack` input.
 
 To render locally against a real release:
 

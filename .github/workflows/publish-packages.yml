@@ -166,29 +166,26 @@ jobs:
   chocolatey:
     needs: [resolve-version, chocolatey-verify]
     runs-on: windows-latest
+    # Pushes the .nupkg chocolatey-verify built and install-tested, byte for
+    # byte, rather than rebuilding it: what reaches moderation is what passed.
     # Every version is pushed from here, including the first, so the API key
-    # lives in this repo's secrets and nowhere else; chocolatey-verify
-    # install-tests the exact package beforehand. No continue-on-error since
-    # 0.13.3 was approved: a failed push now fails the run.
+    # lives in this repo's secrets and nowhere else. No continue-on-error since
+    # 0.13.3 was approved: a failed push fails the run.
     env:
       VERSION: ${{ needs.resolve-version.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - name: Download the install-tested package
+        uses: actions/download-artifact@v4
         with:
-          node-version: 22
+          name: ${{ needs.chocolatey-verify.outputs.artifact }}
+          path: pkg
 
-      - name: Render the package
-        shell: pwsh
-        run: node scripts/render-packaging.mjs --version "$env:VERSION" --out out
-
-      # A re-run for a version already on the feed would 409. Every other job
-      # in this workflow is a no-op on re-run; this preserves that.
-      # Skip only an APPROVED version. The Packages(Id,Version) lookup also
-      # returns versions still in moderation (IsApproved=false,
-      # PackageStatus=Submitted; seen on 0.13.3's first push), and a moderator
-      # asking for changes is exactly when a re-run must push again. A version
-      # that does not exist 404s into the catch, so it pushes too.
+      # Re-runs no-op like every other job here, but only for an APPROVED
+      # version. The Packages(Id,Version) lookup also returns versions still in
+      # moderation (IsApproved=false, PackageStatus=Submitted; seen on 0.13.3's
+      # first push), and a moderator asking for changes is exactly when a re-run
+      # must push again. A version that does not exist 404s into the catch, so
+      # it pushes too.
       - name: Skip if this version is already approved on the feed
         id: feed
         shell: pwsh
@@ -201,18 +198,12 @@ jobs:
           } catch { }
           "approved=$approved" >> $env:GITHUB_OUTPUT
 
-      - name: Pack and push
+      - name: Push
         if: steps.feed.outputs.approved != 'True'
         shell: pwsh
         env:
           CHOCO_API_KEY: ${{ secrets.CHOCO_API_KEY }}
         run: |
-          choco pack out/chocolatey/logtapper.nuspec --out out
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "choco pack failed with exit code $LASTEXITCODE"
-            exit $LASTEXITCODE
-          }
-
           # Only approved versions are skipped above, so this push also runs for
           # a version still in moderation, which is the resubmission path when
           # a moderator asks for changes. If Chocolatey refuses because the
@@ -226,7 +217,7 @@ jobs:
           # into a terminating error ($PSNativeCommandUseErrorActionPreference
           # defaults to $false), but the Actions wrapper ends the step with an
           # implicit `exit $LASTEXITCODE`, so every path below exits explicitly.
-          $out = choco push "out/logtapper.$env:VERSION.nupkg" --source https://push.chocolatey.org/ --api-key $env:CHOCO_API_KEY 2>&1
+          $out = choco push "pkg/logtapper.$env:VERSION.nupkg" --source https://push.chocolatey.org/ --api-key $env:CHOCO_API_KEY 2>&1
           $code = $LASTEXITCODE
           $out | Write-Host
 
@@ -236,7 +227,7 @@ jobs:
           # Chocolatey's answer is "409 (Conflict - ... already exists ...)";
           # a bare "conflict" would also match unrelated errors.
           if ($out -match '(?i)\b409\b|already exists') {
-            Write-Host "logtapper $env:VERSION was already pushed (likely still pending moderation); treating as success."
+            Write-Host "Chocolatey reports logtapper $env:VERSION already exists on the feed; treating as success."
             exit 0
           }
           exit $code

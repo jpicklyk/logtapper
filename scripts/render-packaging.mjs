@@ -17,15 +17,14 @@
  * The Chocolatey nuspec also carries `{{ICON_COMMIT}}`, the commit sha the
  * jsdelivr icon URL is pinned to: `--icon-commit <sha>` when given, else
  * `git rev-parse HEAD`, else the literal `main` with a console warning.
- * `packaging/chocolatey/tools/chocolateyuninstall.ps1` is not a template —
- * it has no placeholders — so it is copied through verbatim via `COPIES`
- * rather than rendered, since `choco pack` needs every `tools\**` file
- * present on disk alongside the rendered install script.
+ * `packaging/chocolatey/tools/chocolateyuninstall.ps1` has no placeholders,
+ * so rendering it is a verbatim copy; it is listed with the templates because
+ * `choco pack` needs every `tools\**` file in the output tree.
  *
  * `--check` never touches the network or the filesystem's git state: it
  * renders the committed templates against the current `package.json`
- * version with dummy hashes and a dummy 40-char `ICON_COMMIT`, verifies
- * every `COPIES` source exists, and fails if any `{{...}}` token survives —
+ * version with dummy hashes and a dummy 40-char `ICON_COMMIT`, and fails if
+ * a template is missing or any `{{...}}` token survives —
  * catching a typo'd placeholder name before it reaches CI.
  * `scripts/bump-version.mjs --check` covers the five version files; this
  * covers the packaging templates.
@@ -38,7 +37,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -62,11 +61,7 @@ const TEMPLATES = [
     src: 'packaging/chocolatey/tools/chocolateyinstall.ps1.tmpl',
     out: 'chocolatey/tools/chocolateyinstall.ps1',
   },
-];
-
-// Non-template files that still need to land in the output tree so it's a
-// complete, packable `choco pack` input (every `tools\**` file on disk).
-const COPIES = [
+  // No placeholders: rendered as a verbatim copy (see the header comment).
   {
     src: 'packaging/chocolatey/tools/chocolateyuninstall.ps1',
     out: 'chocolatey/tools/chocolateyuninstall.ps1',
@@ -161,15 +156,6 @@ function writeRendered(outDir, version, hashes, iconCommit) {
   }
 }
 
-function copyFiles(outDir) {
-  for (const c of COPIES) {
-    const outPath = join(outDir, c.out);
-    mkdirSync(dirname(outPath), { recursive: true });
-    copyFileSync(join(root, c.src), outPath);
-    console.log(`copied ${outPath}`);
-  }
-}
-
 function check() {
   const version = packageJsonVersion();
   const dummy = '0'.repeat(64);
@@ -186,14 +172,6 @@ function check() {
       console.log(`${t.src}: ok`);
     } catch (err) {
       console.error(err.message);
-      failed = true;
-    }
-  }
-  for (const c of COPIES) {
-    if (existsSync(join(root, c.src))) {
-      console.log(`${c.src}: ok`);
-    } else {
-      console.error(`${c.src}: missing (declared in COPIES)`);
       failed = true;
     }
   }
@@ -246,7 +224,6 @@ async function main() {
   const iconCommit = resolveIconCommit(args.iconCommit);
   const hashes = await resolveHashes(version, args.sha256);
   writeRendered(outDir, version, hashes, iconCommit);
-  copyFiles(outDir);
 }
 
 main().catch((err) => {
