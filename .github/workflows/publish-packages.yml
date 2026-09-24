@@ -166,12 +166,10 @@ jobs:
   chocolatey:
     needs: [resolve-version, chocolatey-verify]
     runs-on: windows-latest
-    # Soft-fails until the first version is listed on the community feed. That
-    # first version is pushed by this job too, from a manual workflow_dispatch,
-    # so the key only ever lives in this repo's secrets; chocolatey-verify
-    # stands in for the sandbox test before it. Flip this off once
-    # `choco info logtapper` resolves.
-    continue-on-error: true
+    # Every version is pushed from here, including the first, so the API key
+    # lives in this repo's secrets and nowhere else; chocolatey-verify
+    # install-tests the exact package beforehand. No continue-on-error since
+    # 0.13.3 was approved: a failed push now fails the run.
     env:
       VERSION: ${{ needs.resolve-version.outputs.version }}
     steps:

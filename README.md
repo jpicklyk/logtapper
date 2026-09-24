@@ -10,6 +10,12 @@ A desktop log analysis tool for Android developers, IT staff, and support person
 
 ## Install
 
+**Windows (Chocolatey):** from an elevated shell; installs for all users:
+
+```
+choco install logtapper
+```
+
 **Windows (winget):** *pending approval.* LogTapper's first winget manifest is awaiting review
 by the Microsoft maintainers of `microsoft/winget-pkgs`
 ([#438639](https://github.com/microsoft/winget-pkgs/pull/438639)). Until it merges, `winget`
@@ -40,8 +46,11 @@ that option and rejects it as invalid. If Homebrew reports an error in the cask 
 otherwise reuse a cask that has since been fixed.
 
 Scoop installs update with `scoop update logtapper` — the in-app updater is disabled for
-them, since Scoop owns the install directory. winget and Homebrew installs self-update like
-any other install (see *Updates* below), so `brew upgrade` leaves LogTapper to that updater.
+them, since Scoop owns the install directory. Chocolatey, winget and Homebrew installs
+self-update like any other install (see *Updates* below), so `brew upgrade` leaves LogTapper
+to that updater. After a self-update, `choco list` still reports the version Chocolatey
+installed; `choco upgrade logtapper` reinstalls the current release and brings the two back in
+step.
 
 Or download the latest release for your platform directly from
 [GitHub Releases](https://github.com/jpicklyk/logtapper/releases):

@@ -48,6 +48,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           RELEASE_BODY: |
+            **Windows (Chocolatey):** `choco install logtapper` from an elevated shell (installs for all users)
             **Windows (winget, pending Microsoft approval):** `winget install jpicklyk.LogTapper` works once the first manifest is approved in [microsoft/winget-pkgs#438639](https://github.com/microsoft/winget-pkgs/pull/438639); until then use Scoop or the installer below.
             **Windows (Scoop):** `scoop bucket add logtapper https://github.com/jpicklyk/logtapper-scoop` then `scoop install logtapper`
             **macOS (Homebrew):** `brew install --cask jpicklyk/logtapper/logtapper`, then clear the quarantine flag once (step 3 under *macOS first launch* below)
