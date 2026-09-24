@@ -27,10 +27,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# Literal, not derived from $env:ProgramFiles: this is the exact path the unit
-# test nsis_install_is_not_managed (src-tauri/src/commands/app_update.rs) pins
-# as NOT package-managed, which is what makes Settings > General > Updates show
-# the normal controls. Finding the app here is that acceptance criterion.
+# Literal, not derived from $env:ProgramFiles or the ARP entry: this is the
+# exact path the unit test nsis_install_is_not_managed pins as not managed.
+# managed_by() in src-tauri/src/commands/app_update.rs is is_scoop_managed
+# (current_exe), and Settings > General > Updates shows its "managed by"
+# message only when that returns Some, so finding the app here is the check
+# that a Chocolatey install gets the normal update controls.
 $InstallDir = 'C:\Program Files\LogTapper'
 $AppExe = Join-Path $InstallDir 'log-tapper.exe'
 $SidecarExe = Join-Path $InstallDir 'logtapper-mcp.exe'
@@ -55,12 +57,13 @@ function Warn([string] $what) {
   if ($env:GITHUB_ACTIONS) { Write-Host "::warning::$what" }
 }
 
-# choco with -y, its output echoed indented, and the exit code kept rather than
-# thrown: several checks below expect a non-zero exit.
-function Invoke-Choco([string[]] $arguments) {
+# choco with -y, its output echoed indented, then a Check on its exit code:
+# 0 unless -ExpectFailure. Returns the code and output for further checks.
+function Invoke-Choco([string[]] $arguments, [string] $what, [switch] $ExpectFailure) {
   $out = & choco @arguments -y --no-progress 2>&1
   $code = $LASTEXITCODE
   $out | ForEach-Object { Write-Host "    $_" }
+  Check (($code -eq 0) -ne $ExpectFailure.IsPresent) "$what (got $code)"
   [pscustomobject]@{ Code = $code; Output = ($out -join "`n") }
 }
 
@@ -86,8 +89,7 @@ function Stop-LogTapper {
 
 # ---------------------------------------------------------------------------
 Step "1. install from the local package"
-$r = Invoke-Choco @('install', 'logtapper', '--source', $PackageDir)
-Check ($r.Code -eq 0) "choco install exits 0 (got $($r.Code))"
+$r = Invoke-Choco @('install', 'logtapper', '--source', $PackageDir) 'choco install exits 0'
 Check (Test-Path $AppExe) "app installed machine-wide at $AppExe"
 Check (Test-Path $SidecarExe) "MCP sidecar installed beside it"
 $arp = Get-ArpEntry
@@ -105,6 +107,10 @@ Step "2. reinstall over a running app"
 $app = $null
 if (Test-Path $AppExe) {
   $app = Start-Process -FilePath $AppExe -PassThru
+  # A fixed wait, not Wait-Until on the process: the question is whether the
+  # GUI *stays* up on a headless runner. Polling would pass the instant the
+  # process exists, and an app that then crashed would read as "closed by
+  # the installer" below.
   Start-Sleep -Seconds 10
 }
 $wasRunning = $null -ne $app -and [bool](Get-Process -Id $app.Id -ErrorAction SilentlyContinue)
@@ -114,8 +120,7 @@ if ($wasRunning) {
 } else {
   Warn "the app did not stay running on this machine, so the running-app half of step 2 was not exercised (a headless runner may not keep a GUI process up)"
 }
-$r = Invoke-Choco @('install', 'logtapper', '--source', $PackageDir, '--force')
-Check ($r.Code -eq 0) "reinstall with --force exits 0 (got $($r.Code))"
+$r = Invoke-Choco @('install', 'logtapper', '--source', $PackageDir, '--force') 'reinstall with --force exits 0'
 if ($wasRunning) {
   Check (-not (Get-Process -Id $app.Id -ErrorAction SilentlyContinue)) "installer closed the running app instead of stopping on it"
 }
@@ -124,8 +129,7 @@ Stop-LogTapper
 
 # ---------------------------------------------------------------------------
 Step "3. uninstall"
-$r = Invoke-Choco @('uninstall', 'logtapper')
-Check ($r.Code -eq 0) "choco uninstall exits 0 (got $($r.Code))"
+$r = Invoke-Choco @('uninstall', 'logtapper') 'choco uninstall exits 0'
 if (Test-Path $AppExe) {
   Warn "files were still present when choco uninstall returned: the NSIS uninstaller detached. chocolateyuninstall.ps1 may want -SilentArgs '/S _?=<InstallLocation>' (plans/chocolatey-channel.md)"
 } else {
@@ -140,15 +144,13 @@ if (Test-Path $InstallDir) {
 
 # ---------------------------------------------------------------------------
 Step "4. choco uninstall after the app was already removed by hand"
-$r = Invoke-Choco @('install', 'logtapper', '--source', $PackageDir)
-Check ($r.Code -eq 0) "install for this step exits 0 (got $($r.Code))"
+$r = Invoke-Choco @('install', 'logtapper', '--source', $PackageDir) 'install for this step exits 0'
 $arp = Get-ArpEntry
 if ($arp) {
   $uninstaller = $arp.UninstallString -replace '"', ''
   Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait
   Check (Wait-Until { $null -eq (Get-ArpEntry) } 60) "running the NSIS uninstaller directly removed the ARP entry"
-  $r = Invoke-Choco @('uninstall', 'logtapper')
-  Check ($r.Code -eq 0) "choco uninstall with no ARP entry exits 0 (got $($r.Code))"
+  $r = Invoke-Choco @('uninstall', 'logtapper') 'choco uninstall with no ARP entry exits 0'
   Check ($r.Output -match 'nothing to uninstall') "chocolateyuninstall.ps1 took its 'nothing to uninstall' path"
 } else {
   Check $false "ARP entry present after the step-4 install (cannot exercise the manual-uninstall path)"
@@ -175,8 +177,7 @@ Check ($LASTEXITCODE -eq 0) "tampered package packs"
 # --force so this step does not depend on the earlier ones: if an earlier
 # uninstall failed, choco still lists logtapper as installed and would answer
 # "already installed" with exit 0 without ever checking the checksum.
-$r = Invoke-Choco @('install', 'logtapper', '--source', $tamperedPkg, '--force')
-Check ($r.Code -ne 0) "install with a wrong checksum fails (got $($r.Code))"
+$r = Invoke-Choco @('install', 'logtapper', '--source', $tamperedPkg, '--force') 'install with a wrong checksum fails' -ExpectFailure
 Check ($r.Output -match '(?i)checksum') "and it fails on the checksum, not for some other reason"
 Check (-not (Test-Path $AppExe)) "nothing was installed from the tampered package"
 Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue

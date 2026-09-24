@@ -1,10 +1,8 @@
 $ErrorActionPreference = 'Stop'
 
-# Get-UninstallRegistryKey returns $null (not nothing) when no key matches,
-# and @($null) is a one-element array, so filter before counting. Without this
-# a user who removed LogTapper from Settings > Apps first got a GetFullPath
-# error here (caught by scripts/verify-chocolatey.ps1, step 4).
-$keys = @(Get-UninstallRegistryKey -SoftwareName 'LogTapper*' | Where-Object { $_ })
+# Chocolatey's own idiom. Not @(...): Get-UninstallRegistryKey returns $null
+# when nothing matches, and @($null).Count is 1 (verify-chocolatey.ps1 step 4).
+[array]$keys = Get-UninstallRegistryKey -SoftwareName 'LogTapper*'
 if ($keys.Count -eq 0) {
   Write-Host 'LogTapper is not registered in Add/Remove Programs; nothing to uninstall.'
   return

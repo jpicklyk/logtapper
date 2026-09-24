@@ -68,7 +68,7 @@ test('overrides render both files with the expected version/hash strings, no net
     );
     assert.doesNotMatch(installScript, /\{\{/);
 
-    // Not a template: chocolateyuninstall.ps1 must be copied through byte-for-byte.
+    // No placeholders: rendering chocolateyuninstall.ps1 must leave it byte-for-byte.
     const copiedUninstall = readFileSync(join(outDir, 'chocolatey/tools/chocolateyuninstall.ps1'));
     const sourceUninstall = readFileSync(
       fileURLToPath(new URL('../packaging/chocolatey/tools/chocolateyuninstall.ps1', import.meta.url)),

@@ -28,6 +28,10 @@ on:
         description: "Released version to verify, without the v"
         type: string
         required: true
+    outputs:
+      artifact:
+        description: "Name of the artifact holding the install-tested .nupkg"
+        value: ${{ jobs.verify.outputs.artifact }}
 
 permissions:
   contents: read
@@ -37,6 +41,10 @@ jobs:
     runs-on: windows-latest
     # A modal installer dialog would otherwise hang the job for six hours.
     timeout-minutes: 30
+    # publish-packages.yml pushes this exact artifact, so what reaches the
+    # feed is the package that passed the install test below.
+    outputs:
+      artifact: ${{ steps.version.outputs.artifact }}
     defaults:
       run:
         shell: pwsh
@@ -65,6 +73,7 @@ jobs:
           }
           $v = $v.Trim().TrimStart('v')
           "version=$v" >> $env:GITHUB_OUTPUT
+          "artifact=logtapper-$v-nupkg" >> $env:GITHUB_OUTPUT
           Write-Host "verifying logtapper $v"
 
       # The two DMG hashes only feed the Homebrew cask, so dummies save two
@@ -90,6 +99,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logtapper-${{ steps.version.outputs.version }}-nupkg
+          name: ${{ steps.version.outputs.artifact }}
           path: pkg/*.nupkg
           if-no-files-found: ignore
