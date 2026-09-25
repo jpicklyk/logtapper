@@ -259,9 +259,10 @@ pub(crate) async fn h_processor_detail(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RunPipelineBody {
-    /// Processor IDs to run. Omitted (or empty) means "this session's own
-    /// chain", resolved by `services::pipeline::resolve_effective_chain` from
-    /// `session_pipeline_meta`.
+    /// Processor IDs to add to the session's chain before running it; the run
+    /// always executes the whole (merged) chain. Omitted (or empty) means "this
+    /// session's own chain" as configured, resolved by
+    /// `services::pipeline::resolve_effective_chain` from `session_pipeline_meta`.
     ///
     /// It used to mean "every installed processor", which was never what an
     /// agent wanted: it ran the user's whole registry against one session,

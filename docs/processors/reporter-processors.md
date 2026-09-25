@@ -578,7 +578,7 @@ schema:
     signals: []
 ```
 
-This is the minimal viable reporter pattern. The `level_min: E` rule matches lines at level Error or above (E, F, WTF). No vars are needed because the count aggregate maintains its own total. The `schema.emissions` array is empty because no `_emits.push` calls are made.
+This is the minimal viable reporter pattern. The `level_min: E` rule matches lines at level Error or above (E, F, WTF). No vars are needed because the count aggregate maintains its own total, reported as `_count` in the reporter's vars (only reporters with a `count` aggregate carry `_count`). The `schema.emissions` array is empty because no `_emits.push` calls are made.
 
 To extend this into a `count_by` variant that breaks down errors by tag, add an extract stage and change the aggregate:
 

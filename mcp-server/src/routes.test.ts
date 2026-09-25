@@ -380,6 +380,25 @@ describe("bridge error envelope", () => {
 // through handleBridgeError the same way every other tool does.
 // ---------------------------------------------------------------------------
 
+describe("logtapper_processors install", () => {
+  it("'install' with path sends only the path", async () => {
+    const result = await client.callTool({
+      name: "logtapper_processors",
+      arguments: { action: "install", path: "C:\\procs\\x.yaml" },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(recordedCalls[0].body).toEqual({ path: "C:\\procs\\x.yaml" });
+  });
+
+  it("'install' rejects both yaml and path, and neither, without calling the bridge", async () => {
+    for (const extra of [{}, { yaml: "id: x\n", path: "C:\\procs\\x.yaml" }]) {
+      const result = await client.callTool({ name: "logtapper_processors", arguments: { action: "install", ...extra } });
+      expect(result.isError).toBe(true);
+    }
+    expect(recordedCalls).toHaveLength(0);
+  });
+});
+
 describe("logtapper_chain", () => {
   it("'get' reads the chain with no body", async () => {
     const result = await client.callTool({ name: "logtapper_chain", arguments: { session_id: S, action: "get" } });

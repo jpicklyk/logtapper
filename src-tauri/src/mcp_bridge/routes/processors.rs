@@ -62,19 +62,27 @@ pub(crate) async fn h_processor_defs_single(
 // WP-9 processors/marketplace
 // ---------------------------------------------------------------------------
 
+/// Exactly one of `yaml` (the processor YAML inline) or `path` (a YAML file on
+/// disk, gated by the open-file allowlist like any other agent read).
 #[derive(Deserialize)]
 pub(crate) struct InstallProcessorBody {
-    yaml: String,
+    yaml: Option<String>,
+    path: Option<String>,
 }
 
-/// `POST /mcp/processors/install` — install a processor from a YAML body.
+/// `POST /mcp/processors/install` — install a processor from a YAML body or a
+/// YAML file path.
 pub(crate) async fn h_install_processor(
     State(ctx): State<BridgeCtx>,
     headers: HeaderMap,
     JsonBody(body): JsonBody<InstallProcessorBody>,
 ) -> Result<Json<ProcessorSummary>, ServiceError> {
     let svc = ctx.svc(client_name(&headers));
-    Ok(Json(processors::install_yaml(&svc, &body.yaml)?))
+    match (body.yaml, body.path) {
+        (Some(yaml), None) => Ok(Json(processors::install_yaml(&svc, &yaml)?)),
+        (None, Some(path)) => Ok(Json(processors::install_from_file(&svc, &path)?)),
+        _ => Err(ServiceError::invalid_arg("exactly one of 'yaml' or 'path' is required")),
+    }
 }
 
 /// `DELETE /mcp/processors/{id}` — uninstall an installed processor.

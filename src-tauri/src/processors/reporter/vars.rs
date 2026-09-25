@@ -24,6 +24,10 @@ pub struct VarStore {
     /// `to_json()` under the `_count` key so it reaches `RunResult.vars`
     /// the same way declared vars do (e.g. for `mcp.summary` templates).
     count: i64,
+    /// Whether `to_json()` surfaces `count` as `_count`. Only a reporter whose
+    /// pipeline has a `count` aggregate sets it (`with_count_aggregate`); for
+    /// every other reporter `_count` would be an unexplained constant 0.
+    emit_count: bool,
 }
 
 impl VarStore {
@@ -37,7 +41,14 @@ impl VarStore {
             decls: decls.to_vec(),
             values,
             count: 0,
+            emit_count: false,
         }
+    }
+
+    /// Surface the internal `count` aggregate total as `_count` in `to_json()`.
+    pub fn with_count_aggregate(mut self, has_count_aggregate: bool) -> Self {
+        self.emit_count = has_count_aggregate;
+        self
     }
 
     /// Read the current value of a variable.
@@ -76,8 +87,9 @@ impl VarStore {
 
     /// Serialize current state to JSON for IPC transport.
     ///
-    /// Always includes an `_count` entry reflecting the internal counter
-    /// (see `increment_count`), unless a declared var literally named
+    /// Includes an `_count` entry reflecting the internal counter (see
+    /// `increment_count`) when the reporter has a `count` aggregate
+    /// (`with_count_aggregate`), unless a declared var literally named
     /// `_count` already exists -- declared vars take priority so a legacy
     /// processor that pre-declared `_count` keeps its own semantics.
     pub fn to_json(&self) -> HashMap<String, JsonValue> {
@@ -85,8 +97,10 @@ impl VarStore {
             .iter()
             .map(|(k, v)| (k.clone(), dynamic_to_json(v)))
             .collect();
-        map.entry("_count".to_string())
-            .or_insert_with(|| JsonValue::Number(self.count.into()));
+        if self.emit_count {
+            map.entry("_count".to_string())
+                .or_insert_with(|| JsonValue::Number(self.count.into()));
+        }
         map
     }
 
@@ -261,14 +275,21 @@ mod tests {
         // `_count` must be present even for a processor with no `vars:` at
         // all, since AggType::Count (reporter/engine.rs) relies on it being
         // surfaced without any declaration.
-        let store = VarStore::new(&[]);
+        let store = VarStore::new(&[]).with_count_aggregate(true);
         let json = store.to_json();
         assert_eq!(json["_count"], serde_json::json!(0));
     }
 
     #[test]
+    fn to_json_omits_count_without_a_count_aggregate() {
+        let store = VarStore::new(&[make_var("x", VarType::Int)]);
+        let json = store.to_json();
+        assert!(!json.contains_key("_count"), "no count aggregate -> no stray _count: {json:?}");
+    }
+
+    #[test]
     fn increment_count_updates_to_json() {
-        let mut store = VarStore::new(&[]);
+        let mut store = VarStore::new(&[]).with_count_aggregate(true);
         assert_eq!(store.increment_count(), 1);
         assert_eq!(store.increment_count(), 2);
         assert_eq!(store.count(), 2);
@@ -284,7 +305,7 @@ mod tests {
         // such var exists.
         let mut decl = make_var("_count", VarType::Int);
         decl.default = Some(serde_yaml::Value::Number(serde_yaml::Number::from(99i64)));
-        let mut store = VarStore::new(&[decl]);
+        let mut store = VarStore::new(&[decl]).with_count_aggregate(true);
         store.increment_count(); // internal counter now 1, but declared var wins
         let json = store.to_json();
         assert_eq!(json["_count"], serde_json::json!(99));

@@ -633,15 +633,23 @@ fn compute_section_ranges(
         .collect()
 }
 
-/// Compute section ranges parallel to tracker_defs using each def's declared
-/// section names resolved against the parsed section metadata.
+/// Compute section ranges parallel to tracker_defs from each def's top-level
+/// `sections` list, resolved against the parsed section metadata.
+///
+/// Only the top-level list gates the tracker. A per-transition
+/// `filter.section` is enforced by that transition's own `SectionIs` rule; it
+/// must not narrow the lines every *other* transition sees, which is what
+/// gating on `section_names()` (the union of both) used to do.
 fn compute_tracker_section_ranges(
     tracker_defs: &[(String, Arc<StateTrackerDef>)],
     sections: &[SectionInfo],
 ) -> Vec<Option<Vec<(usize, usize)>>> {
     tracker_defs
         .iter()
-        .map(|(_, def)| resolve_section_ranges(&def.section_names(), sections))
+        .map(|(_, def)| {
+            let names: Vec<&str> = def.sections.iter().map(String::as_str).collect();
+            resolve_section_ranges(&names, sections)
+        })
         .collect()
 }
 
@@ -1524,6 +1532,34 @@ transitions:
         // Lines outside every occurrence still gated out.
         assert!(!passes_gate(&ranges[0], 150));
         assert!(!passes_gate(&ranges[0], 350));
+    }
+
+    #[test]
+    fn per_transition_section_does_not_gate_the_whole_tracker() {
+        // One transition scoped to DUMPSYS, one with no section. The unscoped
+        // transition must still see lines outside DUMPSYS (e.g. logcat).
+        let yaml = r#"
+state:
+  - name: seen
+    type: bool
+transitions:
+  - name: scoped
+    filter:
+      section: "DUMPSYS"
+      message_contains: "x"
+    set:
+      seen: true
+  - name: unscoped
+    filter:
+      message_contains: "y"
+    set:
+      seen: false
+"#;
+        let def: StateTrackerDef = serde_yaml::from_str(yaml).unwrap();
+        let defs = vec![("t".to_string(), Arc::new(def))];
+        let ranges = compute_tracker_section_ranges(&defs, &repeated_name_sections());
+        assert!(ranges[0].is_none(), "no top-level sections -> no tracker-wide gate");
+        assert!(passes_gate(&ranges[0], 150));
     }
 
     #[test]
