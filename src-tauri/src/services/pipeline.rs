@@ -345,9 +345,9 @@ impl Drop for PipelineRunGuard<'_> {
 /// Emits [`PipelineCompleteEvent`] once the blocking body returns — on
 /// success and on failure alike — then journals `pipeline.run` on completion
 /// (not on start), so the activity feed records runs that finished rather
-/// than runs that were attempted. An explicit `requested` list is also merged
-/// into the session's chain via `services::chain::patch` before the run
-/// starts (see `run_blocking`).
+/// than runs that were attempted. An explicit `requested` list is merged into
+/// the session's chain via `services::chain::patch` before the run starts, and
+/// the run then executes that whole merged chain (see `run_blocking`).
 pub async fn run(
     ctx: ServiceCtx,
     session_id: String,
@@ -443,9 +443,9 @@ fn run_blocking(
     // Inside the run lock, matching the old code's ordering (processor
     // resolution happened after the run lock was taken). Each AppState lock it
     // needs is acquired and released in turn, never nested.
-    let processor_ids = resolve_effective_chain(ctx, session_id, requested)?;
+    let mut processor_ids = resolve_effective_chain(ctx, session_id, requested)?;
 
-    // ── Merge an explicit list into the session's chain ──────────────────────
+    // ── Merge an explicit list into the session's chain, then run the chain ──
     // An explicit `processor_ids` (an agent naming processors, or the UI's
     // override path) becomes part of the chain the user sees and the next
     // chain-only run executes — silently running something the chain never
@@ -456,8 +456,13 @@ fn run_blocking(
     // `resolve_effective_chain` may have force-added. Deliberately ahead of
     // the queued-cancel check: a run cancelled while still queued has still
     // expressed which processors the caller wanted in the chain.
+    //
+    // The run then executes the whole merged chain, not just the named ids: a
+    // run replaces the session's stored results wholesale, so running only a
+    // subset would silently drop every other chain member's results.
     if requested.is_some_and(|r| !r.is_empty()) {
-        chain::patch(ctx, session_id, processor_ids.clone(), Vec::new())?;
+        chain::patch(ctx, session_id, processor_ids, Vec::new())?;
+        processor_ids = resolve_effective_chain(ctx, session_id, None)?;
     }
 
     // If a stop arrived while we were queued behind another run, honor it now
@@ -2171,12 +2176,19 @@ pipeline:
         let out = run(ctx.clone(), "s1".to_string(), Some(vec!["b".to_string()]), progress)
             .await
             .expect("run succeeds");
+        // The run executes the whole merged chain, not just the named id, so
+        // `a`'s results are not dropped by the wholesale result overwrite.
         // The agent is redacted by default, so the run itself carries the
         // force-included anonymizer — which must NOT reach the chain below.
         assert_eq!(
             out.effective_processor_ids,
-            vec!["b@official".to_string(), PII_ANONYMIZER_ID.to_string()]
+            vec!["a@official".to_string(), "b@official".to_string(), PII_ANONYMIZER_ID.to_string()]
         );
+        let stored_results = ctx.state().pipeline_results.lock().unwrap();
+        let session_results = stored_results.get("s1").expect("results stored");
+        assert!(session_results.contains_key("a@official"), "chain member not named in the call keeps its results");
+        assert!(session_results.contains_key("b@official"));
+        drop(stored_results);
 
         let names: Vec<String> = sink.events().into_iter().map(|e| e.name).collect();
         let chain_at = names

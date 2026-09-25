@@ -21,6 +21,15 @@ type FieldVec = SmallVec<[(String, JsonValue); 4]>;
 /// `correlate` stage in a reporter pipeline is a silent no-op at
 /// `process_line` (see the `PipelineStage::Correlate` match arm there); warn
 /// once at construction time so an author who writes one finds out.
+/// Whether any aggregate stage declares a `count` group — the only case in
+/// which the engine-maintained `_count` total belongs in the reporter's vars.
+fn has_count_aggregate(def: &ReporterDef) -> bool {
+    def.pipeline.iter().any(|stage| match stage {
+        PipelineStage::Aggregate(a) => a.groups.iter().any(|g| matches!(g.agg_type, AggType::Count)),
+        _ => false,
+    })
+}
+
 fn warn_on_correlate_stage(def: &ReporterDef) {
     if def.pipeline.iter().any(|s| matches!(s, PipelineStage::Correlate(_))) {
         log::warn!(
@@ -111,7 +120,7 @@ impl<'a> ProcessorRun<'a> {
         warn_on_correlate_stage(def);
         let sorted_filter_rules = Self::build_sorted_filter_rules(def);
         Self {
-            vars: VarStore::new(&def.vars),
+            vars: VarStore::new(&def.vars).with_count_aggregate(has_count_aggregate(def)),
             def,
             emissions: Vec::with_capacity(64),
             matched_line_nums: Vec::new(),
@@ -2211,5 +2220,28 @@ pipeline:
         let result = run.finish();
         assert_eq!(result.vars["my_counter"], JsonValue::Number(40.into()), "declared var still updates normally");
         assert_eq!(result.vars["_count"], JsonValue::Number(4.into()), "count aggregate still totals independently of declared vars");
+    }
+
+    #[test]
+    fn reporter_without_count_aggregate_has_no_count_var() {
+        let d = def(r#"
+meta:
+  id: t
+  name: T
+vars:
+  - name: my_counter
+    type: int
+    default: 0
+pipeline:
+  - stage: script
+    runtime: rhai
+    src: |
+      vars.my_counter += 1;
+"#);
+        let mut run = ProcessorRun::new(&d);
+        run.process_line(&make_line("T", "msg", LogLevel::Info, 1), &PipelineContext::test_default());
+        let result = run.finish();
+        assert_eq!(result.vars["my_counter"], JsonValue::Number(1.into()));
+        assert!(!result.vars.contains_key("_count"), "stray _count in {:?}", result.vars);
     }
 }

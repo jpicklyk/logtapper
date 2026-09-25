@@ -125,6 +125,9 @@ impl TransitionFilter {
 impl StateTrackerDef {
     /// Distinct section names this tracker is configured to process, combining
     /// top-level `sections` and per-transition `filter.section` entries.
+    ///
+    /// Descriptive only (catalog metadata, result provenance). The tracker-wide
+    /// line gate uses `sections` alone — see `compute_tracker_section_ranges`.
     pub fn section_names(&self) -> Vec<&str> {
         let mut names: Vec<&str> = self.sections.iter().map(String::as_str).collect();
         for transition in &self.transitions {

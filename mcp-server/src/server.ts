@@ -1425,7 +1425,7 @@ server.tool(
 server.tool(
   "logtapper_run_pipeline",
   "Trigger a pipeline run on a session. Executes the session's configured " +
-    "processor chain (or a specified subset). Use this to generate pipeline " +
+    "processor chain. Use this to generate pipeline " +
     "results that can then be queried with logtapper_get_pipeline_results and " +
     "logtapper_get_processor_detail. This operation may take significant time " +
     "on large files (1M+ lines).\n\n" +
@@ -1435,8 +1435,10 @@ server.tool(
     "with no chain configured errors rather than running everything. Passing " +
     "processor_ids does NOT run them in isolation: they are ADDED to the " +
     "session's chain — visible in the app's Analyzers panel and persisted " +
-    "with the workspace — before the run executes. To configure the chain " +
-    "without triggering a run, use logtapper_chain instead. The response's " +
+    "with the workspace — and then the whole merged chain runs, so every " +
+    "chain member's results stay current (a run replaces the session's " +
+    "results). To configure the chain without triggering a run, use " +
+    "logtapper_chain instead. The response's " +
     "`effectiveProcessorIds` reports exactly which processors ran, so a " +
     "caller that passed no ids can see what was actually used.",
   {
@@ -1445,8 +1447,8 @@ server.tool(
       .array(z.string())
       .optional()
       .describe(
-        "Processor IDs to add to the session's chain and run. If omitted, runs the session's own " +
-          "configured chain — see the semantics note above."
+        "Processor IDs to add to the session's chain before running the whole chain. If omitted, " +
+          "runs the session's own configured chain — see the semantics note above."
       ),
   },
   async ({ session_id, processor_ids }) => {
@@ -1981,22 +1983,28 @@ server.tool(
 server.tool(
   "logtapper_processors",
   "Install, uninstall, or list installed processor packs. Use 'install' to " +
-    "install a single processor from a raw YAML string, 'uninstall' to remove " +
+    "install a single processor from a raw YAML string or from a YAML file " +
+    "path (the file must be inside the open-file allowlist, like any log " +
+    "file you open), 'uninstall' to remove " +
     "an installed processor by id, and 'packs' to list every installed " +
     "processor pack. To browse or install FROM a configured marketplace " +
     "source, use logtapper_marketplace instead — this tool is for a YAML the " +
     "caller already has in hand.",
   {
     action: z.enum(["install", "uninstall", "packs"]).describe("Action to perform"),
-    yaml: z.string().optional().describe("Raw processor YAML (required for 'install')"),
+    yaml: z.string().optional().describe("Raw processor YAML — pass this XOR path for 'install'"),
+    path: z
+      .string()
+      .optional()
+      .describe("Absolute path to a processor YAML file — pass this XOR yaml for 'install'. Re-installing from the same file keeps the installed copy in sync with it"),
     processor_id: z.string().optional().describe("Processor ID to uninstall (required for 'uninstall')"),
   },
-  async ({ action, yaml, processor_id }) => {
+  async ({ action, yaml, path, processor_id }) => {
     try {
       switch (action) {
         case "install": {
-          if (!yaml) return argError("yaml is required for 'install'");
-          return ok(await bridgePost<ProcessorSummary>("/mcp/processors/install", { yaml }));
+          if (!yaml === !path) return argError("exactly one of 'yaml' or 'path' is required for 'install'");
+          return ok(await bridgePost<ProcessorSummary>("/mcp/processors/install", yaml ? { yaml } : { path }));
         }
         case "uninstall": {
           if (!processor_id) return argError("processor_id is required for 'uninstall'");

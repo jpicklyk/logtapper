@@ -1641,6 +1641,57 @@ meta:
     }
 
     #[tokio::test]
+    async fn install_from_path_inside_the_allowlist() {
+        let (router, state, _sink, tmp) = app();
+        state
+            .mcp_open_allowlist
+            .lock()
+            .unwrap()
+            .allowed_dirs
+            .push(tmp.path().to_string_lossy().to_string());
+        let file = tmp.path().join("reporter.yaml");
+        std::fs::write(&file, MINIMAL_REPORTER).unwrap();
+
+        let (status, body) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/processors/install",
+            &trusted_headers(),
+            &json!({ "path": file.to_string_lossy() }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "install failed: {body}");
+        assert_eq!(body["id"], json!("wp9-test-reporter"));
+    }
+
+    #[tokio::test]
+    async fn install_from_path_outside_the_allowlist_is_forbidden() {
+        let (router, _state, _sink, _tmp) = app();
+        let outside = NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), MINIMAL_REPORTER).unwrap();
+
+        let (status, _) = send_json(
+            &router,
+            Method::POST,
+            "/mcp/processors/install",
+            &trusted_headers(),
+            &json!({ "path": outside.path().to_string_lossy() }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn install_with_both_or_neither_source_is_a_bad_request() {
+        let (router, _state, _sink, _tmp) = app();
+        for body in [json!({}), json!({ "yaml": MINIMAL_REPORTER, "path": "x.yaml" })] {
+            let (status, _) =
+                send_json(&router, Method::POST, "/mcp/processors/install", &trusted_headers(), &body).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "body {body}");
+        }
+    }
+
+    #[tokio::test]
     async fn install_then_uninstall_via_the_router() {
         let (router, _state, _sink, _tmp) = app();
         let (status, _) = send_json(
