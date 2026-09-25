@@ -4,7 +4,9 @@ import { createRoot, createSignal } from 'solid-js';
 import { createCacheBinding, OVERSCAN } from './cacheBinding';
 import { FetchScheduler } from '@viewport/FetchScheduler';
 import type { DataSource } from '@viewport/DataSource';
-import type { ViewLine } from '@bridge/types';
+import { createCacheDataSource } from '@viewport/CacheDataSource';
+import { ViewCacheHandle } from '@cache/CacheManager';
+import type { LinePage, ViewLine } from '@bridge/types';
 
 const ROW_H = 22;
 
@@ -431,6 +433,62 @@ describe('createCacheBinding', () => {
       h.setScrollTop(300 * ROW_H);
       expect(src.getLines.mock.calls.length).toBeGreaterThan(2);
 
+      h.dispose();
+    });
+  });
+
+  // ── Filtered view over scattered lines ("Show matched lines") ────────────
+  describe('filtered source with scattered line numbers', () => {
+    /** Matches spread across a large file: a dense burst, then one match every ~9k lines. */
+    const matched = [
+      ...Array.from({ length: 12 }, (_, i) => 116_714 + i),
+      ...Array.from({ length: 200 }, (_, i) => 130_000 + i * 9_000),
+    ];
+    const IMMEDIATE = { velocityThreshold: Number.POSITIVE_INFINITY, prefetchLines: 500 };
+
+    function filteredSource() {
+      const fetchLines = vi.fn((offset: number, count: number): Promise<LinePage> => Promise.resolve({
+        sessionId: 's', totalLines: 2_000_000, offset, count, truncated: false,
+        lines: Array.from({ length: count }, (_, i) => ({ lineNum: offset + i }) as ViewLine),
+      }));
+      const ds = createCacheDataSource({
+        sessionId: 's',
+        viewCache: new ViewCacheHandle(50_000),
+        fetchLines,
+        getLineNumbers: () => matched,
+      });
+      return { ds, fetchLines };
+    }
+
+    const settle = async () => { for (let i = 0; i < 5; i++) await flush(); };
+
+    function expectRowsLoaded(ds: DataSource, range: { start: number; end: number }) {
+      for (let row = range.start; row <= range.end; row++) {
+        expect(ds.getLine(row)?.lineNum, `row ${row}`).toBe(matched[row]);
+      }
+    }
+
+    it('fills every visible row on the first pass, with no scroll', async () => {
+      const { ds } = filteredSource();
+      const h = mount({ dataSource: ds, liveTotalLines: matched.length, schedulerConfig: IMMEDIATE });
+
+      await settle();
+
+      expectRowsLoaded(ds, h.binding.visibleRange()!);
+      h.dispose();
+    });
+
+    it('fills a far viewport after a jump, with no further scroll', async () => {
+      const { ds } = filteredSource();
+      const h = mount({ dataSource: ds, liveTotalLines: matched.length, schedulerConfig: IMMEDIATE });
+      await settle();
+
+      h.setScrollTop(150 * ROW_H);
+      await settle();
+
+      const range = h.binding.visibleRange()!;
+      expect(range.start).toBeGreaterThan(100);
+      expectRowsLoaded(ds, range);
       h.dispose();
     });
   });

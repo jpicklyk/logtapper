@@ -43,6 +43,57 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
   // Append subscribers (streaming mode — tail-mode auto-scroll)
   const _appendListeners = new Set<(newLines: ViewLine[], total: number) => void>();
 
+  /**
+   * Filtered mode: `ln` maps virtual index -> file line, and those file lines
+   * are usually scattered (a processor's matches, a filter's hits). The
+   * backend only serves contiguous ranges, so one range starting at the first
+   * missing line would load only the matches that happen to sit inside it,
+   * leaving the rest of the requested rows unloaded — and the cache binding
+   * issues one fetch per viewport, so those rows stayed skeletons until the
+   * user scrolled. Instead, fetch every missing line of the request, grouped
+   * into clusters of nearby lines (one contiguous range each), so a single
+   * `getLines` call loads every row it was asked for.
+   */
+  function getFilteredLines(ln: number[], offset: number, count: number): Promise<ViewLine[]> {
+    const end = Math.min(offset + count, ln.length);
+    const missing: number[] = [];
+    for (let idx = offset; idx < end; idx++) {
+      if (!viewCache.get(ln[idx])) missing.push(ln[idx]);
+    }
+    const collect = (): ViewLine[] => {
+      const out: ViewLine[] = [];
+      for (let idx = offset; idx < end; idx++) {
+        const line = viewCache.get(ln[idx]);
+        if (line) out.push(line);
+      }
+      return out;
+    };
+    if (missing.length === 0) return Promise.resolve(collect());
+
+    const ranges = clusterLines(missing, FILTERED_CLUSTER_GAP);
+    console.debug('[CacheDataSource] getLines: filtered miss → fetching', { sessionId, offset, count, missing: missing.length, ranges: ranges.length });
+    const gen = _fetchGen;
+    const stale = (): boolean => gen !== _fetchGen || _disposed;
+    // A prefetch window can span thousands of scattered matches, so the
+    // ranges are fetched by a small worker pool rather than all at once.
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < ranges.length && !stale()) {
+        const [from, n] = ranges[next++];
+        const page = await fetchLines(from, n);
+        if (!stale()) viewCache.put(page.lines);
+      }
+    };
+    const workers = Array.from({ length: Math.min(FILTERED_FETCH_CONCURRENCY, ranges.length) }, worker);
+    return Promise.all(workers).then(() => {
+      if (stale()) {
+        console.debug('[CacheDataSource] getLines: filtered fetch stale/disposed, discarding', { sessionId, gen, currentGen: _fetchGen, disposed: _disposed });
+        return [];
+      }
+      return collect();
+    });
+  }
+
   const source: CacheDataSource = {
     get totalLines(): number {
       const ln = getLineNumbers?.();
@@ -65,14 +116,12 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
 
     getLines(offset: number, count: number): Promise<ViewLine[]> {
       const ln = getLineNumbers?.();
-      // Scan prefix: collect cached lines until first miss or boundary
+      if (ln) return getFilteredLines(ln, offset, count);
+      // Scan prefix: collect cached lines until first miss
       const prefixLines: ViewLine[] = [];
       let firstMiss = -1;
       for (let i = 0; i < count; i++) {
-        const idx = offset + i;
-        const actualLine = ln ? ln[idx] : idx;
-        if (actualLine === undefined) break; // filtered/processor mode boundary
-        const line = viewCache.get(actualLine);
+        const line = viewCache.get(offset + i);
         if (line) {
           prefixLines.push(line);
         } else {
@@ -86,11 +135,7 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
       }
 
       // Fetch from firstMiss to end of requested range (skip cached prefix).
-      // In filtered mode, translate virtual index to actual file line number so
-      // the backend returns the correct lines (not a range at virtual position 0).
-      const virtualMissIdx = offset + firstMiss;
-      const fetchOffset = ln ? (ln[virtualMissIdx] ?? -1) : virtualMissIdx;
-      if (ln && fetchOffset === -1) return Promise.resolve(prefixLines);
+      const fetchOffset = offset + firstMiss;
       const rawFetchCount = count - firstMiss;
       // Minimum fetch size to avoid tiny IPC round-trips during progressive
       // indexing (totalLines grows by small increments, each triggering a
@@ -104,7 +149,7 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
           console.debug('[CacheDataSource] getLines: fetch stale/disposed, discarding', { sessionId, fetchOffset, gen, currentGen: _fetchGen, disposed: _disposed });
           return [];
         }
-        if (window.totalLines > _totalLines && !getLineNumbers?.()) {
+        if (window.totalLines > _totalLines) {
           _totalLines = window.totalLines;
         }
         console.debug('[CacheDataSource] getLines: put', { sessionId, fetchOffset, lines: window.lines.length, cacheSize: viewCache.size });
@@ -145,6 +190,37 @@ export function createCacheDataSource(options: CacheDataSourceOptions): CacheDat
   registry?.register(sessionId, source);
 
   return source;
+}
+
+/**
+ * Two missing filtered lines at most this far apart share one fetch. Fetching
+ * the lines in between costs far less than another IPC round-trip, but a much
+ * larger gap would fill the bounded cache with lines the view never shows.
+ */
+export const FILTERED_CLUSTER_GAP = 64;
+
+/** How many filtered-mode range fetches run at once. */
+export const FILTERED_FETCH_CONCURRENCY = 8;
+
+/**
+ * Group ascending file line numbers into contiguous fetch ranges: a new range
+ * starts whenever the next line is more than `maxGap` past the previous one.
+ * Returns `[offset, count]` pairs covering every input line.
+ */
+export function clusterLines(lines: readonly number[], maxGap: number): [number, number][] {
+  const ranges: [number, number][] = [];
+  let start = lines[0];
+  let prev = lines[0];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line - prev > maxGap) {
+      ranges.push([start, prev - start + 1]);
+      start = line;
+    }
+    prev = line;
+  }
+  if (lines.length > 0) ranges.push([start, prev - start + 1]);
+  return ranges;
 }
 
 /** Extended DataSource with cache-specific control methods. */
