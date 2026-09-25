@@ -1,6 +1,6 @@
 {
   "name": "official",
-  "version": 12,
+  "version": 13,
   "owner": {
     "name": "LogTapper"
   },
@@ -836,6 +836,124 @@
         "dumpstate"
       ],
       "deprecated": false
+    },
+    {
+      "id": "nfc-state",
+      "name": "NFC State",
+      "version": "0.3.0",
+      "description": "Tracks NFC adapter and RF state through the log: adapter state, screen state as NFC sees it, RF discovery (polling) on/off, reader-mode owner and flags, tag present, remote (reader) field, and whether listen (card emulation) is programmed. Answers 'was NFC even on and polling when the tap failed?'. Emits one row per state change carrying the full state, so the state at any line is the last row at or before it. Reader mode is released when its owning app goes to the background, as AOSP does without logging a flags: 0 call. Covers AOSP NfcService/libnfc_nci and the Samsung [NFC_SE] extension; the dumpsys nfc snapshot (mState/mScreenState) is applied last.",
+      "path": "processors/nfc_state.yaml",
+      "tags": [
+        "nfc",
+        "android",
+        "samsung"
+      ],
+      "sha256": "",
+      "category": "connectivity",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": [
+        "logcat",
+        "bugreport",
+        "dumpstate"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "nfc-tag-sessions",
+      "name": "NFC Tag Sessions",
+      "version": "0.1.3",
+      "description": "One row per tag/card session in reader-writer mode (tag discovered -> tag gone): RF technology and protocol, how the tag was delivered (reader mode and which app held it, intent dispatch, or unknown), transceive count and failures, presence-check count, reconnects, how the session ended and how long it lasted. Separates 'card left the field' (presence check failed after a completed exchange) from 'exchange never completed'. Needs libnfc_nci debug logging for tech/transceive detail; session start/end come from NfcService and are always present.",
+      "path": "processors/nfc_tag_sessions.yaml",
+      "tags": [
+        "nfc",
+        "tag",
+        "reader-mode",
+        "android"
+      ],
+      "sha256": "",
+      "category": "connectivity",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": [
+        "logcat",
+        "bugreport",
+        "dumpstate"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "nfc-card-emulation",
+      "name": "NFC Card Emulation",
+      "version": "0.1.4",
+      "description": "Card-emulation (phone-as-card) activity: remote reader field on/off sessions with dwell time (from the dumpsys nfc Nfc Event Log, which outlives the logcat window, plus live NfcService field messages), HCE activation, SELECT AIDs routed to a service or rejected as unregistered (6A82), payment-service binding, and AID routing-table commits. Event-log field and HCE rows need nfc persist-log (and field rows vendor debug) enabled, so their absence proves nothing. A field that comes and goes in tens of milliseconds with no HCE activation means a reader was polling the phone but never selected an application — the answer to 'did the terminal even reach the phone?'.",
+      "path": "processors/nfc_card_emulation.yaml",
+      "tags": [
+        "nfc",
+        "hce",
+        "card-emulation",
+        "payment",
+        "android"
+      ],
+      "sha256": "",
+      "category": "connectivity",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": [
+        "logcat",
+        "bugreport",
+        "dumpstate"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "nfc-stack-health",
+      "name": "NFC Stack Health",
+      "version": "0.1.6",
+      "description": "Buckets NFC faults by layer (kernel driver, HAL, NCI stack, framework, eSE) and classifies each as expected (a known-benign pattern such as the controller NACKing the first I2C write while in standby) or a fault. Tracks enable-to-ready latency and disable/enable cycles. Faults concentrated in kernel/HAL point at the controller, firmware or bus; faults concentrated in the framework point at software. Reads logcat, dmesg and the Samsung /proc/nfclog section. Covers NXP (sec_nfc/nxp HAL) and ST (st21nfc/StNfcHal) controllers.",
+      "path": "processors/nfc_stack_health.yaml",
+      "tags": [
+        "nfc",
+        "hal",
+        "kernel",
+        "hardware",
+        "samsung",
+        "android"
+      ],
+      "sha256": "",
+      "category": "connectivity",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": [
+        "logcat",
+        "kernel",
+        "bugreport",
+        "dumpstate"
+      ],
+      "deprecated": false
+    },
+    {
+      "id": "nfc-config-snapshot",
+      "name": "NFC Config Snapshot",
+      "version": "0.1.0",
+      "description": "Capture-time NFC configuration from dumpsys nfc and the Samsung nfc extension dump: adapter and screen state, secure NFC, poll/listen tech masks, controller firmware, AID routing table fill (used/max), default route, wallet role and payment service, and a count of each Nfc Event Log event type (state changes, reader-mode changes, remote field on/off, AID registrations). Also surfaces controller errors recorded in the Samsung extension's persistent debug log, which survives across the logcat window.",
+      "path": "processors/nfc_config_snapshot.yaml",
+      "tags": [
+        "nfc",
+        "dumpsys",
+        "config",
+        "samsung",
+        "android"
+      ],
+      "sha256": "",
+      "category": "connectivity",
+      "license": null,
+      "processor_type": "reporter",
+      "source_types": [
+        "bugreport",
+        "dumpstate"
+      ],
+      "deprecated": false
     }
   ],
   "packs": [
@@ -994,6 +1112,31 @@
         "usb-netdev-lifetime",
         "ethernet-config-audit",
         "ethernet-interface-flap"
+      ],
+      "sha256": ""
+    },
+    {
+      "id": "nfc-diagnostics",
+      "name": "NFC Diagnostics",
+      "version": "1.0.0",
+      "description": "NFC analysis — adapter and RF state, reader-mode tag sessions, card-emulation field/HCE/AID routing, layered stack health (kernel, HAL, NCI, framework, eSE) with benign-pattern classification for NXP and ST controllers, and the dumpsys nfc capture-time snapshot",
+      "path": "packs/nfc-diagnostics.pack.yaml",
+      "tags": [
+        "nfc",
+        "hce",
+        "reader-mode",
+        "hal",
+        "kernel",
+        "samsung",
+        "android"
+      ],
+      "category": "connectivity",
+      "processor_ids": [
+        "nfc-state",
+        "nfc-tag-sessions",
+        "nfc-card-emulation",
+        "nfc-stack-health",
+        "nfc-config-snapshot"
       ],
       "sha256": ""
     }

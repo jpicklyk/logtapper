@@ -1,0 +1,459 @@
+meta:
+  id: "nfc-stack-health"
+  name: "NFC Stack Health"
+  version: "0.1.6"
+  author: "LogTapper"
+  description: "Buckets NFC faults by layer (kernel driver, HAL, NCI stack, framework, eSE) and classifies each as expected (a known-benign pattern such as the controller NACKing the first I2C write while in standby) or a fault. Tracks enable-to-ready latency and disable/enable cycles. Faults concentrated in kernel/HAL point at the controller, firmware or bus; faults concentrated in the framework point at software. Reads logcat, dmesg and the Samsung /proc/nfclog section. Covers NXP (sec_nfc/nxp HAL) and ST (st21nfc/StNfcHal) controllers."
+  tags: ["nfc", "hal", "kernel", "hardware", "samsung", "android"]
+  category: connectivity
+
+sections:
+  - "SYSTEM LOG"
+  - "KERNEL LOG"
+  - "NFC SYSTEM LOG"
+  - "nfc SamsungExtension"
+
+vars:
+  - name: faults
+    type: int
+    default: 0
+    display: true
+    label: "Faults"
+  - name: expected
+    type: int
+    default: 0
+    display: true
+    label: "Expected / Benign Events"
+  - name: enables
+    type: int
+    default: 0
+    display: true
+    label: "NFC Enable Cycles"
+  - name: last_enable_ms
+    type: int
+    default: -1
+    display: true
+    label: "Last Enable Latency (ms)"
+  - name: clk_req_events
+    type: int
+    default: 0
+    display: true
+    label: "clk_req Driver Events (NXP)"
+  - name: fault_layers
+    type: map
+    default: {}
+    display: true
+    label: "Faults by Layer"
+    display_as: table
+    columns: ["layer", "count"]
+  - name: kind_counts
+    type: map
+    default: {}
+    display: true
+    label: "Events by Kind"
+    display_as: table
+    columns: ["kind", "count"]
+  - name: _enable_ts
+    type: int
+    default: 0
+  - name: _dumpstate_spi_ts
+    type: int
+    default: 0
+  - name: _seen
+    type: map
+    default: {}
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values:
+          # ── kernel driver (dmesg "sec_nfc:" and /proc/nfclog) ──
+          - "i2c_write: write failed ret("
+          - "i2c_write: irq high during write"
+          - "i2c_read: err wakeup of wq"
+          - "i2c_master_send returned"
+          - "i2c_master_recv returned"
+          - "clk_req w:"
+          - "perform_cold_reset_protection: invalid cmd"
+          # ── HAL ──
+          - "i2cRead returns"
+          - "NCI_CORE_RESET_NTF received"
+          # NXP HAL (hardware/nxp/nfc snxxx, tag NxpHal)
+          - "write_unlocked failed - NFCC Maybe in Standby Mode"
+          - "hal_extns_write_rsp_timeout_cb - write timeout"
+          - "Callback Status is failed!! Timer Expired"
+          - "NFC FW reset triggered"
+          - "Core reset with Invalid status"
+          - "abort()"
+          - "FW Recovery is required"
+          - "Communication error, Need FW Recovery"
+          - "NCI_CORE_RESET: Failed"
+          - "NCI_CORE_RESET failed"
+          # ST HAL (hardware/st/nfc st21nfc/, all under tag StNfcHal)
+          - "Reset trigger from 0x"
+          - "Core Generic Error - restart"
+          - "Clock Error - restart"
+          - "NFC Recovery Start"
+          - "Error Act -> Act count"
+          - "Timeout accessing the CLF"
+          - "Timer for FW update procedure timeout"
+          - "Timer when sending conf parameters"
+          - "Timeout.. Recover!"
+          - "Timeout at state"
+          - "Error exiting loader mode"
+          - "Reached maximum nb of retries, FW update failed"
+          - "didn't read 3 requested bytes from i2c"
+          - "didn't read expected bytes from i2c"
+          - "error in poll call"
+          - "trigger NFCC reset"
+          - "received bigger data than expected"
+          - "write on i2c failed, retrying"
+          - "Something went horribly wrong"
+          # st21nfc kernel driver
+          - "received too many bytes from i2c"
+          - "Recovery Request"
+          # ── NCI stack (libnfc_nci) ──
+          - "nfc_ncif_proc_reset_rsp: reset notification"
+          - "NFA_DM_NFCC_TIMEOUT_EVT"
+          - "NFA_DM_NFCC_TRANSPORT_ERR_EVT"
+          # libnfc-nci NCI command timeout (logs only the function name)
+          - "nfc_ncif_cmd_timeout"
+          - "toggle NFC state to recovery nfc"
+          - "Failed to reset NFCC"
+          - "Fail to register system code"
+          # ── framework ──
+          - "Enabling NFC"
+          - "enableInternal: end"
+          - "bindPaymentServiceLocked: Could not bind"
+          - "onServiceConnected: Payment service bound"
+          - "onNfcControllerError"
+          - "RF Field is disabled"
+          # ── eSE (SPI) ──
+          - "SPI is opened by /system/bin/dumpstate"
+          - "SPI is released by /system/bin/dumpstate"
+          - "_spi_read() [HDR]errno"
+          - "Select Failed"
+
+  - stage: extract
+    fields:
+      - name: errno
+        pattern: '(?:ret\(|returned |returns )(-\d+)'
+        cast: string
+      - name: reset_reason
+        pattern: 'reset notification!!=0x([0-9a-fA-F]+)'
+        cast: string
+      - name: controller_error
+        pattern: 'onNfcControllerError: (.+)$'
+        cast: string
+      # kernel uptime to the millisecond; dmesg and /proc/nfclog carry the
+      # same driver event with timestamps a few microseconds apart
+      - name: uptime_ms
+        pattern: '\[\s*(\d+\.\d{3})\d*\]'
+        cast: string
+
+  - stage: script
+    runtime: rhai
+    src: |
+      let msg = line.message;
+      let ts = line.timestamp;
+
+      // clk_req is logged per clock request by the NXP driver (≈5/s while
+      // the controller is active). Counted, never emitted.
+      if "clk_req w:" in msg {
+        vars.clk_req_events += 1;
+        return;
+      }
+
+      // ── enable latency / cycles ─────────────────────────────────────────
+      if "Enabling NFC" in msg {
+        vars.enables += 1;
+        vars._enable_ts = ts;
+        return;
+      }
+      if "enableInternal: end" in msg {
+        if vars._enable_ts > 0 && ts > vars._enable_ts {
+          vars.last_enable_ms = (ts - vars._enable_ts) / 1000000;
+        }
+        vars._enable_ts = 0;
+        return;
+      }
+
+      // dumpstate itself opens the eSE SPI (via system_server) to pull the DPD
+      // log; eSE errors within 10 s of that access are caused by the capture,
+      // not the device. Errors land both inside and just after each open/release.
+      if "SPI is opened by /system/bin/dumpstate" in msg || "SPI is released by /system/bin/dumpstate" in msg {
+        vars._dumpstate_spi_ts = ts;
+        return;
+      }
+
+      let layer = "";
+      let kind = "";
+      let cls = "fault";
+      let errno = if "errno" in fields { fields.errno } else { "" };
+
+      // ST HAL (hardware/st/nfc st21nfc/) lines, all logged under tag StNfcHal
+      let st_markers = ["Reset trigger from 0x", "Core Generic Error - restart", "Clock Error - restart",
+                        "NFC Recovery Start", "Error Act -> Act count", "Timeout accessing the CLF",
+                        "Timer for FW update procedure timeout", "Timer when sending conf parameters",
+                        "Timeout.. Recover!", "Timeout at state", "Error exiting loader mode",
+                        "FW update failed", "didn't read", "error in poll call", "trigger NFCC reset",
+                        "received bigger data than expected", "write on i2c failed, retrying",
+                        "Something went horribly wrong"];
+      let st_hit = false;
+      if "StNfcHal" in line.tag {
+        for m in st_markers {
+          if m in msg { st_hit = true; break; }
+        }
+      }
+
+      // Classifiers are flat, first-match-wins blocks (each guarded by
+      // layer == ""): a long else-if chain exceeds Rhai's parse depth limit.
+      if "i2c_write: write failed" in msg {
+        // NXP: the controller NACKs the first write while in standby
+        // (-107 ENOTCONN / -6 ENXIO) and the driver retries after waking it.
+        layer = "kernel"; kind = "i2c-write-standby-nack";
+        if errno == "-107" || errno == "-6" { cls = "expected"; }
+      }
+      if layer == "" && ("irq high during write" in msg) {
+        layer = "kernel"; kind = "i2c-irq-high-during-write"; cls = "expected";
+      }
+      if layer == "" && ("err wakeup of wq" in msg) {
+        // read wait interrupted by suspend — pairs with a suspend/resume
+        layer = "kernel"; kind = "i2c-read-wakeup-interrupted"; cls = "expected";
+      }
+      if layer == "" && ("i2c_master_send returned" in msg || "i2c_master_recv returned" in msg) {
+        // ST: same standby wake pattern, -6 ENXIO
+        layer = "kernel"; kind = if "send" in msg { "i2c-send-error" } else { "i2c-recv-error" };
+        if errno == "-6" { cls = "expected"; }
+      }
+      if layer == "" && ("perform_cold_reset_protection: invalid cmd" in msg) {
+        layer = "kernel"; kind = "ese-cold-reset-protection-noop"; cls = "expected";
+      }
+      if layer == "" && ("i2cRead returns" in msg) {
+        // ST HAL retries every read error up to 3 times; ENXIO right after the
+        // HAL-open reset pulse is the normal wake. Exhaustion logs "didn't read
+        // 3 requested bytes" (below), which is the actual failure.
+        layer = "hal"; kind = "hal-i2c-read-retry";
+        cls = if errno == "-1" && "errno 6" in msg { "expected" } else { "transient" };
+      }
+      if layer == "" && ("NCI_CORE_RESET_NTF received" in msg) {
+        // ST ft_cmd_HwReset: Router/Loader mode NTF after the reset pulse at
+        // every HAL open is expected; "ERROR: wrong NCI_CORE_RESET_NTF" is not.
+        layer = "hal"; kind = "hal-core-reset-ntf";
+        if "wrong" in msg {
+          kind = "hal-wrong-core-reset-ntf";
+        } else if "after HW Reset" in msg || "after MODE set" in msg {
+          cls = "expected";
+        }
+      }
+      if layer == "" && (st_hit) {
+        layer = "hal";
+        if "Reset trigger from 0x" in msg {
+          kind = "hal-nfcc-crash-reset";           // CORE_RESET_NTF while READY
+        } else if "Core Generic Error" in msg {
+          kind = "hal-nfcc-buffer-overflow";       // generic error 0xE1
+        } else if "Clock Error" in msg {
+          kind = "hal-nfcc-clock-error";           // generic error 0xE6
+        } else if "NFC Recovery Start" in msg {
+          kind = "hal-rw-error-recovery";          // >20 active-RW errors
+        } else if "Error Act -> Act count" in msg {
+          kind = "hal-rw-activation-error"; cls = "transient";
+        } else if "Timeout accessing the CLF" in msg {
+          kind = "hal-open-timeout";               // abort() on older HALs
+        } else if "FW update procedure timeout" in msg || "Error exiting loader mode" in msg || "FW update failed" in msg {
+          kind = "hal-fw-update-failed";
+        } else if "sending conf parameters" in msg {
+          kind = "hal-config-timeout";             // followed by abort()
+        } else if "Timeout.. Recover!" in msg || "Timeout at state" in msg {
+          kind = "hal-nci-rsp-timeout";
+        } else if "didn't read" in msg || "received bigger data" in msg {
+          kind = "hal-i2c-read-failed";
+        } else if "error in poll call" in msg {
+          kind = "hal-i2c-poll-error";
+        } else if "trigger NFCC reset" in msg {
+          kind = "hal-nfcc-reset-requested";
+        } else if "write on i2c failed, retrying" in msg {
+          kind = "hal-i2c-write-retry"; cls = "transient";
+        } else {
+          kind = "hal-internal-error";
+        }
+      }
+      if layer == "" && ("received too many bytes from i2c" in msg) {
+        layer = "kernel"; kind = "i2c-read-overrun";
+      }
+      if layer == "" && ("Recovery Request" in msg) {
+        // st21nfc driver recovery pulse, requested by the HAL after a fault
+        // that is already counted at the HAL layer
+        if !("st21nfc" in msg || "nfc" in line.tag) && line.tag != "" { return; }
+        layer = "kernel"; kind = "nfcc-recovery-pulse"; cls = "info";
+      }
+      if layer == "" && ("write_unlocked failed - NFCC Maybe in Standby Mode" in msg) {
+        // "- Retry" is the normal standby wake; "(max count" means retries
+        // were exhausted and the HAL is about to reset the NFCC.
+        layer = "hal"; kind = if "max count" in msg { "hal-write-retries-exhausted" } else { "hal-write-standby-retry" };
+        if !("max count" in msg) { cls = "expected"; }
+      }
+      if layer == "" && ("hal_extns_write_rsp_timeout_cb" in msg || "Timer Expired" in msg) {
+        layer = "hal"; kind = "hal-nci-rsp-timeout";
+      }
+      if layer == "" && ("NFC FW reset triggered" in msg || "Core reset with Invalid status" in msg) {
+        layer = "hal"; kind = "hal-nfcc-crash-reset";
+      }
+      if layer == "" && ("abort()" in msg) {
+        if !("NxpHal" in line.tag) { return; }
+        layer = "hal"; kind = "hal-abort";
+      }
+      if layer == "" && ("FW Recovery is required" in msg || "Need FW Recovery" in msg) {
+        layer = "hal"; kind = "hal-fw-recovery";
+      }
+      if layer == "" && ("NCI_CORE_RESET: Failed" in msg || "NCI_CORE_RESET failed" in msg || "Failed to reset NFCC" in msg) {
+        layer = if "Failed to reset NFCC" in msg { "nci" } else { "hal" };
+        kind = "core-reset-failed";
+      }
+      if layer == "" && ("nfc_ncif_cmd_timeout" in msg) {
+        layer = "nci"; kind = "nci-cmd-timeout";
+      }
+      if layer == "" && ("toggle NFC state to recovery" in msg) {
+        layer = "nci"; kind = "nfc-recovery-toggle";
+      }
+      if layer == "" && ("reset notification" in msg) {
+        layer = "nci"; kind = "nci-core-reset-ntf";
+        // NCI 2.x reset trigger: 0x01 powered on, 0x02 CORE_RESET_CMD received
+        // (expected); anything else starts recovery in libnfc-nci. NXP vendor
+        // triggers: 0xA0 FW assert, 0xA3 watchdog, 0xA4 input clock lost.
+        if "reset_reason" in fields {
+          let r = fields.reset_reason.to_lower();
+          // 0 generic; NXP a0/a3/a4; ST HAL synthetic triggers aa-af, ba, e1, e6
+          let names = #{ "0": "unrecoverable", "a0": "fw-assert (NXP)", "a3": "watchdog (NXP)", "a4": "clock-lost (NXP)",
+                         "aa": "rsp-timeout (ST)", "ab": "hibernate-exit-timeout (ST)", "ac": "open-cplt-timeout (ST)",
+                         "ad": "custom-param-timeout (ST)", "ae": "fw-update-timeout (ST)", "af": "open-timeout (ST)",
+                         "ba": "recovery-timeout (ST)", "e1": "buffer-overflow (ST)", "e6": "clock-error (ST)" };
+          kind = "nci-core-reset-ntf-0x" + r;
+          if r in names { kind = kind + " (" + names[r] + ")"; }
+          if r == "1" || r == "2" || r == "01" || r == "02" { cls = "expected"; }
+        }
+      }
+      if layer == "" && ("NFA_DM_NFCC_TIMEOUT_EVT" in msg) {
+        layer = "nci"; kind = "nfcc-timeout";
+      }
+      if layer == "" && ("NFA_DM_NFCC_TRANSPORT_ERR_EVT" in msg) {
+        layer = "nci"; kind = "nfcc-transport-error";
+      }
+      if layer == "" && ("Fail to register system code" in msg) {
+        layer = "nci"; kind = "system-code-route-rejected"; cls = "config";
+      }
+      if layer == "" && ("bindPaymentServiceLocked: Could not bind" in msg) {
+        layer = "framework"; kind = "payment-service-bind-failed"; cls = "transient";
+      }
+      if layer == "" && ("Payment service bound" in msg) {
+        layer = "framework"; kind = "payment-service-bound"; cls = "expected";
+      }
+      if layer == "" && ("onNfcControllerError" in msg) {
+        layer = "framework"; kind = "controller-error";
+        if "controller_error" in fields { kind = "controller-error: " + fields.controller_error; }
+      }
+      if layer == "" && ("RF Field is disabled" in msg) {
+        layer = "framework"; kind = "samsung-fld-error-report"; cls = "info";
+      }
+      if layer == "" && ("_spi_read() [HDR]errno" in msg || "Select Failed" in msg) {
+        layer = "ese"; kind = if "Select" in msg { "ese-select-failed" } else { "ese-spi-read-error" };
+        if vars._dumpstate_spi_ts > 0 && ts >= vars._dumpstate_spi_ts && ts - vars._dumpstate_spi_ts < 10000000000 {
+          cls = "expected"; kind = kind + " (dumpstate-induced)";
+        }
+      }
+      // No classifier matched this line.
+      if layer == "" { return; }
+
+      // Samsung dumpstates hold each driver event twice (KERNEL LOG and
+      // NFC SYSTEM LOG); count it once.
+      if layer == "kernel" && "uptime_ms" in fields {
+        let key = kind + "@" + fields.uptime_ms;
+        let seen = vars._seen;
+        if key in seen { return; }
+        seen[key] = true;
+        vars._seen = seen;
+      }
+
+      let kc = vars.kind_counts;
+      if kind in kc { kc[kind] = kc[kind] + 1; } else { kc[kind] = 1; }
+      vars.kind_counts = kc;
+
+      if cls == "fault" {
+        vars.faults += 1;
+        let fl = vars.fault_layers;
+        if layer in fl { fl[layer] = fl[layer] + 1; } else { fl[layer] = 1; }
+        vars.fault_layers = fl;
+      } else if cls == "expected" {
+        vars.expected += 1;
+      }
+
+      _emits.push(#{
+        layer: layer,
+        kind: kind,
+        class: cls,
+        errno: if errno == "" { "none" } else { errno },
+      });
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["layer", "kind", "class", "errno"]
+      - type: summary
+        source: vars
+        template: |
+          {{faults}} NFC faults, {{expected}} expected/benign events. {{enables}} enable cycle(s), last enable latency {{last_enable_ms}} ms.
+          NXP clk_req driver events: {{clk_req_events}}
+    charts:
+      - id: layer_bar
+        type: bar
+        title: "NFC Events by Layer"
+        source: emissions
+        x: { field: layer, label: "Layer" }
+        y: { field: layer, label: "Count", aggregation: count }
+      - id: class_bar
+        type: bar
+        title: "NFC Events by Class"
+        source: emissions
+        x: { field: class, label: "Class" }
+        y: { field: class, label: "Count", aggregation: count }
+
+schema:
+  source_types: ["logcat", "kernel", "bugreport", "dumpstate"]
+  emissions:
+    - name: layer
+      type: string
+      description: "kernel | hal | nci | framework | ese"
+    - name: kind
+      type: string
+      description: "Specific event, e.g. i2c-write-standby-nack, nci-core-reset-ntf-0xa3 (watchdog (NXP)), nci-core-reset-ntf-0xaa (rsp-timeout (ST)), nci-cmd-timeout, nfcc-timeout, hal-nfcc-crash-reset, hal-open-timeout"
+    - name: class
+      type: string
+      description: "fault | expected | transient | config | info"
+    - name: errno
+      type: string
+      description: "errno/return code on the line, or 'none'"
+  mcp:
+    summary:
+      template: "{{faults}} NFC faults ({{fault_layers}}), {{expected}} expected/benign events. {{enables}} enable cycle(s); last enable latency {{last_enable_ms}} ms."
+      include_vars: [faults, expected, enables, last_enable_ms, fault_layers, kind_counts]
+    signals:
+      - name: nfc_faults
+        severity: critical
+        condition: "faults > 0"
+        fields: [faults, fault_layers]
+        format: "{{faults}} NFC stack faults by layer: {{fault_layers}} — kernel/hal/nci concentration points at the controller, firmware or bus; framework concentration points at software"
+        type: aggregate
+      - name: enable_cycles
+        severity: warning
+        condition: "enables > 2"
+        fields: [enables]
+        format: "NFC was enabled {{enables}} times in this capture — repeated disable/enable is a recovery loop or user toggling"
+        type: aggregate
+      - name: slow_enable
+        severity: warning
+        condition: "last_enable_ms > 3000"
+        fields: [last_enable_ms]
+        format: "NFC enable took {{last_enable_ms}} ms (Enabling NFC -> enableInternal: end)"
+        type: aggregate

@@ -1,0 +1,375 @@
+meta:
+  id: "nfc-card-emulation"
+  name: "NFC Card Emulation"
+  version: "0.1.4"
+  author: "LogTapper"
+  description: "Card-emulation (phone-as-card) activity: remote reader field on/off sessions with dwell time (from the dumpsys nfc Nfc Event Log, which outlives the logcat window, plus live NfcService field messages), HCE activation, SELECT AIDs routed to a service or rejected as unregistered (6A82), payment-service binding, and AID routing-table commits. Event-log field and HCE rows need nfc persist-log (and field rows vendor debug) enabled, so their absence proves nothing. A field that comes and goes in tens of milliseconds with no HCE activation means a reader was polling the phone but never selected an application — the answer to 'did the terminal even reach the phone?'."
+  tags: ["nfc", "hce", "card-emulation", "payment", "android"]
+  category: connectivity
+
+sections:
+  - "SYSTEM LOG"
+  - "nfc"
+
+vars:
+  - name: field_sessions
+    type: int
+    default: 0
+    display: true
+    label: "Remote Field Sessions"
+  - name: short_field_sessions
+    type: int
+    default: 0
+    display: true
+    label: "Field Sessions < 100 ms"
+  - name: longest_field_ms
+    type: int
+    default: -1
+    display: true
+    label: "Longest Field Session (ms)"
+  - name: hce_activations
+    type: int
+    default: 0
+    display: true
+    label: "HCE Activations"
+  - name: aids_routed
+    type: int
+    default: 0
+    display: true
+    label: "SELECTs Routed to a Service"
+  - name: aids_unrouted
+    type: int
+    default: 0
+    display: true
+    label: "Unregistered AIDs (6A82)"
+  - name: unrouted_aid_counts
+    type: map
+    default: {}
+    display: true
+    label: "Unregistered AIDs"
+    display_as: table
+    columns: ["aid", "count"]
+  - name: offhost_misrouted
+    type: int
+    default: 0
+    display: true
+    label: "Off-host AIDs Routed to Host"
+  - name: routing_commits
+    type: int
+    default: 0
+    display: true
+    label: "Routing Commits"
+  - name: routing_commit_failures
+    type: int
+    default: 0
+    display: true
+    label: "Routing Commit Failures"
+  - name: aid_conflicts_ignored
+    type: int
+    default: 0
+    display: true
+    label: "Exact AIDs Shadowed by Prefix (benign)"
+  - name: payment_bind_failures
+    type: int
+    default: 0
+    display: true
+    label: "Payment Service Bind Failures"
+  - name: payment_bound
+    type: int
+    default: 0
+    display: true
+    label: "Payment Service Bound"
+  - name: orphan_field_off
+    type: int
+    default: 0
+    display: true
+    label: "Field-off Without Field-on (event log)"
+  # Oldest/newest are taken in row order, which is the event log's append
+  # order. Min/max by timestamp would be wrong: rows written early in boot are
+  # stamped in UTC before the timezone is applied, so they read hours "later"
+  # than the local-time rows that follow them.
+  - name: oldest_field_event
+    type: string
+    default: ""
+    display: true
+    label: "Oldest Field Event (event log)"
+  - name: newest_field_event
+    type: string
+    default: ""
+    display: true
+    label: "Newest Field Event (event log)"
+  - name: field_clock_jumps
+    type: int
+    default: 0
+    display: true
+    label: "Backward Clock Jumps Between Field Rows"
+  - name: _prev_field_time
+    type: string
+    default: ""
+  - name: _field_on_ms
+    type: int
+    default: -1
+  - name: _field_on_ts
+    type: int
+    default: 0
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values:
+          # dumpsys nfc Nfc Event Log (Android 15+)
+          - "remote_field_state_change { field_on: "
+          # live logcat
+          - "MSG_RF_FIELD_ACTIVATED"
+          - "MSG_RF_FIELD_DEACTIVATED"
+          # HostEmulationManager (AOSP; Samsung tags it NfcHostEmulationManager)
+          - "onHostEmulationActivated"
+          - "onHostEmulationData: Can't handle AID"
+          - "onHostEmulationData: Can't route NDEF AID"
+          - "onHostEmulationData: Screen is off, sending AID_NOT_FOUND"
+          - "onHostEmulationData: Send data to existing service"
+          - "onHostEmulationData: Waiting for new service"
+          - "AID that was meant to go off-host was"
+          # event-log rows (event.proto)
+          - "host_card_emulation_state_change {"
+          - "ce_unroutable_aid {"
+          - "ce_routed_aid {"
+          - "onRoutingChangeComplete: "
+          - "MSG_COMMIT_ROUTING"
+          - "generateServiceMapLocked: Ignoring exact AID"
+          - "bindPaymentServiceLocked: Could not bind"
+          - "Payment service bound"
+
+  - stage: extract
+    fields:
+      - name: hh
+        pattern: '^\d{4}-\d\d-\d\d (\d\d):\d\d:\d\d\.\d+:'
+        cast: int
+      - name: mi
+        pattern: '^\d{4}-\d\d-\d\d \d\d:(\d\d):\d\d\.\d+:'
+        cast: int
+      - name: ss
+        pattern: '^\d{4}-\d\d-\d\d \d\d:\d\d:(\d\d)\.\d+:'
+        cast: int
+      - name: ms
+        pattern: '^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.(\d{3})'
+        cast: int
+      - name: evt_time
+        pattern: '^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+):'
+        cast: string
+      - name: field_on
+        pattern: 'field_on: (true|false)'
+        cast: string
+      - name: hce_aid
+        pattern: "Can't handle AID (\\S+)"
+        cast: string
+      - name: el_aid
+        pattern: 'aid: "([0-9A-Fa-f]+)"'
+        cast: string
+      - name: routing_status
+        pattern: 'onRoutingChangeComplete: (-?\d+)'
+        cast: int
+
+  - stage: script
+    runtime: rhai
+    src: |
+      let msg = line.message;
+      let ts = line.timestamp;
+
+      // ── Remote field from the dumpsys event log (own wall clock) ────────
+      if "remote_field_state_change" in msg {
+        // The event log can span days and several boots: report its span so it
+        // is not mistaken for the logcat window. Row order is append order;
+        // a row older than the one before it is a clock jump (UTC boot stamp).
+        let evt = if "evt_time" in fields { fields.evt_time } else { "" };
+        if evt != "" {
+          if vars.oldest_field_event == "" { vars.oldest_field_event = evt; }
+          vars.newest_field_event = evt;
+          if vars._prev_field_time != "" && evt < vars._prev_field_time {
+            vars.field_clock_jumps += 1;
+          }
+          vars._prev_field_time = evt;
+        }
+        let t = -1;
+        if "hh" in fields && "mi" in fields && "ss" in fields && "ms" in fields {
+          t = ((fields.hh * 60 + fields.mi) * 60 + fields.ss) * 1000 + fields.ms;
+        }
+        if "field_on" in fields && fields.field_on == "true" {
+          vars._field_on_ms = t;
+          return;
+        }
+        // A contact that spans midnight: the off row's time-of-day wraps.
+        if vars._field_on_ms >= 0 && t >= 0 && t < vars._field_on_ms && vars._field_on_ms - t > 43200000 {
+          t += 86400000;
+        }
+        // field_on: false with no preceding true (listen stopped, reboot), or
+        // an off row that is earlier than its on row (clock jump between them)
+        if vars._field_on_ms < 0 || t < vars._field_on_ms {
+          vars.orphan_field_off += 1;
+          vars._field_on_ms = -1;
+          return;
+        }
+        let dur = t - vars._field_on_ms;
+        vars._field_on_ms = -1;
+        vars.field_sessions += 1;
+        if dur < 100 { vars.short_field_sessions += 1; }
+        if dur > vars.longest_field_ms { vars.longest_field_ms = dur; }
+        _emits.push(#{ event: "field-session", source: "event-log", duration_ms: dur, detail: fields.evt_time });
+        return;
+      }
+
+      if "MSG_RF_FIELD_ACTIVATED" in msg { vars._field_on_ts = ts; return; }
+      if "MSG_RF_FIELD_DEACTIVATED" in msg {
+        let dur = -1;
+        if vars._field_on_ts > 0 && ts > vars._field_on_ts {
+          dur = (ts - vars._field_on_ts) / 1000000;
+          vars.field_sessions += 1;
+          if dur < 100 { vars.short_field_sessions += 1; }
+          if dur > vars.longest_field_ms { vars.longest_field_ms = dur; }
+          _emits.push(#{ event: "field-session", source: "logcat", duration_ms: dur, detail: "" });
+        }
+        vars._field_on_ts = 0;
+        return;
+      }
+
+      // ── HCE (logcat) ────────────────────────────────────────────────────
+      if "onHostEmulationActivated" in msg {
+        if "non-idle state" in msg { return; }
+        vars.hce_activations += 1;
+        _emits.push(#{ event: "hce-activated", source: "logcat", duration_ms: -1, detail: "" });
+        return;
+      }
+      if "sending AID_NOT_FOUND" in msg || "Can't handle AID" in msg {
+        let aid = if "hce_aid" in fields { fields.hce_aid } else if "NDEF" in msg { "NDEF" } else { "unknown (screen off)" };
+        vars.aids_unrouted += 1;
+        let uc = vars.unrouted_aid_counts;
+        if aid in uc { uc[aid] = uc[aid] + 1; } else { uc[aid] = 1; }
+        vars.unrouted_aid_counts = uc;
+        _emits.push(#{ event: "aid-unrouted", source: "logcat", duration_ms: -1, detail: aid });
+        return;
+      }
+      if "Send data to existing service" in msg || "Waiting for new service" in msg {
+        vars.aids_routed += 1;
+        return;
+      }
+      if "AID that was meant to go off-host was" in msg {
+        vars.offhost_misrouted += 1;
+        _emits.push(#{ event: "offhost-aid-routed-to-host", source: "logcat", duration_ms: -1, detail: "" });
+        return;
+      }
+
+      // ── HCE (event log) ─────────────────────────────────────────────────
+      if "host_card_emulation_state_change {" in msg {
+        if "enable: true" in msg {
+          vars.hce_activations += 1;
+          _emits.push(#{ event: "hce-activated", source: "event-log", duration_ms: -1, detail: "" });
+        }
+        return;
+      }
+      if "ce_unroutable_aid {" in msg {
+        let aid = if "el_aid" in fields { fields.el_aid } else { "unknown" };
+        vars.aids_unrouted += 1;
+        let uc = vars.unrouted_aid_counts;
+        if aid in uc { uc[aid] = uc[aid] + 1; } else { uc[aid] = 1; }
+        vars.unrouted_aid_counts = uc;
+        _emits.push(#{ event: "aid-unrouted", source: "event-log", duration_ms: -1, detail: aid });
+        return;
+      }
+      if "ce_routed_aid {" in msg {
+        vars.aids_routed += 1;
+        return;
+      }
+
+      if "onRoutingChangeComplete: " in msg {
+        vars.routing_commits += 1;
+        let st = if "routing_status" in fields { fields.routing_status } else { 0 };
+        if st != 0 {
+          vars.routing_commit_failures += 1;
+          _emits.push(#{ event: "routing-commit-failed", source: "logcat", duration_ms: -1, detail: "status " + st.to_string() });
+        }
+        return;
+      }
+      if "MSG_COMMIT_ROUTING" in msg { return; }
+
+      if "Ignoring exact AID" in msg { vars.aid_conflicts_ignored += 1; return; }
+
+      if "Could not bind" in msg {
+        vars.payment_bind_failures += 1;
+        _emits.push(#{ event: "payment-bind-failed", source: "logcat", duration_ms: -1, detail: "" });
+        return;
+      }
+      if "Payment service bound" in msg {
+        vars.payment_bound += 1;
+        _emits.push(#{ event: "payment-bound", source: "logcat", duration_ms: -1, detail: "" });
+        return;
+      }
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["event", "source", "duration_ms", "detail"]
+      - type: summary
+        source: vars
+        template: |
+          {{field_sessions}} remote-field sessions ({{short_field_sessions}} under 100 ms, longest {{longest_field_ms}} ms), {{hce_activations}} HCE activations.
+          Routing commits {{routing_commits}} ({{routing_commit_failures}} failed). Payment service: {{payment_bind_failures}} bind failures, {{payment_bound}} bound.
+    charts:
+      - id: field_duration
+        type: bar
+        title: "Remote Field Sessions by Source"
+        source: emissions
+        x: { field: source, label: "Source" }
+        y: { field: duration_ms, label: "Count", aggregation: count }
+
+schema:
+  source_types: ["logcat", "bugreport", "dumpstate"]
+  emissions:
+    - name: event
+      type: string
+      description: "field-session | hce-activated | aid-unrouted | offhost-aid-routed-to-host | routing-commit-failed | payment-bind-failed | payment-bound"
+    - name: source
+      type: string
+      description: "event-log (dumpsys nfc, may predate the logcat window) or logcat"
+    - name: duration_ms
+      type: int
+      description: "Field-on dwell time for field-session rows, else -1"
+    - name: detail
+      type: string
+      description: "Extra detail, e.g. routing commit status"
+  mcp:
+    summary:
+      template: "{{field_sessions}} remote-field sessions ({{short_field_sessions}} under 100 ms, longest {{longest_field_ms}} ms; event-log rows {{oldest_field_event}} .. {{newest_field_event}}, {{field_clock_jumps}} clock jumps), {{hce_activations}} HCE activations, {{aids_routed}} SELECTs routed, {{aids_unrouted}} unregistered AIDs {{unrouted_aid_counts}}. Routing commits {{routing_commits}} ({{routing_commit_failures}} failed). Payment bind failures {{payment_bind_failures}}, bound {{payment_bound}}."
+      include_vars: [field_sessions, short_field_sessions, longest_field_ms, orphan_field_off, oldest_field_event, newest_field_event, field_clock_jumps, hce_activations, aids_routed, aids_unrouted, unrouted_aid_counts, offhost_misrouted, routing_commits, routing_commit_failures, payment_bind_failures, payment_bound]
+    signals:
+      - name: field_without_selection
+        severity: warning
+        condition: "field_sessions > 0 && hce_activations == 0 && longest_field_ms < 100"
+        fields: [field_sessions, longest_field_ms, oldest_field_event, newest_field_event, field_clock_jumps]
+        format: "A reader field reached the phone {{field_sessions}} times (event-log rows {{oldest_field_event}} .. {{newest_field_event}}, in log order; {{field_clock_jumps}} backward clock jumps) but every contact lasted under 100 ms (longest {{longest_field_ms}} ms) and no HCE activation was recorded in logcat or the event log — consistent with a reader polling the phone without selecting an application; compare the event-log span with the logcat window before concluding"
+        type: aggregate
+      - name: unregistered_aids
+        severity: warning
+        condition: "aids_unrouted > 0"
+        fields: [aids_unrouted, unrouted_aid_counts]
+        format: "{{aids_unrouted}} SELECT AID(s) had no registered service and were answered 6A82 (AID_NOT_FOUND): {{unrouted_aid_counts}} — the reader asked for an application the phone does not offer"
+        type: aggregate
+      - name: offhost_aid_on_host
+        severity: warning
+        condition: "offhost_misrouted > 0"
+        fields: [offhost_misrouted]
+        format: "{{offhost_misrouted}} AID(s) meant for the eSE/UICC were routed to the host — check the routing table"
+        type: aggregate
+      - name: routing_commit_failed
+        severity: critical
+        condition: "routing_commit_failures > 0"
+        fields: [routing_commit_failures]
+        format: "{{routing_commit_failures}} AID routing-table commit(s) failed — registered AIDs may not be routed"
+        type: aggregate
+      - name: payment_never_bound
+        severity: warning
+        condition: "payment_bind_failures > 0 && payment_bound == 0"
+        fields: [payment_bind_failures]
+        format: "Payment HCE service failed to bind {{payment_bind_failures}} time(s) and never bound afterwards"
+        type: aggregate
