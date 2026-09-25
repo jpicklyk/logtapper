@@ -62,28 +62,6 @@
   background: var(--surface-overlay);
 }
 
-.viewToggle {
-  display: flex;
-  border: 1px solid var(--border);
-  border-radius: var(--p-radius-md);
-  overflow: hidden;
-}
-
-.viewButton {
-  height: 28px;
-  padding: 0 10px;
-  border: none;
-  background: var(--surface-raised);
-  color: var(--text-muted);
-  font: 500 12px var(--font-ui);
-  cursor: pointer;
-}
-
-.viewButtonActive {
-  background: var(--accent-muted);
-  color: var(--accent);
-}
-
 .error {
   padding: 8px 10px;
   border-radius: var(--p-radius-sm);
@@ -192,12 +170,6 @@
 .attachPanel {
   border-top: 1px solid var(--border-subtle);
   padding-top: 10px;
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 10px;
 }
 
 .list {
