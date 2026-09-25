@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createCacheDataSource } from './CacheDataSource';
+import { createCacheDataSource, clusterLines, FILTERED_CLUSTER_GAP, FILTERED_FETCH_CONCURRENCY } from './CacheDataSource';
 import { DataSourceRegistry } from './DataSourceRegistry';
 import { ViewCacheHandle } from '../cache/CacheManager';
 import type { ViewLine, LinePage } from '../bridge/types';
@@ -593,5 +593,136 @@ describe('CacheDataSource', () => {
     expect(result).toHaveLength(0);
     expect(ds.totalLines).toBe(0);
     expect(cache.size).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Filtered mode with scattered line numbers ("Show matched lines")
+// ---------------------------------------------------------------------------
+
+/** A backend stand-in: serves any contiguous `[offset, offset+count)` file range. */
+function fileBackend() {
+  return vi.fn((offset: number, count: number) => Promise.resolve(makeWindow(offset, count, 400_000)));
+}
+
+/** A matched-line set shaped like the NFC stack-health case: a dense burst, then far-apart singles. */
+const SCATTERED = [
+  ...Array.from({ length: 20 }, (_, i) => 116714 + i),
+  120_000, 150_000, 158_964, 163_354, 339_245, 339_246,
+];
+
+describe('CacheDataSource filtered mode, scattered lines', () => {
+  it('one getLines call loads every requested row, not just the first contiguous block', async () => {
+    const cache = new ViewCacheHandle(50_000);
+    const ds = createCacheDataSource({
+      sessionId: 's', viewCache: cache, fetchLines: fileBackend(), getLineNumbers: () => SCATTERED,
+    });
+
+    const rows = await ds.getLines(0, SCATTERED.length);
+
+    // The regression: rows past the first block used to stay unloaded until a scroll.
+    for (let i = 0; i < SCATTERED.length; i++) {
+      expect(ds.getLine(i)?.lineNum, `row ${i}`).toBe(SCATTERED[i]);
+    }
+    expect(rows.map((l) => l.lineNum)).toEqual(SCATTERED);
+  });
+
+  it('fetches one range per cluster of nearby lines', async () => {
+    const cache = new ViewCacheHandle(50_000);
+    const fetchLines = fileBackend();
+    const ds = createCacheDataSource({
+      sessionId: 's', viewCache: cache, fetchLines, getLineNumbers: () => SCATTERED,
+    });
+
+    await ds.getLines(0, SCATTERED.length);
+
+    expect(fetchLines.mock.calls).toEqual([
+      [116714, 20],
+      [120_000, 1],
+      [150_000, 1],
+      [158_964, 1],
+      [163_354, 1],
+      [339_245, 2],
+    ]);
+  });
+
+  it('only fetches the rows that are not already cached', async () => {
+    const cache = new ViewCacheHandle(50_000);
+    cache.put([makeLine(120_000), makeLine(150_000)]);
+    const fetchLines = fileBackend();
+    const ln = [120_000, 150_000, 200_000];
+    const ds = createCacheDataSource({ sessionId: 's', viewCache: cache, fetchLines, getLineNumbers: () => ln });
+
+    const rows = await ds.getLines(0, 3);
+
+    expect(fetchLines.mock.calls).toEqual([[200_000, 1]]);
+    expect(rows.map((l) => l.lineNum)).toEqual(ln);
+  });
+
+  it('never has more than FILTERED_FETCH_CONCURRENCY fetches in flight', async () => {
+    const cache = new ViewCacheHandle(50_000);
+    const ln = Array.from({ length: 100 }, (_, i) => i * 10_000);
+    let inFlight = 0;
+    let peak = 0;
+    const fetchLines = vi.fn(async (offset: number, count: number) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 0));
+      inFlight--;
+      return makeWindow(offset, count, 2_000_000);
+    });
+    const ds = createCacheDataSource({ sessionId: 's', viewCache: cache, fetchLines, getLineNumbers: () => ln });
+
+    const rows = await ds.getLines(0, ln.length);
+
+    expect(fetchLines).toHaveBeenCalledTimes(100);
+    expect(peak).toBe(FILTERED_FETCH_CONCURRENCY);
+    expect(rows).toHaveLength(100);
+  });
+
+  it('an invalidate during the fetch discards the result without caching it', async () => {
+    const cache = new ViewCacheHandle(50_000);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const fetchLines = vi.fn(async (offset: number, count: number) => {
+      await gate;
+      return makeWindow(offset, count, 400_000);
+    });
+    const ds = createCacheDataSource({ sessionId: 's', viewCache: cache, fetchLines, getLineNumbers: () => SCATTERED });
+
+    const pending = ds.getLines(0, SCATTERED.length);
+    ds.invalidate();
+    release();
+
+    expect(await pending).toEqual([]);
+    expect(cache.size).toBe(0);
+  });
+
+  it('full mode still fetches one contiguous range', async () => {
+    const cache = new ViewCacheHandle(50_000);
+    const fetchLines = fileBackend();
+    const ds = createCacheDataSource({ sessionId: 's', viewCache: cache, fetchLines });
+
+    await ds.getLines(100, 20);
+
+    expect(fetchLines.mock.calls).toEqual([[100, 500]]);
+  });
+});
+
+describe('clusterLines', () => {
+  it('returns no ranges for no lines', () => {
+    expect(clusterLines([], FILTERED_CLUSTER_GAP)).toEqual([]);
+  });
+
+  it('keeps lines within the gap in one range and splits beyond it', () => {
+    expect(clusterLines([10, 10 + 64, 10 + 64 + 65], 64)).toEqual([[10, 65], [139, 1]]);
+  });
+
+  it('covers every input line', () => {
+    const lines = [1, 2, 3, 500, 501, 9_000];
+    const ranges = clusterLines(lines, 64);
+    for (const line of lines) {
+      expect(ranges.some(([from, n]) => line >= from && line < from + n), `line ${line}`).toBe(true);
+    }
   });
 });
