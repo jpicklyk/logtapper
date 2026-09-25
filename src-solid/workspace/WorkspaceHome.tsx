@@ -17,29 +17,6 @@ import styles from './workspaceHome.module.css';
 
 const LTW_OPEN_FILTERS = [{ name: 'LogTapper Workspace', extensions: ['ltw'] }];
 
-type ViewMode = 'grid' | 'list';
-
-/** No slot for a view preference in W1a's `SolidLayout` (columns/collapsed/
- *  tabs/activeTab only), so this is a plain per-viewer localStorage flag —
- *  same as any other UI-only preference, per the task's documented fallback. */
-const VIEW_PREF_KEY = 'logtapper.solid.workspaceHomeView';
-
-function readViewPref(): ViewMode {
-  try {
-    return window.localStorage.getItem(VIEW_PREF_KEY) === 'list' ? 'list' : 'grid';
-  } catch {
-    return 'grid';
-  }
-}
-
-function writeViewPref(mode: ViewMode): void {
-  try {
-    window.localStorage.setItem(VIEW_PREF_KEY, mode);
-  } catch {
-    /* private mode / quota — the preference is best-effort. */
-  }
-}
-
 function formatSaved(ws: WorkspaceIdentity): string {
   if (ws.lastAutoSaveAt) return new Date(ws.lastAutoSaveAt).toLocaleString();
   return ws.filePath ? 'Saved' : 'Not saved yet';
@@ -91,7 +68,7 @@ export interface WorkspaceHomeProps {
 
 /**
  * The `workspace-home` shell surface: header actions, the recent-workspaces
- * grid/list, and the active workspace's sessions. Matches the structure of
+ * list, and the active workspace's sessions. Matches the structure of
  * `design_docs/canvas/WorkspaceHome.dc.html`, not its pixels — the packs /
  * recent-analyses / presence sections of that board belong to other surfaces
  * already mounted elsewhere in the shell.
@@ -115,18 +92,12 @@ export function WorkspaceHome(props: WorkspaceHomeProps): JSX.Element {
   // review). `children()` resolves it once and memoizes.
   const bookmarksSlot = children(() => props.bookmarks);
   const analysesSlot = children(() => props.analyses);
-  const [view, setView] = createSignal<ViewMode>(readViewPref());
   const [renamingId, setRenamingId] = createSignal<string | null>(null);
   const [renameValue, setRenameValue] = createSignal('');
   const [confirmingDeleteId, setConfirmingDeleteId] = createSignal<string | null>(null);
   const [deleteFile, setDeleteFile] = createSignal(false);
   const [actionError, setActionError] = createSignal('');
   const [showAttach, setShowAttach] = createSignal(false);
-
-  const setViewMode = (mode: ViewMode): void => {
-    setView(mode);
-    writeViewPref(mode);
-  };
 
   const handleOpenWorkspace = async (): Promise<void> => {
     const selected = await openDialog({ multiple: false, filters: LTW_OPEN_FILTERS });
@@ -204,26 +175,6 @@ export function WorkspaceHome(props: WorkspaceHomeProps): JSX.Element {
           <button type="button" class={styles.actionButton} onClick={handleNewWorkspace}>
             New workspace
           </button>
-          <div class={styles.viewToggle} role="group" aria-label="Layout">
-            <button
-              type="button"
-              class={styles.viewButton}
-              classList={{ [styles.viewButtonActive]: view() === 'grid' }}
-              aria-pressed={view() === 'grid'}
-              onClick={() => setViewMode('grid')}
-            >
-              Grid
-            </button>
-            <button
-              type="button"
-              class={styles.viewButton}
-              classList={{ [styles.viewButtonActive]: view() === 'list' }}
-              aria-pressed={view() === 'list'}
-              onClick={() => setViewMode('list')}
-            >
-              List
-            </button>
-          </div>
         </div>
       </header>
 
@@ -268,8 +219,8 @@ export function WorkspaceHome(props: WorkspaceHomeProps): JSX.Element {
         <h3 class={styles.sectionLabel}>Recent workspaces</h3>
         <Show when={props.store.list().length > 0} fallback={<div class={styles.empty}>No workspaces yet.</div>}>
           <div
-            class={view() === 'grid' ? styles.grid : styles.list}
-            data-testid={`workspace-${view()}`}
+            class={styles.list}
+            data-testid="workspace-list"
           >
             <For each={props.store.list()}>
               {(ws) => (

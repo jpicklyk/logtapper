@@ -170,34 +170,17 @@ describe('WorkspaceHome', () => {
     expect(screen.getByText(/no sessions in this workspace/i)).toBeTruthy();
   });
 
-  it('grid and list views render the same workspace set', () => {
+  it('lists every recent workspace, with no grid/list toggle', () => {
     const list = [ws('w1', { name: 'Alpha' }), ws('w2', { name: 'Beta' })];
     const store = fakeWorkspaceStore({ list, activeId: 'w1' });
     render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
-
-    // Default view is grid.
-    const grid = within(screen.getByTestId('workspace-grid'));
-    expect(grid.getAllByTestId('workspace-card')).toHaveLength(2);
-    expect(grid.getByText('Alpha')).toBeTruthy();
-    expect(grid.getByText('Beta')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'List' }));
 
     const listView = within(screen.getByTestId('workspace-list'));
     expect(listView.getAllByTestId('workspace-card')).toHaveLength(2);
     expect(listView.getByText('Alpha')).toBeTruthy();
     expect(listView.getByText('Beta')).toBeTruthy();
-  });
-
-  it('persists the grid/list choice across remounts', () => {
-    const store = fakeWorkspaceStore({ list: [ws('w1')], activeId: 'w1' });
-    const { unmount } = render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'List' }));
-    expect(screen.getByTestId('workspace-list')).toBeTruthy();
-    unmount();
-
-    render(() => <WorkspaceHome store={store} sessions={fakeSessions()} actions={fakeActions()} liveStream={fakeLiveStreamStore()} />);
-    expect(screen.getByTestId('workspace-list')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Grid' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'List' })).toBeNull();
   });
 
   it('renaming a workspace calls store.rename with the workspace id and new name', () => {
