@@ -1,0 +1,308 @@
+meta:
+  id: "nfc-state"
+  name: "NFC State"
+  version: "0.3.0"
+  author: "LogTapper"
+  description: "Tracks NFC adapter and RF state through the log: adapter state, screen state as NFC sees it, RF discovery (polling) on/off, reader-mode owner and flags, tag present, remote (reader) field, and whether listen (card emulation) is programmed. Answers 'was NFC even on and polling when the tap failed?'. Emits one row per state change carrying the full state, so the state at any line is the last row at or before it. Reader mode is released when its owning app goes to the background, as AOSP does without logging a flags: 0 call. Covers AOSP NfcService/libnfc_nci and the Samsung [NFC_SE] extension; the dumpsys nfc snapshot (mState/mScreenState) is applied last."
+  tags: ["nfc", "android", "samsung"]
+  category: connectivity
+
+# SYSTEM LOG carries the live changes; the dumpsys "nfc" subsection supplies
+# the capture-time snapshot. For plain logcat files this list is a no-op.
+sections:
+  - "SYSTEM LOG"
+  - "nfc"
+
+vars:
+  - name: adapter
+    type: string
+    default: ""
+    display: true
+    label: "Adapter"
+  - name: screen_state
+    type: string
+    default: ""
+    display: true
+    label: "Screen State"
+  - name: discovery
+    type: string
+    default: ""
+    display: true
+    label: "RF Discovery"
+  - name: reader_app
+    type: string
+    default: ""
+    display: true
+    label: "Reader-Mode App"
+  - name: reader_flags
+    type: string
+    default: ""
+    display: true
+    label: "Reader-Mode Flags"
+  - name: tag_present
+    type: string
+    default: ""
+    display: true
+    label: "Tag Present"
+  - name: remote_field
+    type: string
+    default: ""
+    display: true
+    label: "Remote Field"
+  - name: listen_active
+    type: string
+    default: ""
+    display: true
+    label: "Listen Programmed"
+  - name: changes
+    type: int
+    default: 0
+    display: true
+    label: "State Changes"
+  - name: change_counts
+    type: map
+    default: {}
+    display: true
+    label: "Changes by Transition"
+    display_as: table
+    columns: ["transition", "count"]
+  - name: _reader_uid
+    type: string
+    default: ""
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values:
+          # adapter (AOSP NfcService)
+          - "Enabling NFC"
+          - "enableInternal: end"
+          - "Disabling NFC"
+          - "disableInternal: end"
+          # adapter (Samsung extension)
+          - "onStateUpdated: STATE_"
+          # screen state as applied by NfcService
+          - "MSG_APPLY_SCREEN_STATE "
+          # RF discovery loop
+          - "NFA_RF_DISCOVERY_STARTED_EVT"
+          - "NFA_RF_DISCOVERY_STOPPED_EVT"
+          # reader mode, and its implicit release on background
+          - "setReaderMode: uid="
+          - "onUidToBackground: Uid "
+          - "resetReaderModeParams: Disabling reader mode"
+          # tag
+          - "onTagRfDiscovered: "
+          # remote field (card emulation side)
+          # 1 = the stack asked the NFCC for RF field notifications because a
+          # listen tech is programmed; 0 = no listen. NOT the field state.
+          - "nfa_dm_set_rf_field_info_ntf:"
+          # the actual remote field state (JNI nfaDeviceManagementCallback)
+          - "NFA_DM_RF_FIELD_EVT; status="
+          - "MSG_RF_FIELD_ACTIVATED"
+          - "MSG_RF_FIELD_DEACTIVATED"
+          # dumpsys nfc snapshot
+          - "mState="
+          - "mScreenState="
+
+  - stage: extract
+    fields:
+      - name: samsung_state
+        pattern: 'onStateUpdated: STATE_(\w+)$'
+        cast: string
+      - name: screen
+        pattern: 'MSG_APPLY_SCREEN_STATE (\w+)'
+        cast: string
+      - name: reader_uid
+        pattern: 'setReaderMode: uid=(\d+),'
+        cast: string
+      - name: reader_app
+        pattern: 'setReaderMode: uid=\d+, packageName: ([^,]+), flags: \d+'
+        cast: string
+      - name: reader_flags
+        pattern: 'setReaderMode: uid=\d+, packageName: [^,]+, flags: (\d+)'
+        cast: string
+      - name: bg_uid
+        pattern: 'onUidToBackground: Uid (\d+)'
+        cast: string
+      - name: tag
+        pattern: 'onTagRfDiscovered: (true|false)'
+        cast: string
+      - name: listen_val
+        pattern: 'nfa_dm_set_rf_field_info_ntf:\s+val = 0x(\d)'
+        cast: string
+      - name: field_status
+        pattern: 'NFA_DM_RF_FIELD_EVT; status=0x0; field status=(\d+)'
+        cast: string
+      - name: snap_state
+        pattern: '^mState=(\w+)'
+        cast: string
+      - name: snap_screen
+        pattern: '^mScreenState=(\w+)'
+        cast: string
+
+  - stage: script
+    runtime: rhai
+    src: |
+      let msg = line.message;
+      let name = "";
+      let upd = #{};
+
+      // ── adapter ─────────────────────────────────────────────────────────
+      if line.tag == "NfcService" && "Enabling NFC" in msg {
+        name = "NFC Enabling"; upd.adapter = "turning_on";
+      } else if line.tag == "NfcService" && "enableInternal: end" in msg {
+        name = "NFC Enabled"; upd.adapter = "on";
+      } else if line.tag == "NfcService" && "Disabling NFC" in msg {
+        name = "NFC Disabling"; upd.adapter = "turning_off";
+        upd.discovery = ""; upd.tag_present = ""; upd.remote_field = ""; upd.listen_active = "";
+      } else if line.tag == "NfcService" && "disableInternal: end" in msg {
+        name = "NFC Disabled"; upd.adapter = "off";
+      } else if "samsung_state" in fields && "SamsungExtension" in line.tag {
+        // Samsung logs ON/TURNING_ON; map to the AOSP values so the two
+        // sources do not produce fake changes.
+        name = "NFC State (Samsung)"; upd.adapter = fields.samsung_state.to_lower();
+
+      // ── screen ──────────────────────────────────────────────────────────
+      } else if "screen" in fields && line.tag == "NfcService" {
+        name = "Screen State"; upd.screen_state = fields.screen;
+
+      // ── discovery ───────────────────────────────────────────────────────
+      } else if "NFA_RF_DISCOVERY_STARTED_EVT" in msg && line.tag == "libnfc_nci" {
+        name = "Discovery Started"; upd.discovery = "started";
+      } else if "NFA_RF_DISCOVERY_STOPPED_EVT" in msg && line.tag == "libnfc_nci" {
+        name = "Discovery Stopped"; upd.discovery = "stopped";
+
+      // ── reader mode ─────────────────────────────────────────────────────
+      } else if "reader_flags" in fields && line.tag == "NfcService" {
+        let flags = fields.reader_flags;
+        vars._reader_uid = if flags == "0" { "" } else if "reader_uid" in fields { fields.reader_uid } else { "" };
+        name = if flags == "0" { "Reader Mode Released" } else { "Reader Mode Set" };
+        upd.reader_flags = flags;
+        upd.reader_app = if flags == "0" { "" } else if "reader_app" in fields { fields.reader_app } else { "" };
+      } else if "resetReaderModeParams: Disabling reader mode" in msg {
+        // NfcService's own record that it dropped reader mode (owner died or
+        // moved to the background). Authoritative when logged.
+        vars._reader_uid = "";
+        name = "Reader Mode Released (owner gone)";
+        upd.reader_flags = "0"; upd.reader_app = "";
+      } else if "bg_uid" in fields && line.tag == "NfcService" {
+        // The reader-mode owner left the foreground: NfcService drops its
+        // reader mode without a flags: 0 line. Other UIDs are ignored.
+        if vars._reader_uid == "" || fields.bg_uid != vars._reader_uid { return; }
+        vars._reader_uid = "";
+        name = "Reader Mode Released (owner backgrounded)";
+        upd.reader_flags = "0"; upd.reader_app = "";
+
+      // ── tag ─────────────────────────────────────────────────────────────
+      } else if "tag" in fields && line.tag == "NfcService" {
+        name = if fields.tag == "true" { "Tag Discovered" } else { "Tag Gone" };
+        upd.tag_present = fields.tag;
+
+      // ── remote field ────────────────────────────────────────────────────
+      } else if "listen_val" in fields && line.tag == "libnfc_nci" {
+        name = "Listen Programmed"; upd.listen_active = fields.listen_val;
+      } else if "field_status" in fields && line.tag == "libnfc_nci" {
+        name = if fields.field_status == "0" { "Remote Field Off (NCI)" } else { "Remote Field On (NCI)" };
+        upd.remote_field = if fields.field_status == "0" { "0" } else { "1" };
+      } else if "MSG_RF_FIELD_ACTIVATED" in msg && line.tag == "NfcService" {
+        name = "Remote Field On"; upd.remote_field = "1";
+      } else if "MSG_RF_FIELD_DEACTIVATED" in msg && line.tag == "NfcService" {
+        name = "Remote Field Off"; upd.remote_field = "0";
+
+      // ── dumpsys nfc snapshot ────────────────────────────────────────────
+      } else if "snap_state" in fields {
+        name = "Snapshot Adapter (dumpsys)"; upd.adapter = fields.snap_state;
+      } else if "snap_screen" in fields {
+        name = "Snapshot Screen (dumpsys)"; upd.screen_state = fields.snap_screen;
+      } else {
+        return;
+      }
+
+      // Apply, keeping only real changes (same semantics as a state tracker).
+      let changed = "";
+      for k in upd.keys() {
+        let v = upd[k];
+        if vars[k] != v {
+          let from = if vars[k] == "" { "-" } else { vars[k] };
+          let to = if v == "" { "-" } else { v };
+          let c = k + ": " + from + " -> " + to;
+          changed = if changed == "" { c } else { changed + ", " + c };
+          vars[k] = v;
+        }
+      }
+      if changed == "" { return; }
+
+      vars.changes += 1;
+      let cc = vars.change_counts;
+      if name in cc { cc[name] = cc[name] + 1; } else { cc[name] = 1; }
+      vars.change_counts = cc;
+
+      _emits.push(#{
+        transition: name,
+        changed: changed,
+        adapter: vars.adapter,
+        screen_state: vars.screen_state,
+        discovery: vars.discovery,
+        reader_app: vars.reader_app,
+        reader_flags: vars.reader_flags,
+        tag_present: vars.tag_present,
+        remote_field: vars.remote_field,
+        listen_active: vars.listen_active,
+      });
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["transition", "changed", "adapter", "screen_state", "discovery", "reader_app", "reader_flags", "tag_present", "remote_field", "listen_active"]
+      - type: summary
+        source: vars
+        template: |
+          {{changes}} NFC state changes. Final: adapter {{adapter}}, screen {{screen_state}}, discovery {{discovery}}, reader mode {{reader_app}} (flags {{reader_flags}}), tag present {{tag_present}}, remote field {{remote_field}}, listen programmed {{listen_active}}.
+    charts:
+      - id: transitions_bar
+        type: bar
+        title: "NFC State Changes by Transition"
+        source: emissions
+        x: { field: transition, label: "Transition" }
+        y: { field: transition, label: "Count", aggregation: count }
+
+schema:
+  source_types: ["logcat", "bugreport", "dumpstate"]
+  emissions:
+    - name: transition
+      type: string
+      description: "What changed, e.g. Reader Mode Set, Reader Mode Released (owner backgrounded), Tag Discovered, Screen State"
+    - name: changed
+      type: string
+      description: "Fields that changed on this line, as 'field: from -> to' ('-' = unset)"
+    - name: adapter
+      type: string
+      description: "turning_on | on | turning_off | off (full state after this line)"
+    - name: screen_state
+      type: string
+      description: "Screen state as NfcService applied it, e.g. ON_UNLOCKED"
+    - name: discovery
+      type: string
+      description: "started | stopped"
+    - name: reader_app
+      type: string
+      description: "Package holding reader mode, empty when reader mode is off"
+    - name: reader_flags
+      type: string
+      description: "Reader-mode flags (decimal); 0 = off"
+    - name: tag_present
+      type: string
+      description: "true | false"
+    - name: remote_field
+      type: string
+      description: "1 = a reader's field is on the phone, 0 = off (NFA_DM_RF_FIELD_EVT / MSG_RF_FIELD_*)"
+    - name: listen_active
+      type: string
+      description: "1 = a listen (card-emulation) tech is programmed and field notifications are requested, 0 = none (nfa_dm_set_rf_field_info_ntf). Drops to 0 while an app holds reader mode."
+  mcp:
+    summary:
+      template: "{{changes}} NFC state changes ({{change_counts}}). Final: adapter {{adapter}}, screen {{screen_state}}, discovery {{discovery}}, reader-mode app '{{reader_app}}' flags {{reader_flags}}, tag present {{tag_present}}, remote field {{remote_field}}, listen programmed {{listen_active}}. The state at a line is the last emission at or before it."
+      include_vars: [changes, change_counts, adapter, screen_state, discovery, reader_app, reader_flags, tag_present, remote_field, listen_active]
+    signals: []

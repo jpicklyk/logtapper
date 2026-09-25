@@ -1,0 +1,426 @@
+meta:
+  id: "nfc-tag-sessions"
+  name: "NFC Tag Sessions"
+  version: "0.1.3"
+  author: "LogTapper"
+  description: "One row per tag/card session in reader-writer mode (tag discovered -> tag gone): RF technology and protocol, how the tag was delivered (reader mode and which app held it, intent dispatch, or unknown), transceive count and failures, presence-check count, reconnects, how the session ended and how long it lasted. Separates 'card left the field' (presence check failed after a completed exchange) from 'exchange never completed'. Needs libnfc_nci debug logging for tech/transceive detail; session start/end come from NfcService and are always present."
+  tags: ["nfc", "tag", "reader-mode", "android"]
+  category: connectivity
+
+sections:
+  - "SYSTEM LOG"
+
+vars:
+  - name: sessions
+    type: int
+    default: 0
+    display: true
+    label: "Tag Sessions"
+  - name: sessions_with_exchange
+    type: int
+    default: 0
+    display: true
+    label: "Sessions With Completed Exchange"
+  - name: sessions_no_exchange
+    type: int
+    default: 0
+    display: true
+    label: "Sessions With No Exchange"
+  - name: transceive_failures
+    type: int
+    default: 0
+    display: true
+    label: "Transceive Failures"
+  - name: shortest_ms
+    type: int
+    default: -1
+    display: true
+    label: "Shortest Session (ms)"
+  - name: protocol_counts
+    type: map
+    default: {}
+    display: true
+    label: "Sessions by Protocol"
+    display_as: table
+    columns: ["protocol", "count"]
+  - name: end_reason_counts
+    type: map
+    default: {}
+    display: true
+    label: "Sessions by End Reason"
+    display_as: table
+    columns: ["end_reason", "count"]
+  # Working state for the open session (not displayed)
+  - name: _open
+    type: bool
+    default: false
+  - name: _start_ts
+    type: int
+    default: 0
+  - name: _reader_app
+    type: string
+    default: "none"
+  - name: _reader_flags
+    type: string
+    default: "0"
+  - name: _reader_uid
+    type: string
+    default: ""
+  # Delivery snapshot taken when the tag is discovered, so a reader-mode
+  # release during the session does not rewrite who received the tag.
+  - name: _session_mode
+    type: string
+    default: ""
+  - name: _session_app
+    type: string
+    default: ""
+  - name: _dispatch
+    type: string
+    default: ""
+  - name: delivery_counts
+    type: map
+    default: {}
+    display: true
+    label: "Sessions by Delivery"
+    display_as: table
+    columns: ["delivery", "count"]
+  - name: _protocol
+    type: string
+    default: "unknown"
+  - name: _techs
+    type: string
+    default: ""
+  - name: _xcv
+    type: int
+    default: 0
+  - name: _xcv_fail
+    type: int
+    default: 0
+  - name: _presence
+    type: int
+    default: 0
+  - name: _presence_fail
+    type: int
+    default: 0
+  - name: _reconnects
+    type: int
+    default: 0
+  - name: _end_reason
+    type: string
+    default: ""
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values:
+          # NfcService (always logged)
+          - "setReaderMode: uid="
+          # AOSP resets reader mode when its owner leaves the foreground,
+          # without logging a flags: 0 call
+          - "onUidToBackground: Uid "
+          - "resetReaderModeParams: Disabling reader mode"
+          # NfcDispatcher outcome when reader mode is off (AOSP NfcDispatcher.java;
+          # not present in the sample captures). "tryNdef: No match NDEF" is
+          # not final - dispatch falls through to TECH/TAG - so it is not listed.
+          - "dispatchTag: matched"
+          - "dispatchTag: no match"
+          - "dispatchTag: Dropping NFC intent"
+          - "tryOverrides: matched"
+          - "tryNdef: matched"
+          - "tryTech: matched"
+          - "tryActivityOrLaunchAppStore: matched"
+          - "onTagRfDiscovered: "
+          # libnfc_nci activation detail (debug logging)
+          - "NfcTag::discoverTechnologies (activation): index="
+          - "NfcTag::fillNativeNfcTagMembers4: "
+          # exchange
+          - "nativeNfcTag_doTransceive: exit"
+          - "NFA_DATA_EVT: status = "
+          - "nativeNfcTag_doTransceive: wait response timeout"
+          # presence check / loss
+          - "nativeNfcTag_doPresenceCheck("
+          - "nativeNfcTag_doPresenceCheck: tag absent"
+          - "Tag lost, restarting polling loop"
+          - "nativeNfcTag_doReconnect(enter)"
+
+  - stage: extract
+    fields:
+      - name: reader_app
+        pattern: 'packageName: ([^,]+), flags: \d+'
+        cast: string
+      - name: reader_flags
+        pattern: 'packageName: [^,]+, flags: (\d+)'
+        cast: string
+      - name: reader_uid
+        pattern: 'setReaderMode: uid=(\d+),'
+        cast: string
+      - name: bg_uid
+        pattern: 'onUidToBackground: Uid (\d+)'
+        cast: string
+      - name: tech
+        pattern: 'tech=0x([0-9a-fA-F]+); handle'
+        cast: string
+      - name: protocol
+        pattern: 'fillNativeNfcTagMembers4: ([A-Za-z0-9_]+);'
+        cast: string
+      - name: data_status
+        pattern: 'NFA_DATA_EVT: status = 0x([0-9a-fA-F]+)'
+        cast: string
+
+  - stage: script
+    runtime: rhai
+    src: |
+      let msg = line.message;
+      let ts = line.timestamp;
+
+      // Reader mode owner — remembered so each session is attributed to the app
+      // that was polling when the card arrived.
+      if "setReaderMode: uid=" in msg {
+        if "reader_app" in fields { vars._reader_app = fields.reader_app; }
+        if "reader_flags" in fields { vars._reader_flags = fields.reader_flags; }
+        if "reader_uid" in fields { vars._reader_uid = fields.reader_uid; }
+        return;
+      }
+
+      // Owner went to the background: NfcService drops its reader mode.
+      // NfcDispatcher logs its own onUidToBackground (foreground dispatch), so
+      // only NfcService's line counts here.
+      if "resetReaderModeParams: Disabling reader mode" in msg {
+        vars._reader_flags = "0";
+        return;
+      }
+      if "onUidToBackground: Uid " in msg {
+        if "NfcService" in line.tag && "bg_uid" in fields && vars._reader_flags != "0" && fields.bg_uid == vars._reader_uid {
+          vars._reader_flags = "0";
+        }
+        return;
+      }
+
+      // NfcDispatcher outcome (reader mode off). First final outcome wins.
+      if "Dispatcher" in line.tag && (
+          "dispatchTag: " in msg || "tryOverrides: matched" in msg || "tryNdef: matched" in msg ||
+          "tryTech: matched" in msg || "tryActivityOrLaunchAppStore: matched" in msg) {
+        if !vars._open || vars._dispatch != "" { return; }
+        vars._dispatch = if "tryOverrides: matched" in msg {
+          "foreground-dispatch"
+        } else if "dispatchTag: no match" in msg {
+          "not-dispatched"
+        } else if "Dropping NFC intent" in msg {
+          "dropped-provisioning"
+        } else {
+          "intent-dispatch"
+        };
+        return;
+      }
+
+      if "onTagRfDiscovered: true" in msg {
+        vars._open = true;
+        if vars._reader_flags != "0" {
+          vars._session_mode = "reader-mode";
+          vars._session_app = vars._reader_app;
+        } else {
+          vars._session_mode = "";
+          vars._session_app = "";
+        }
+        vars._dispatch = "";
+        vars._start_ts = ts;
+        vars._protocol = "unknown";
+        vars._techs = "";
+        vars._xcv = 0;
+        vars._xcv_fail = 0;
+        vars._presence = 0;
+        vars._presence_fail = 0;
+        vars._reconnects = 0;
+        vars._end_reason = "";
+        return;
+      }
+
+      if !vars._open && !("onTagRfDiscovered: false" in msg) {
+        return;
+      }
+
+      if "discoverTechnologies (activation)" in msg {
+        if "tech" in fields {
+          // libnfc_nci TARGET_TYPE_* codes
+          let names = #{ "1": "NfcA", "2": "NfcB", "3": "IsoDep", "4": "NfcF", "5": "NfcV",
+                         "6": "Ndef", "7": "NdefFormatable", "8": "MifareClassic",
+                         "9": "MifareUltralight", "a": "Kovio" };
+          let code = fields.tech.to_lower();
+          let t = if code in names { names[code] } else { "0x" + code };
+          if !(t in vars._techs) {
+            vars._techs = if vars._techs == "" { t } else { vars._techs + "," + t };
+          }
+        }
+        return;
+      }
+      if "fillNativeNfcTagMembers4" in msg {
+        if "protocol" in fields { vars._protocol = fields.protocol; }
+        return;
+      }
+      if "nativeNfcTag_doTransceive: exit" in msg {
+        vars._xcv += 1;
+        return;
+      }
+      if "NFA_DATA_EVT: status = " in msg {
+        if "data_status" in fields && fields.data_status != "0" {
+          vars._xcv_fail += 1;
+          vars.transceive_failures += 1;
+        }
+        return;
+      }
+      if "wait response timeout" in msg {
+        vars._xcv_fail += 1;
+        vars.transceive_failures += 1;
+        return;
+      }
+      if "doReconnect(enter)" in msg {
+        vars._reconnects += 1;
+        return;
+      }
+      if "nativeNfcTag_doPresenceCheck: tag absent" in msg {
+        vars._presence_fail += 1;
+        return;
+      }
+      if "nativeNfcTag_doPresenceCheck(" in msg {
+        vars._presence += 1;
+        return;
+      }
+      if "Tag lost, restarting polling loop" in msg {
+        vars._end_reason = "tag-lost";
+        return;
+      }
+
+      if "onTagRfDiscovered: false" in msg {
+        if !vars._open { return; }
+        vars._open = false;
+        vars.sessions += 1;
+
+        let duration_ms = -1;
+        if vars._start_ts > 0 && ts > vars._start_ts {
+          duration_ms = (ts - vars._start_ts) / 1000000;
+          if vars.shortest_ms < 0 || duration_ms < vars.shortest_ms {
+            vars.shortest_ms = duration_ms;
+          }
+        }
+
+        let reason = if vars._end_reason == "" { "deactivated" } else { vars._end_reason };
+        let exchange = if vars._xcv > 0 && vars._xcv_fail == 0 {
+          "completed"
+        } else if vars._xcv_fail > 0 {
+          "failed"
+        } else {
+          "none"
+        };
+        if exchange == "completed" { vars.sessions_with_exchange += 1; } else { vars.sessions_no_exchange += 1; }
+
+        let pc = vars.protocol_counts;
+        let p = vars._protocol;
+        if p in pc { pc[p] = pc[p] + 1; } else { pc[p] = 1; }
+        vars.protocol_counts = pc;
+
+        let rc = vars.end_reason_counts;
+        if reason in rc { rc[reason] = rc[reason] + 1; } else { rc[reason] = 1; }
+        vars.end_reason_counts = rc;
+
+        // Delivery: reader mode (snapshot at discovery) > dispatcher evidence
+        // > unknown. Never assume foreground dispatch without a log line.
+        let delivery = if vars._session_mode == "reader-mode" {
+          "reader-mode"
+        } else if vars._dispatch != "" {
+          vars._dispatch
+        } else {
+          "unknown"
+        };
+        let reader = if delivery == "reader-mode" { vars._session_app } else { "" };
+
+        let dc = vars.delivery_counts;
+        if delivery in dc { dc[delivery] = dc[delivery] + 1; } else { dc[delivery] = 1; }
+        vars.delivery_counts = dc;
+
+        _emits.push(#{
+          protocol: vars._protocol,
+          techs: vars._techs,
+          delivery: delivery,
+          reader_app: reader,
+          transceives: vars._xcv,
+          transceive_failures: vars._xcv_fail,
+          exchange: exchange,
+          presence_checks: vars._presence,
+          reconnects: vars._reconnects,
+          end_reason: reason,
+          duration_ms: duration_ms,
+        });
+      }
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["protocol", "techs", "delivery", "reader_app", "transceives", "transceive_failures", "exchange", "presence_checks", "reconnects", "end_reason", "duration_ms"]
+      - type: summary
+        source: vars
+        template: |
+          {{sessions}} tag sessions: {{sessions_with_exchange}} with a completed exchange, {{sessions_no_exchange}} without.
+          {{transceive_failures}} transceive failures. Shortest session {{shortest_ms}} ms.
+    charts:
+      - id: session_duration
+        type: time_series
+        title: "Tag Session Duration"
+        source: emissions
+        x: { field: timestamp, label: "Time" }
+        y: { field: duration_ms, label: "Duration (ms)", aggregation: max }
+
+schema:
+  source_types: ["logcat", "bugreport", "dumpstate"]
+  emissions:
+    - name: protocol
+      type: string
+      description: "Tag type from libnfc_nci (T1T, T2T, T3T, T4T, ...), 'unknown' without debug logging"
+    - name: techs
+      type: string
+      description: "Android tag technologies seen at activation, e.g. IsoDep,NfcA"
+    - name: delivery
+      type: string
+      description: "reader-mode | foreground-dispatch (tryOverrides) | intent-dispatch (NDEF/AAR/TECH/TAG/handover match) | not-dispatched (dispatchTag: no match) | dropped-provisioning | unknown (reader mode off and no NfcDispatcher line logged)"
+    - name: reader_app
+      type: string
+      description: "Package holding reader mode when the tag was discovered; empty unless delivery is reader-mode"
+    - name: transceives
+      type: int
+      description: "Completed transceive calls"
+    - name: transceive_failures
+      type: int
+      description: "Transceives with a non-zero NFA_DATA_EVT status or a response timeout"
+    - name: exchange
+      type: string
+      description: "completed | failed | none"
+    - name: presence_checks
+      type: int
+      description: "Presence checks issued while the tag was held"
+    - name: reconnects
+      type: int
+      description: "Reconnects issued by the app/stack"
+    - name: end_reason
+      type: string
+      description: "tag-lost (presence check failed) or deactivated"
+    - name: duration_ms
+      type: int
+      description: "Discovered -> gone, ms"
+  mcp:
+    summary:
+      template: "{{sessions}} NFC tag sessions: {{sessions_with_exchange}} completed an exchange, {{sessions_no_exchange}} did not. {{transceive_failures}} transceive failures; shortest session {{shortest_ms}} ms. Delivery: {{delivery_counts}}."
+      include_vars: [sessions, sessions_with_exchange, sessions_no_exchange, transceive_failures, shortest_ms, delivery_counts]
+    signals:
+      - name: no_exchange_sessions
+        severity: warning
+        condition: "sessions_no_exchange > 0"
+        fields: [sessions_no_exchange, sessions]
+        format: "{{sessions_no_exchange}} of {{sessions}} tag sessions ended without a completed exchange — the card left the field or the transceive failed before the app got a response"
+        type: aggregate
+      - name: transceive_failures
+        severity: warning
+        condition: "transceive_failures > 0"
+        fields: [transceive_failures]
+        format: "{{transceive_failures}} tag transceive failures (non-zero NFA_DATA_EVT status or response timeout)"
+        type: aggregate

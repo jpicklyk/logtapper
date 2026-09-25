@@ -1,0 +1,245 @@
+meta:
+  id: "nfc-config-snapshot"
+  name: "NFC Config Snapshot"
+  version: "0.1.0"
+  author: "LogTapper"
+  description: "Capture-time NFC configuration from dumpsys nfc and the Samsung nfc extension dump: adapter and screen state, secure NFC, poll/listen tech masks, controller firmware, AID routing table fill (used/max), default route, wallet role and payment service, and a count of each Nfc Event Log event type (state changes, reader-mode changes, remote field on/off, AID registrations). Also surfaces controller errors recorded in the Samsung extension's persistent debug log, which survives across the logcat window."
+  tags: ["nfc", "dumpsys", "config", "samsung", "android"]
+  category: connectivity
+
+sections:
+  - "nfc"
+  - "nfc SamsungExtension"
+
+vars:
+  - name: adapter
+    type: string
+    default: "unknown"
+    display: true
+    label: "Adapter (mState)"
+  - name: screen_state
+    type: string
+    default: "unknown"
+    display: true
+    label: "Screen State"
+  - name: secure_nfc
+    type: string
+    default: "unknown"
+    display: true
+    label: "Secure NFC"
+  - name: poll_tech
+    type: string
+    default: ""
+    display: true
+    label: "Poll Tech Mask"
+  - name: listen_tech
+    type: string
+    default: ""
+    display: true
+    label: "Listen Tech Mask"
+  - name: firmware
+    type: string
+    default: ""
+    display: true
+    label: "Controller Firmware"
+  - name: routing_used
+    type: int
+    default: -1
+    display: true
+    label: "Routing Table Used"
+  - name: routing_max
+    type: int
+    default: -1
+    display: true
+    label: "Routing Table Max"
+  - name: routing_pct
+    type: int
+    default: -1
+    display: true
+    label: "Routing Table Fill %"
+  - name: default_route
+    type: string
+    default: ""
+    display: true
+    label: "Default Route"
+  - name: wallet_role
+    type: string
+    default: ""
+    display: true
+    label: "Wallet Role Holder"
+  - name: controller_errors
+    type: int
+    default: 0
+    display: true
+    label: "Controller Errors (Samsung debug log)"
+  - name: event_counts
+    type: map
+    default: {}
+    display: true
+    label: "Nfc Event Log by Type"
+    display_as: table
+    columns: ["event", "count"]
+  - name: _in_event_log
+    type: bool
+    default: false
+
+pipeline:
+  - stage: filter
+    rules:
+      - type: message_contains_any
+        values:
+          - "mState="
+          - "mScreenState="
+          - "mIsSecureNfcEnabled="
+          - "listenTech="
+          - "pollTech="
+          - "Firmware version="
+          - "Firmware Info: "
+          - "RoutingTableSize="
+          - "Default route: "
+          - "Wallet role package: "
+          - "===== Nfc Event Log"
+          - "enable_cplt_flags"
+          - "BEGIN:NFCSNOOP"
+          # Nfc Event Log rows: "2026-08-04 20:08:13.391:  bootup_state { ... }"
+          - ":  "
+          # Samsung persistent debug log
+          - "onNfcControllerError"
+
+  - stage: extract
+    fields:
+      - name: kv
+        pattern: '^(?:mState|mScreenState|mIsSecureNfcEnabled|listenTech|pollTech|Firmware version)=(\S+)'
+        cast: string
+      - name: key
+        pattern: '^(mState|mScreenState|mIsSecureNfcEnabled|listenTech|pollTech|Firmware version)='
+        cast: string
+      - name: fw_info
+        pattern: 'Firmware Info: (\S+)'
+        cast: string
+      - name: rt_used
+        pattern: 'RoutingTableSize=(\d+)/\d+'
+        cast: int
+      - name: rt_max
+        pattern: 'RoutingTableSize=\d+/(\d+)'
+        cast: int
+      - name: default_route
+        pattern: 'Default route: (\S+)'
+        cast: string
+      - name: wallet
+        pattern: 'Wallet role package: (\S+)'
+        cast: string
+      - name: event_type
+        pattern: '^\d{4}-\d\d-\d\d [\d:.]+:\s+(\w+) \{'
+        cast: string
+      - name: controller_error
+        pattern: 'onNfcControllerError: (.+)$'
+        cast: string
+
+  - stage: script
+    runtime: rhai
+    src: |
+      let msg = line.message;
+
+      if "===== Nfc Event Log" in msg { vars._in_event_log = true; return; }
+      if "enable_cplt_flags" in msg || "BEGIN:NFCSNOOP" in msg { vars._in_event_log = false; return; }
+
+      if "event_type" in fields {
+        if !vars._in_event_log { return; }
+        let ec = vars.event_counts;
+        let e = fields.event_type;
+        if e in ec { ec[e] = ec[e] + 1; } else { ec[e] = 1; }
+        vars.event_counts = ec;
+        return;
+      }
+
+      if "controller_error" in fields {
+        vars.controller_errors += 1;
+        _emits.push(#{ key: "controller_error", value: fields.controller_error });
+        return;
+      }
+
+      if "key" in fields && "kv" in fields {
+        let k = fields.key;
+        let v = fields.kv;
+        if k == "mState" { vars.adapter = v; }
+        else if k == "mScreenState" { vars.screen_state = v; }
+        else if k == "mIsSecureNfcEnabled" { vars.secure_nfc = v; }
+        else if k == "listenTech" { vars.listen_tech = v; }
+        else if k == "pollTech" { vars.poll_tech = v; }
+        else if k == "Firmware version" { vars.firmware = v; }
+        _emits.push(#{ key: k, value: v });
+        return;
+      }
+
+      if "fw_info" in fields {
+        if vars.firmware == "" { vars.firmware = fields.fw_info; }
+        return;
+      }
+
+      if "rt_used" in fields && "rt_max" in fields {
+        vars.routing_used = fields.rt_used;
+        vars.routing_max = fields.rt_max;
+        if fields.rt_max > 0 {
+          vars.routing_pct = (fields.rt_used * 100) / fields.rt_max;
+        }
+        _emits.push(#{ key: "RoutingTableSize", value: fields.rt_used.to_string() + "/" + fields.rt_max.to_string() });
+        return;
+      }
+
+      if "default_route" in fields {
+        vars.default_route = fields.default_route;
+        _emits.push(#{ key: "Default route", value: fields.default_route });
+        return;
+      }
+
+      if "wallet" in fields {
+        vars.wallet_role = fields.wallet;
+        _emits.push(#{ key: "Wallet role", value: fields.wallet });
+        return;
+      }
+
+  - stage: output
+    views:
+      - type: table
+        source: emissions
+        columns: ["key", "value"]
+      - type: summary
+        source: vars
+        template: |
+          Adapter {{adapter}}, screen {{screen_state}}, secure NFC {{secure_nfc}}. Poll {{poll_tech}} / listen {{listen_tech}}. Firmware {{firmware}}.
+          Routing table {{routing_used}}/{{routing_max}} ({{routing_pct}}%), default route {{default_route}}. Wallet role: {{wallet_role}}.
+          Controller errors in Samsung debug log: {{controller_errors}}.
+
+schema:
+  source_types: ["bugreport", "dumpstate"]
+  emissions:
+    - name: key
+      type: string
+      description: "Config key from dumpsys nfc"
+    - name: value
+      type: string
+      description: "Value at capture time"
+  mcp:
+    summary:
+      template: "At capture: adapter {{adapter}}, screen {{screen_state}}, secure NFC {{secure_nfc}}, poll {{poll_tech}}, listen {{listen_tech}}, firmware {{firmware}}. Routing table {{routing_used}}/{{routing_max}} ({{routing_pct}}%), default route {{default_route}}, wallet role {{wallet_role}}. Event log: {{event_counts}}. Samsung controller errors: {{controller_errors}}."
+      include_vars: [adapter, screen_state, secure_nfc, poll_tech, listen_tech, firmware, routing_used, routing_max, routing_pct, default_route, wallet_role, event_counts, controller_errors]
+    signals:
+      - name: nfc_off_at_capture
+        severity: warning
+        condition: "adapter == \"off\""
+        fields: [adapter]
+        format: "NFC was OFF when the capture was taken"
+        type: aggregate
+      - name: routing_table_near_full
+        severity: warning
+        condition: "routing_pct >= 90"
+        fields: [routing_used, routing_max, routing_pct]
+        format: "AID routing table {{routing_used}}/{{routing_max}} ({{routing_pct}}%) — new AID registrations may fail to commit"
+        type: aggregate
+      - name: controller_errors
+        severity: warning
+        condition: "controller_errors > 0"
+        fields: [controller_errors]
+        format: "{{controller_errors}} controller error(s) recorded in the Samsung NFC debug log"
+        type: aggregate

@@ -1,0 +1,12 @@
+name: NFC Diagnostics
+version: 1.0.0
+description: NFC analysis — adapter and RF state, reader-mode tag sessions, card-emulation field/HCE/AID routing, layered stack health (kernel, HAL, NCI, framework, eSE) with benign-pattern classification for NXP and ST controllers, and the dumpsys nfc capture-time snapshot
+author: LogTapper
+tags: [nfc, hce, reader-mode, hal, kernel, samsung, android]
+category: connectivity
+processors:
+  - nfc-state
+  - nfc-tag-sessions
+  - nfc-card-emulation
+  - nfc-stack-health
+  - nfc-config-snapshot
