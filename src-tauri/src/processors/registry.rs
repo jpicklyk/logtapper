@@ -169,8 +169,7 @@ pub async fn download_processor_from_source(
                 .await
                 .map_err(|e| format!("Failed to read processor YAML: {e}"))?;
 
-            verify_sha256(&yaml, &entry.sha256)
-                .map_err(|e| format!("Integrity check failed for '{}': {e}", entry.id))?;
+            verify_marketplace_file(&yaml, &entry.sha256, &entry.id, &source.source_type)?;
 
             Ok(yaml)
         }
@@ -184,8 +183,7 @@ pub async fn download_processor_from_source(
                 )
             })?;
 
-            verify_sha256(&yaml, &entry.sha256)
-                .map_err(|e| format!("Integrity check failed for '{}': {e}", entry.id))?;
+            verify_marketplace_file(&yaml, &entry.sha256, &entry.id, &source.source_type)?;
 
             Ok(yaml)
         }
@@ -258,6 +256,29 @@ pub async fn download_processor(
         .map_err(|e| format!("Integrity check failed for '{}': {e}", entry.id))?;
 
     Ok(yaml)
+}
+
+/// Verify a file downloaded from a marketplace source against the checksum its
+/// index lists. On a GitHub source a mismatch is usually not tampering: the
+/// index and the file are separate requests to raw.githubusercontent.com, whose
+/// CDN caches each for a few minutes, so right after a push one can be served
+/// fresh while the other is still the old copy. The error says so, so the user
+/// retries instead of concluding the source is corrupt.
+pub fn verify_marketplace_file(
+    content: &str,
+    expected_hex: &str,
+    label: &str,
+    source_type: &SourceType,
+) -> Result<(), String> {
+    verify_sha256(content, expected_hex).map_err(|e| {
+        let hint = match source_type {
+            SourceType::Github { .. } => {
+                " (if this source was just updated, GitHub may still be serving a cached copy; try again in a few minutes)"
+            }
+            SourceType::Local { .. } => "",
+        };
+        format!("Integrity check failed for '{label}': {e}{hint}")
+    })
 }
 
 /// Verify that the SHA-256 of `content` matches `expected_hex`.
@@ -463,6 +484,21 @@ mod tests {
     #[test]
     fn verify_sha256_rejects_mismatch() {
         assert!(verify_sha256("some content", "0000dead").is_err());
+    }
+
+    #[test]
+    fn verify_marketplace_file_hints_at_the_cdn_only_for_github() {
+        let github = SourceType::Github { repo: "o/r".to_string(), git_ref: "main".to_string() };
+        let local = SourceType::Local { path: "/tmp/m".to_string() };
+
+        let err = verify_marketplace_file("x", "0000dead", "wifi-state", &github).unwrap_err();
+        assert!(err.starts_with("Integrity check failed for 'wifi-state': SHA-256 mismatch"), "{err}");
+        assert!(err.contains("cached copy"), "{err}");
+
+        let err = verify_marketplace_file("x", "0000dead", "wifi-state", &local).unwrap_err();
+        assert!(!err.contains("cached copy"), "{err}");
+
+        assert!(verify_marketplace_file("x", "", "wifi-state", &github).is_ok());
     }
 
     // ── Malformed / edge-case marketplace JSON ──────────────────────────

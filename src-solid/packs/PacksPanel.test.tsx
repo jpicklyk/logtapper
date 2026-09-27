@@ -270,10 +270,75 @@ describe('PacksPanel', () => {
       expect(store.fetchEntries).toHaveBeenCalledWith('on');
     });
 
-    it('does not refetch on a later visit once a source is selected (D1-L10)', () => {
+    it('refetches the selected source on every later visit', () => {
       const store = fakeStore(); // selectedSource is already 'official'
+      const first = render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+      expect(store.fetchEntries).toHaveBeenCalledTimes(1);
+      expect(store.fetchEntries).toHaveBeenCalledWith('official');
+      first.unmount();
+
       render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
-      expect(store.fetchEntries).not.toHaveBeenCalled();
+      expect(store.fetchEntries).toHaveBeenCalledTimes(2);
+    });
+
+    it('re-runs the update check on every visit, unless one is already running', () => {
+      const store = fakeStore();
+      const first = render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+      expect(store.checkUpdates).toHaveBeenCalledTimes(1);
+      first.unmount();
+
+      render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+      expect(store.checkUpdates).toHaveBeenCalledTimes(2);
+      cleanup();
+
+      const busy = fakeStore({ updatesLoading: () => true });
+      render(() => <PacksPanel store={busy} sourcesPanel={<div />} />);
+      expect(busy.checkUpdates).not.toHaveBeenCalled();
+    });
+
+    it('replaces a selection whose source was removed instead of re-fetching it', () => {
+      const store = fakeStore({ selectedSource: () => 'deleted' });
+      render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+      expect(store.fetchEntries).toHaveBeenCalledTimes(1);
+      expect(store.fetchEntries).toHaveBeenCalledWith('official');
+    });
+
+    it('moves off the selected source when it is removed while the panel is open', async () => {
+      const official: Source = { name: 'official', type: 'github', repo: 'jpicklyk/logtapper', enabled: true, autoUpdate: true };
+      const local: Source = { name: 'local', type: 'local', path: '/m', enabled: true, autoUpdate: false };
+      const [sources, setSources] = createSignal<Source[]>([official, local]);
+      const store = fakeStore({ sources });
+      render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+      vi.mocked(store.fetchEntries).mockClear();
+
+      setSources([local]);
+      await Promise.resolve();
+      expect(store.fetchEntries).toHaveBeenCalledWith('local');
+    });
+
+    it('shows no catalog and disables Fetch once every source is gone', async () => {
+      const [sources, setSources] = createSignal<Source[]>([
+        { name: 'official', type: 'github', repo: 'jpicklyk/logtapper', enabled: true, autoUpdate: true },
+      ]);
+      const store = fakeStore({ sources });
+      render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+      expect(screen.getByTestId('pack-card-wifi-pack')).toBeTruthy();
+
+      setSources([]);
+      await Promise.resolve();
+      expect(screen.queryByTestId('pack-card-wifi-pack')).toBeNull();
+      expect((screen.getByRole('button', { name: /refresh|fetch/i }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('fetches only once on a first visit with no selection', async () => {
+      const [selectedSource, setSelectedSource] = createSignal<string | null>(null);
+      const store = fakeStore({
+        selectedSource,
+        fetchEntries: vi.fn((name: string) => { setSelectedSource(name); return Promise.resolve(); }),
+      });
+      render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+      await Promise.resolve();
+      expect(store.fetchEntries).toHaveBeenCalledTimes(1);
     });
   });
 

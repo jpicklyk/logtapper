@@ -93,7 +93,7 @@ describe('packsStore', () => {
     store.dispose();
   });
 
-  it('fetchEntries surfaces a rejection as entriesError and clears stale entries', async () => {
+  it('fetchEntries surfaces a rejection as entriesError', async () => {
     const fetchMarketplace = vi.fn(() => Promise.reject(new Error('network down')));
     const store = createPacksStore({ sources: noSources(), commands: baseCommands({ fetchMarketplace }) });
     await store.fetchEntries('official');
@@ -101,6 +101,37 @@ describe('packsStore', () => {
     expect(store.entries()).toEqual([]);
     expect(store.packEntries()).toEqual([]);
     expect(store.entriesLoading()).toBe(false);
+    store.dispose();
+  });
+
+  it('a failed refresh of the source on screen keeps its catalog under the error', async () => {
+    const fetchMarketplace = vi.fn<PacksCommands['fetchMarketplace']>()
+      .mockResolvedValueOnce({ processors: [procEntry], packs: [packEntry] })
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce({ processors: [procEntry], packs: [packEntry] });
+    const store = createPacksStore({ sources: noSources(), commands: baseCommands({ fetchMarketplace }) });
+    await store.fetchEntries('official');
+    await store.fetchEntries('official');
+    expect(store.entriesError()).toBe('Error: network down');
+    expect(store.entries()).toEqual([procEntry]);
+    expect(store.packEntries()).toEqual([packEntry]);
+
+    // The next good fetch clears the error.
+    await store.fetchEntries('official');
+    expect(store.entriesError()).toBeNull();
+    store.dispose();
+  });
+
+  it('a failed switch to another source clears the previous source\'s catalog', async () => {
+    const fetchMarketplace = vi.fn<PacksCommands['fetchMarketplace']>()
+      .mockResolvedValueOnce({ processors: [procEntry], packs: [packEntry] })
+      .mockRejectedValueOnce(new Error('HTTP 404'));
+    const store = createPacksStore({ sources: noSources(), commands: baseCommands({ fetchMarketplace }) });
+    await store.fetchEntries('official');
+    await store.fetchEntries('community');
+    expect(store.selectedSource()).toBe('community');
+    expect(store.entries()).toEqual([]);
+    expect(store.packEntries()).toEqual([]);
     store.dispose();
   });
 

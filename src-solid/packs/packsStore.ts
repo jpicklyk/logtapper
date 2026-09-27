@@ -232,6 +232,8 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
   const [entriesLoading, setEntriesLoading] = createSignal(false);
   const [entriesError, setEntriesError] = createSignal<string | null>(null);
   const fetchGuard = createGenerationGuard();
+  /** The source `entries`/`packEntries` were fetched from, if any. */
+  let loadedSource: string | null = null;
 
   const [installedPacks, setInstalledPacks] = createSignal<PackSummary[]>([]);
   const [installedProcessors, setInstalledProcessors] = createSignal<ProcessorSummary[]>([]);
@@ -274,6 +276,7 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
     try {
       const result = await commands.fetchMarketplace(sourceName);
       if (disposed || !fetchGuard.isCurrent(token)) return;
+      loadedSource = sourceName;
       batch(() => {
         setEntries(result.processors);
         setPackEntries(result.packs);
@@ -281,10 +284,18 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
       });
     } catch (e) {
       if (disposed || !fetchGuard.isCurrent(token)) return;
+      // The Packs tab re-fetches on every visit, so a network blip must not
+      // wipe a catalog that loaded fine: a failed refresh of the source already
+      // on screen keeps its entries under the error. Another source's entries
+      // are not this source's catalog, so a failed switch still clears them.
+      const keep = loadedSource === sourceName;
+      if (!keep) loadedSource = null;
       batch(() => {
         setEntriesError(String(e));
-        setEntries([]);
-        setPackEntries([]);
+        if (!keep) {
+          setEntries([]);
+          setPackEntries([]);
+        }
         setEntriesLoading(false);
       });
     }
