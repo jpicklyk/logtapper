@@ -174,7 +174,8 @@ mod tests {
     #[test]
     fn is_newer_different_lengths() {
         assert!(is_newer("1.0", "1.0.1"));
-        assert!(is_newer("1.0.1", "1.0"));
+        // "1.0" is "1.0.0", so offering it over 1.0.1 is a downgrade.
+        assert!(!is_newer("1.0.1", "1.0"));
         assert!(!is_newer("1.0", "1.0"));
     }
 
