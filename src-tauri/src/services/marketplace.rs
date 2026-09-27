@@ -189,11 +189,38 @@ pub struct UpdateResult {
 
 /// Compare installed version against marketplace version using SemVer.
 /// Returns true if `available` is newer than `installed`.
+///
+/// Parsing is lenient (see [`parse_version_lenient`]) so "v1.0.0" / "1.2"
+/// compare equal to "1.0.0" / "1.2.0". If either side is still unparseable
+/// the ordering is unknown and this returns false: an unknown ordering must
+/// never count as an update, or `auto_update` sources would silently apply
+/// downgrades and every UI check would re-report the same "update" forever.
 pub(crate) fn is_newer(installed: &str, available: &str) -> bool {
-    match (semver::Version::parse(installed), semver::Version::parse(available)) {
-        (Ok(inst), Ok(avail)) => avail > inst,
-        _ => installed != available,
+    match (parse_version_lenient(installed), parse_version_lenient(available)) {
+        (Some(inst), Some(avail)) => avail > inst,
+        _ => {
+            log::warn!(
+                "[marketplace] cannot order versions {installed:?} -> {available:?}; not treating as an update"
+            );
+            false
+        }
     }
+}
+
+/// Parse a version string as SemVer after stripping a leading `v`/`V` and
+/// padding a missing minor/patch with `0` ("1" → "1.0.0", "v1.2-rc.1" →
+/// "1.2.0-rc.1"). Returns `None` if the result still isn't valid SemVer.
+fn parse_version_lenient(raw: &str) -> Option<semver::Version> {
+    let s = raw.trim();
+    let s = s.strip_prefix(['v', 'V']).unwrap_or(s);
+    let core_end = s.find(['-', '+']).unwrap_or(s.len());
+    let (core, suffix) = s.split_at(core_end);
+    let padding = match core.split('.').count() {
+        1 => ".0.0",
+        2 => ".0",
+        _ => "",
+    };
+    semver::Version::parse(&format!("{core}{padding}{suffix}")).ok()
 }
 
 /// Compare installed packs against marketplace packs. Returns detected updates.
@@ -838,6 +865,39 @@ mod tests {
     fn is_newer_basic() {
         assert!(is_newer("1.0.0", "1.0.1"));
         assert!(!is_newer("1.0.0", "1.0.0"));
+    }
+
+    #[test]
+    fn is_newer_pads_missing_components() {
+        assert!(!is_newer("1.2", "1.2.0"));
+        assert!(!is_newer("1.2.0", "1.2"));
+        assert!(!is_newer("1", "1.0.0"));
+        assert!(is_newer("1.2", "1.2.1"));
+        assert!(is_newer("1.2", "1.3"));
+        assert!(is_newer("1.2-rc.1", "1.2"));
+    }
+
+    #[test]
+    fn is_newer_strips_leading_v() {
+        assert!(!is_newer("v1.0.0", "1.0.0"));
+        assert!(!is_newer("1.0.0", "V1.0.0"));
+        assert!(is_newer("v1.0.0", "v1.0.1"));
+    }
+
+    #[test]
+    fn is_newer_rejects_downgrades() {
+        assert!(!is_newer("1.0.1", "1.0.0"));
+        assert!(!is_newer("2.0", "1.9.9"));
+        assert!(!is_newer("v1.1", "1.0"));
+    }
+
+    #[test]
+    fn is_newer_unparseable_is_never_an_update() {
+        assert!(!is_newer("garbage", "1.0.0"));
+        assert!(!is_newer("1.0.0", "garbage"));
+        assert!(!is_newer("abc", "xyz"));
+        assert!(!is_newer("", "1.0.0"));
+        assert!(!is_newer("1.0.0.0", "1.0.1"));
     }
 
     #[test]
