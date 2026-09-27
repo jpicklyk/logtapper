@@ -180,6 +180,9 @@ pub struct AppState {
     pub pending_updates: Mutex<Vec<crate::commands::sources::UpdateAvailable>>,
     /// Pending pack updates found by the startup check (for UI badges).
     pub pending_pack_updates: Mutex<Vec<crate::commands::sources::PackUpdateAvailable>>,
+    /// Set at startup when `sources.json` needed repair (entries dropped, or
+    /// the file unreadable); shown in the Sources tab until dismissed.
+    pub sources_load_notice: Mutex<Option<crate::services::marketplace::SourcesLoadNotice>>,
     /// Pipeline chain per session, pushed by the frontend via set_session_pipeline_meta.
     /// Used by workspace save sites to persist SessionMeta with the actual chain state.
     pub session_pipeline_meta: Mutex<HashMap<String, crate::workspace::SessionMeta>>,
@@ -320,6 +323,7 @@ impl AppState {
             sources: Mutex::new(Vec::new()),
             pending_updates: Mutex::new(Vec::new()),
             pending_pack_updates: Mutex::new(Vec::new()),
+            sources_load_notice: Mutex::new(None),
             session_pipeline_meta: Mutex::new(HashMap::new()),
             packs: Mutex::new(Vec::new()),
             startup_file_path: Mutex::new(None),

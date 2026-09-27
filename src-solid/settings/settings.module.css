@@ -41,6 +41,8 @@
 .error { margin: 0; padding: 6px 8px; border: 1px solid var(--danger); border-radius: var(--radius-sm, 3px); color: var(--danger); background: var(--danger-muted); }
 .errorBanner { composes: error; display: flex; align-items: flex-start; gap: 6px; }
 .errorBannerText { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+/* sources.json needed repair at startup: a fact to acknowledge, not a failure of the last action. */
+.noticeBanner { display: flex; align-items: flex-start; gap: 6px; margin: 0; padding: 6px 8px; border: 1px solid var(--warning); border-radius: var(--radius-sm, 3px); color: var(--text); background: var(--warning-muted); }
 .appliedBadge { flex: 0 0 auto; padding: 0 6px; border-radius: var(--radius-sm, 3px); font-size: 10px; white-space: nowrap; color: var(--success); background: var(--success-muted); }
 .table { width: 100%; border-collapse: collapse; }
 .table th, .table td { padding: 3px 6px; border-bottom: 1px solid var(--border-subtle); text-align: left; font-weight: 400; }

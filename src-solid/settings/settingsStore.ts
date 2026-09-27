@@ -5,14 +5,14 @@ import { createRoot, createSignal, untrack } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import * as cmds from '@bridge/commands';
 import type {
-  AnonymizerConfig, AnonymizerMode, AnonymizerTestResult, FileAssocEntry, McpBundleInfo, McpHttpInfo, McpOpenAllowlist, McpStatus, Source, ThemeSummary, UserTheme,
+  AnonymizerConfig, AnonymizerMode, AnonymizerTestResult, FileAssocEntry, McpBundleInfo, McpHttpInfo, McpOpenAllowlist, McpStatus, Source, SourcesLoadNotice, ThemeSummary, UserTheme,
 } from '@bridge/types';
 import { validateUserTheme } from '../theme';
 export type SettingsCommands = Pick<typeof cmds,
   | 'getAnonymizerConfig' | 'setAnonymizerConfig' | 'testAnonymizer' | 'getPiiMappings' | 'getFileAssociationStatus'
   | 'setFileAssociation' | 'openDefaultAppsSettings' | 'getMcpOpenAllowlist' | 'setMcpOpenAllowlist' | 'setAgentRawAccess'
   | 'startMcpBridge' | 'stopMcpBridge' | 'listThemes' | 'readTheme' | 'writeTheme' | 'deleteTheme' | 'readTextFile'
-  | 'writeTextFile' | 'listSources' | 'addSource' | 'removeSource'
+  | 'writeTextFile' | 'listSources' | 'addSource' | 'removeSource' | 'restoreDefaultSources' | 'getSourcesLoadNotice' | 'dismissSourcesLoadNotice'
   | 'getMcpSidecarPath' | 'getMcpBundlePath' | 'getMcpHttpInfo' | 'setMcpHttpPort' | 'openMcpBundle' | 'saveMcpBundle'>;
 export interface SettingsStoreDeps {
   /** A2's bridge-status accessor (`presenceStore.status`) — read-only here. */
@@ -86,6 +86,10 @@ export interface SettingsStore {
   importThemeFromFile(path: string, slug: string): Promise<UserTheme>;
   exportThemeToFile(path: string, theme: UserTheme): Promise<void>;
   sources: Accessor<Source[]>; refreshSources(): void; addSource(source: Source): Promise<void>; removeSource(name: string): Promise<void>;
+  /** Re-add or reset the built-in `official` source (the repair for a damaged sources.json). */
+  restoreDefaultSources(): Promise<void>;
+  /** Set when sources.json needed repair at startup; stays until dismissed. */
+  sourcesLoadNotice: Accessor<SourcesLoadNotice | null>; refreshSourcesLoadNotice(): void; dismissSourcesLoadNotice(): Promise<void>;
   /** MCP agent setup (C1): sidecar path (`null` in a source checkout) and bundle info
    *  (`null` when the build ships no `.mcpb`), resolved together with `Promise.allSettled`
    *  so one command rejecting does not blank the other's answer. `mcpAgentResolved` gates
@@ -134,6 +138,7 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
     const [piiMappings, setPiiMappings] = createSignal<Record<string, string>>({});
     const [themes, setThemes] = createSignal<ThemeSummary[]>([]);
     const [sources, setSources] = createSignal<Source[]>([]);
+    const [sourcesLoadNotice, setSourcesLoadNotice] = createSignal<SourcesLoadNotice | null>(null);
     const [mcpSidecarPath, setMcpSidecarPath] = createSignal<string | null>(null);
     const [mcpBundleInfo, setMcpBundleInfo] = createSignal<McpBundleInfo | null>(null);
     const [mcpHttpInfo, setMcpHttpInfo] = createSignal<McpHttpInfo | null>(null);
@@ -295,6 +300,10 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
     const refreshSources = (): void => load(c.listSources, setSources, []);
     const addSourceFn = (source: Source): Promise<void> => mutate(c.addSource(source)).then(() => refreshSources());
     const removeSourceFn = (name: string): Promise<void> => mutate(c.removeSource(name)).then(() => refreshSources());
+    const restoreDefaultSourcesFn = (): Promise<void> => mutate(c.restoreDefaultSources()).then(() => refreshSources());
+    const refreshSourcesLoadNotice = (): void => load(c.getSourcesLoadNotice, setSourcesLoadNotice, null);
+    const dismissSourcesLoadNoticeFn = (): Promise<void> =>
+      mutate(c.dismissSourcesLoadNotice()).then(() => { if (!disposed) setSourcesLoadNotice(null); });
     // MCP agent setup (C1)
     /** Fires both reads together and marks the block resolved regardless of either
      *  outcome — a rejected `getMcpSidecarPath` (or vice versa) must not block the
@@ -321,7 +330,8 @@ export function createSettingsStore(deps: SettingsStoreDeps): SettingsStore {
       piiMappings, refreshPiiMappings,
       themes, refreshThemes, readTheme: c.readTheme, saveTheme, deleteTheme: deleteThemeFn,
       importThemeFromFile, exportThemeToFile,
-      sources, refreshSources, addSource: addSourceFn, removeSource: removeSourceFn,
+      sources, refreshSources, addSource: addSourceFn, removeSource: removeSourceFn, restoreDefaultSources: restoreDefaultSourcesFn,
+      sourcesLoadNotice, refreshSourcesLoadNotice, dismissSourcesLoadNotice: dismissSourcesLoadNoticeFn,
       mcpSidecarPath, mcpBundleInfo, mcpHttpEndpoint, mcpHttpError, mcpHttpPort, setMcpHttpPort, mcpAgentResolved, refreshMcpAgentSetup,
       installMcpBundle, saveMcpBundle: saveMcpBundleFn,
       error, clearError, dispose,

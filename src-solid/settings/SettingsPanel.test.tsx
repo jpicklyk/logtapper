@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
 import type {
-  AnonymizerConfig, AnonymizerMode, AnonymizerTestResult, FileAssocEntry, McpBundleInfo, McpStatus, Source, ThemeSummary, UserTheme,
+  AnonymizerConfig, AnonymizerMode, AnonymizerTestResult, FileAssocEntry, McpBundleInfo, McpStatus, Source, SourcesLoadNotice, ThemeSummary, UserTheme,
 } from '@bridge/types';
 import type { AppliedUserTheme, Density, ThemeController, ThemeMode } from '../theme';
 import { SettingsPanel } from './SettingsPanel';
@@ -36,7 +36,8 @@ function fakeStore(): SettingsStore {
     saveTheme: vi.fn(noop), deleteTheme: vi.fn(noop),
     importThemeFromFile: vi.fn(() => Promise.resolve({ name: '', base: 'dark', tokens: {} } as UserTheme)),
     exportThemeToFile: vi.fn(noop),
-    sources: () => [] as Source[], refreshSources: vi.fn(), addSource: vi.fn(noop), removeSource: vi.fn(noop),
+    sources: () => [] as Source[], refreshSources: vi.fn(), addSource: vi.fn(noop), removeSource: vi.fn(noop), restoreDefaultSources: vi.fn(noop),
+    sourcesLoadNotice: () => null as SourcesLoadNotice | null, refreshSourcesLoadNotice: vi.fn(), dismissSourcesLoadNotice: vi.fn(noop),
     mcpSidecarPath: () => null as string | null, mcpBundleInfo: () => null as McpBundleInfo | null,
     mcpHttpEndpoint: () => null as string | null, mcpHttpError: () => null as string | null,
     mcpHttpPort: () => 40405, setMcpHttpPort: vi.fn(() => Promise.resolve()),
@@ -400,6 +401,46 @@ describe('SourcesTab (D1-L9)', () => {
     fireEvent.click(tab.getByTitle('Remove source'));
     fireEvent.click(tab.getByRole('button', { name: 'Remove?' }));
     expect(store.removeSource).toHaveBeenCalledWith('official');
+  });
+
+  it('shows the sources.json repair notice with the backup path, and dismisses it', () => {
+    const store = fakeStore();
+    (store as { sourcesLoadNotice: () => SourcesLoadNotice | null }).sourcesLoadNotice = () => ({
+      skipped: 2, unreadable: false, backupPath: 'C:/data/sources.json.bak',
+    });
+    openSources(store);
+    expect(store.refreshSourcesLoadNotice).toHaveBeenCalled();
+    const notice = screen.getByTestId('sources-load-notice');
+    expect(notice.textContent).toContain('2 entries in sources.json could not be read');
+    expect(notice.textContent).toContain('C:/data/sources.json.bak');
+    fireEvent.click(within(notice).getByTitle('Dismiss notice'));
+    expect(store.dismissSourcesLoadNotice).toHaveBeenCalledTimes(1);
+  });
+
+  it('words the notice for an unreadable file whose backup failed', () => {
+    const store = fakeStore();
+    (store as { sourcesLoadNotice: () => SourcesLoadNotice | null }).sourcesLoadNotice = () => ({
+      skipped: 0, unreadable: true, backupPath: null,
+    });
+    openSources(store);
+    const text = screen.getByTestId('sources-load-notice').textContent ?? '';
+    expect(text).toContain('could not be read, so only the default source was restored');
+    expect(text).toContain('could not be backed up');
+  });
+
+  it('shows no notice when sources.json loaded cleanly', () => {
+    openSources(fakeStore());
+    expect(screen.queryByTestId('sources-load-notice')).toBeNull();
+  });
+
+  it('restores the default source in one click and shows a failure inline', async () => {
+    const store = fakeStore();
+    (store as { restoreDefaultSources: () => Promise<void> }).restoreDefaultSources = vi.fn(() => Promise.reject(new Error('disk full')));
+    openSources(store);
+    const tab = within(screen.getByTestId('sources-tab'));
+    fireEvent.click(tab.getByRole('button', { name: 'Restore default source' }));
+    expect(store.restoreDefaultSources).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(tab.getByRole('alert').textContent).toContain('disk full'));
   });
 });
 

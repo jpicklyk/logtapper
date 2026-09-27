@@ -5,14 +5,14 @@
 //! build a [`crate::commands::adapters::ui_ctx`], call one service function,
 //! marshal the `Result`.
 //!
-//! The DTOs, pure helpers (`is_newer`, `detect_pack_updates`,
-//! `chrono_now_iso`, `build_provenance_yaml`) and the `try_add_source` /
-//! `try_remove_source` cores all now live in `services::marketplace` and are
-//! re-exported here under their original names — `lib.rs`'s startup update
-//! check and `AppState.pending_updates` / `pending_pack_updates` (declared in
-//! `commands/mod.rs`) reference them via `commands::sources::*` and must keep
-//! compiling unchanged; ts-rs's `ROOT_TYPES!` list in
-//! `tests/export_bindings.rs` also names the DTOs at this path.
+//! The DTOs, pure helpers (`is_newer`, `detect_pack_updates`, …) and the
+//! `try_add_source` / `try_remove_source` cores all live in
+//! `services::marketplace`. The DTOs are re-exported here under their original
+//! names — `AppState.pending_updates` / `pending_pack_updates` (declared in
+//! `commands/mod.rs`) reference them via `commands::sources::*`, and ts-rs's
+//! `ROOT_TYPES!` list in `tests/export_bindings.rs` names them at this path.
+//! The startup update check (incl. auto-apply) is
+//! `services::marketplace::startup_check`, spawned from `lib.rs`.
 
 use tauri::AppHandle;
 
@@ -23,10 +23,9 @@ pub use svc::{
     MarketplaceEntryDto, MarketplaceFetchResult, MarketplacePackEntryDto, PackUpdateAvailable,
     SourceError, UpdateAvailable, UpdateCheckResult, UpdateResult,
 };
-pub(crate) use svc::{build_provenance_yaml, chrono_now_iso, detect_pack_updates, is_newer};
-// Only referenced by this file's own rollback-semantics tests below.
+// Only referenced by this file's own tests below.
 #[cfg(test)]
-pub(crate) use svc::{try_add_source, try_remove_source};
+pub(crate) use svc::{detect_pack_updates, is_newer, try_add_source, try_remove_source};
 
 // ---------------------------------------------------------------------------
 // Startup-only helper (needs a raw AppHandle before any ServiceCtx exists)
@@ -35,7 +34,7 @@ pub(crate) use svc::{try_add_source, try_remove_source};
 /// Load `sources.json` from disk, or an empty Vec if missing/corrupt. Called
 /// once at startup (`lib.rs`'s `.setup()`), before `AppState.sources` exists
 /// in memory.
-pub fn load_sources(app: &AppHandle) -> Vec<Source> {
+pub(crate) fn load_sources(app: &AppHandle) -> svc::LoadedSources {
     let paths = crate::commands::adapters::TauriPaths::new(app.clone());
     svc::load_sources_file(&paths)
 }
@@ -106,6 +105,24 @@ pub async fn update_all_from_source(app: AppHandle, source_name: String) -> Resu
 pub async fn save_sources_to_disk(app: AppHandle) -> Result<(), String> {
     let ctx = crate::commands::adapters::ui_ctx(&app);
     svc::save_sources_to_disk(&ctx).map_err(|e| e.message())
+}
+
+#[tauri::command]
+pub async fn restore_default_sources(app: AppHandle) -> Result<(), String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::restore_default_sources(&ctx).map_err(|e| e.message())
+}
+
+#[tauri::command]
+pub async fn get_sources_load_notice(app: AppHandle) -> Result<Option<svc::SourcesLoadNotice>, String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::sources_load_notice(&ctx).map_err(|e| e.message())
+}
+
+#[tauri::command]
+pub async fn dismiss_sources_load_notice(app: AppHandle) -> Result<(), String> {
+    let ctx = crate::commands::adapters::ui_ctx(&app);
+    svc::dismiss_sources_load_notice(&ctx).map_err(|e| e.message())
 }
 
 #[tauri::command]
@@ -734,7 +751,8 @@ mod tests {
         let json = serde_json::to_string_pretty(&sources).unwrap();
         std::fs::write(tmp.path().join("sources.json"), json).unwrap();
         let loaded = svc::load_sources_file(&paths);
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].name, "official");
+        assert!(loaded.notice.is_none());
+        assert_eq!(loaded.sources.len(), 1);
+        assert_eq!(loaded.sources[0].name, "official");
     }
 }

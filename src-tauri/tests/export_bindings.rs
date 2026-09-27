@@ -236,6 +236,8 @@ macro_rules! ROOT_TYPES {
             app_lib::services::processors::CatalogUpdateEvent,
             // --- startup update prompt: updates-available event -----------------
             app_lib::services::marketplace::UpdatesAvailableEvent,
+            // --- sources.json repair notice (Sources tab) ------------------------
+            app_lib::services::marketplace::SourcesLoadNotice,
         ]
     };
 }

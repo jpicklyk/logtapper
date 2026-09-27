@@ -1,14 +1,27 @@
 /** @jsxImportSource solid-js */
 import { For, Show, createSignal, onMount } from 'solid-js';
-import type { Source } from '@bridge/types';
+import type { Source, SourcesLoadNotice } from '@bridge/types';
 import type { SettingsStore } from './settingsStore';
 import styles from './settings.module.css';
 export interface SourcesTabProps { store: SettingsStore }
+/** One sentence describing what the startup load of sources.json had to do. */
+function describeNotice(n: SourcesLoadNotice): string {
+  const what = n.unreadable
+    ? 'sources.json could not be read, so only the default source was restored.'
+    : `${n.skipped} ${n.skipped === 1 ? 'entry' : 'entries'} in sources.json could not be read and ${n.skipped === 1 ? 'was' : 'were'} skipped.`;
+  const backup = n.backupPath
+    ? ` The original file was saved to ${n.backupPath}.`
+    : ' The original file could not be backed up.';
+  return what + backup;
+}
 const EMPTY_FORM = { name: '', type: 'github' as Source['type'], repo: '', path: '' };
 export function SourcesTab(props: SourcesTabProps) {
   const [form, setForm] = createSignal(EMPTY_FORM);
   const [error, setError] = createSignal<string | null>(null);
-  onMount(() => props.store.refreshSources());
+  onMount(() => {
+    props.store.refreshSources();
+    props.store.refreshSourcesLoadNotice();
+  });
   // Two-step remove: the first click arms the row, the second confirms. Every
   // other destructive action in these modules is confirm-gated; a marketplace
   // source is no cheaper to re-create than a theme (L9).
@@ -34,10 +47,29 @@ export function SourcesTab(props: SourcesTabProps) {
     setConfirmingRemove(null);
     props.store.removeSource(name).catch((e: unknown) => setError(String(e)));
   };
+  // Not confirm-gated: it never removes anything, and only touches the one
+  // source the app ships with.
+  const handleDismissNotice = (): void => {
+    props.store.dismissSourcesLoadNotice().catch((e: unknown) => setError(String(e)));
+  };
+  const handleRestore = (): void => {
+    setError(null);
+    props.store.restoreDefaultSources().catch((e: unknown) => setError(String(e)));
+  };
   return (
     <div class={styles.panel} data-testid="sources-tab">
       <div class={styles.section}>
         <div class={styles.sectionTitle}>Marketplace Sources</div>
+        <Show when={props.store.sourcesLoadNotice()}>
+          {(notice) => (
+            <div class={styles.noticeBanner} role="status" data-testid="sources-load-notice">
+              <span class={styles.errorBannerText}>
+                {describeNotice(notice())} Use Restore default source below if the official source is missing, and re-add any other source you need.
+              </span>
+              <button type="button" class={styles.iconBtn} title="Dismiss notice" onClick={handleDismissNotice}>×</button>
+            </div>
+          )}
+        </Show>
         <div class={styles.list}>
           <For each={props.store.sources()}>
             {(source) => (
@@ -55,6 +87,8 @@ export function SourcesTab(props: SourcesTabProps) {
           </For>
           <Show when={props.store.sources().length === 0}><span class={styles.labelHint}>No marketplace sources configured.</span></Show>
         </div>
+        <button type="button" class={styles.button} onClick={handleRestore}>Restore default source</button>
+        <span class={styles.labelHint}>Re-adds the official source, or resets it if it was changed. Other sources are kept.</span>
       </div>
       <div class={styles.section}>
         <div class={styles.sectionTitle}>Add Source</div>

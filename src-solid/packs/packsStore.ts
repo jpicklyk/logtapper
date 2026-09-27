@@ -434,7 +434,7 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
   };
 
   // ── Startup prompt ───────────────────────────────────────────────────────
-  // The backend's `startup_update_check` runs on its own at launch and parks
+  // The backend's `services::marketplace::startup_check` runs at launch and parks
   // what it found in `AppState`; it also emits `updates-available` when done.
   // Both are consumed: the seed read covers the check finishing before this
   // window subscribed, the event covers it finishing after. Either one opens

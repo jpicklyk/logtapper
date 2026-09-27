@@ -36,6 +36,7 @@ import type {
   SectionInfo,
   Source,
   MarketplaceFetchResult,
+  SourcesLoadNotice,
   UpdateCheckResult,
   UpdateResult,
   UpdateAvailable,
@@ -522,6 +523,20 @@ export function addSource(source: Source): Promise<void> {
 
 export function removeSource(sourceName: string): Promise<void> {
   return invoke('remove_source', { sourceName });
+}
+
+/** Re-add or reset the built-in `official` source; other sources are untouched. */
+export function restoreDefaultSources(): Promise<void> {
+  return invoke('restore_default_sources');
+}
+
+/** What went wrong loading sources.json at startup, or `null` if it loaded cleanly. */
+export function getSourcesLoadNotice(): Promise<SourcesLoadNotice | null> {
+  return invoke('get_sources_load_notice');
+}
+
+export function dismissSourcesLoadNotice(): Promise<void> {
+  return invoke('dismiss_sources_load_notice');
 }
 
 export function fetchMarketplace(sourceName: string): Promise<MarketplaceFetchResult> {

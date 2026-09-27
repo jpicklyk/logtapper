@@ -401,4 +401,54 @@ describe('settingsStore MCP agent setup (C1)', () => {
     expect(store.error()).toBe('Error: disk full');
     store.dispose();
   });
+
+  it('restoreDefaultSources calls the command, then re-reads the source list', async () => {
+    const restoreDefaultSources = vi.fn(() => Promise.resolve());
+    const listSources = vi.fn(() => Promise.resolve([
+      { name: 'official', type: 'github' as const, repo: 'jpicklyk/logtapper', enabled: true, autoUpdate: false },
+    ]));
+    const store = createSettingsStore({ mcpStatus: noStatus(), storage: memoryStorage(), commands: { restoreDefaultSources, listSources } });
+    await store.restoreDefaultSources();
+    await Promise.resolve();
+    expect(restoreDefaultSources).toHaveBeenCalledTimes(1);
+    expect(listSources).toHaveBeenCalled();
+    await vi.waitFor(() => expect(store.sources().map((s) => s.name)).toEqual(['official']));
+    store.dispose();
+  });
+
+  it('restoreDefaultSources rejection reaches the caller and the shared error channel', async () => {
+    const restoreDefaultSources = vi.fn(() => Promise.reject(new Error('disk full')));
+    const store = createSettingsStore({ mcpStatus: noStatus(), storage: memoryStorage(), commands: { restoreDefaultSources } });
+    await expect(store.restoreDefaultSources()).rejects.toThrow('disk full');
+    expect(store.error()).toBe('Error: disk full');
+    store.dispose();
+  });
+
+  it('the sources load notice is fetched on demand and cleared by a successful dismiss', async () => {
+    const notice = { skipped: 1, unreadable: false, backupPath: '/d/sources.json.bak' };
+    const getSourcesLoadNotice = vi.fn(() => Promise.resolve(notice));
+    const dismissSourcesLoadNotice = vi.fn(() => Promise.resolve());
+    const store = createSettingsStore({ mcpStatus: noStatus(), storage: memoryStorage(), commands: { getSourcesLoadNotice, dismissSourcesLoadNotice } });
+    expect(store.sourcesLoadNotice()).toBeNull();
+    store.refreshSourcesLoadNotice();
+    await vi.waitFor(() => expect(store.sourcesLoadNotice()).toEqual(notice));
+    await store.dismissSourcesLoadNotice();
+    expect(dismissSourcesLoadNotice).toHaveBeenCalledTimes(1);
+    expect(store.sourcesLoadNotice()).toBeNull();
+    store.dispose();
+  });
+
+  it('a failed dismiss keeps the notice and reports the error', async () => {
+    const notice = { skipped: 1, unreadable: false, backupPath: null };
+    const store = createSettingsStore({
+      mcpStatus: noStatus(), storage: memoryStorage(),
+      commands: { getSourcesLoadNotice: vi.fn(() => Promise.resolve(notice)), dismissSourcesLoadNotice: vi.fn(() => Promise.reject(new Error('locked'))) },
+    });
+    store.refreshSourcesLoadNotice();
+    await vi.waitFor(() => expect(store.sourcesLoadNotice()).toEqual(notice));
+    await expect(store.dismissSourcesLoadNotice()).rejects.toThrow('locked');
+    expect(store.sourcesLoadNotice()).toEqual(notice);
+    expect(store.error()).toBe('Error: locked');
+    store.dispose();
+  });
 });
