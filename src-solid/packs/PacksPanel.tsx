@@ -39,6 +39,7 @@ export function PacksPanel(props: PacksPanelProps): JSX.Element {
   const [confirmingRemoveProcId, setConfirmingRemoveProcId] = createSignal<string | null>(null);
 
   const enabledSources = createMemo(() => store().sources().filter((s) => s.enabled));
+  const isSelectable = (name: string): boolean => enabledSources().some((s) => s.name === name);
 
   // The source list belongs to `settingsStore`, and the only thing that used to
   // load it was `SourcesTab`'s own `onMount` — and `SourcesTab` is rendered
@@ -48,26 +49,55 @@ export function PacksPanel(props: PacksPanelProps): JSX.Element {
   // configured source the `<select>` is not rendered either, leaving the tab a
   // dead end until it was unmounted and remounted (D1-H1). Ask for the list
   // here when nobody has loaded it yet.
+  //
+  // The store outlives this panel, which `SettingsPanel` unmounts on every tab
+  // switch, so a source picked on an earlier visit keeps its catalog — which
+  // meant a published pack stayed invisible until the app restarted. Every
+  // visit re-fetches the selected source instead (the old entries stay on
+  // screen until the new ones land), and re-runs the update check so the
+  // "Update available" badges and the Updates list describe the same catalog
+  // the user is looking at, not whatever the startup check saw.
+  //
+  // This runs before the effect below (both are queued in declaration order),
+  // so a first visit with no selection still fetches exactly once, from the
+  // effect. A selection the loaded list no longer has is left to the effect,
+  // which replaces it; an unloaded list (empty) cannot tell us, so fetch.
   onMount(() => {
-    if (store().sources().length === 0) store().refreshSources();
+    const sources = store().sources();
+    if (sources.length === 0) store().refreshSources();
+    const selected = store().selectedSource();
+    if (selected && (sources.length === 0 || isSelectable(selected))) void store().fetchEntries(selected);
+    if (!store().updatesLoading()) void store().checkUpdates();
   });
 
   // Reactive, not `onMount`: the list arrives asynchronously and an `onMount`
   // read of `enabledSources()[0]` ran before it. Re-runs when the sources
-  // populate (or change), and the `!selectedSource()` guard means returning to
-  // the tab does not re-issue the network fetch — the store outlives this
-  // panel, which `SettingsPanel` unmounts on every tab switch (D1-L10).
+  // populate or change. A selection that is still an enabled source is left
+  // alone (the `onMount` refresh above covers it); one that was removed or
+  // disabled is replaced, or the tab would keep re-fetching a source that no
+  // longer exists — with one source left the `<select>` is hidden, so the
+  // user had no way off it.
   createEffect(() => {
-    if (store().selectedSource()) return;
+    const selected = store().selectedSource();
+    if (selected && isSelectable(selected)) return;
     const first = enabledSources()[0];
     if (first) void store().fetchEntries(first.name);
+  });
+
+  /** The selection, but only while it is still an enabled source. */
+  const activeSource = createMemo(() => {
+    const selected = store().selectedSource();
+    return selected && isSelectable(selected) ? selected : null;
   });
 
   const installedPackIds = createMemo(() => new Set(store().installedPacks().map((p) => p.id)));
   const installedProcessorIds = createMemo(() => new Set(store().installedProcessors().map((p) => p.id)));
   const entriesById = createMemo(() => new Map(store().entries().map((e) => [e.id, e])));
 
+  // The catalog on screen belongs to `activeSource`; once its source is removed
+  // or disabled (and nothing replaced it) there is no catalog to show or act on.
   const filteredPacks = createMemo(() => {
+    if (!activeSource()) return [];
     const q = query().trim().toLowerCase();
     return q ? store().packEntries().filter((p) => matchesQuery(p, q)) : store().packEntries();
   });
@@ -94,7 +124,9 @@ export function PacksPanel(props: PacksPanelProps): JSX.Element {
     for (const p of store().packEntries()) for (const pid of p.processorIds) ids.add(pid);
     return ids;
   });
-  const standaloneEntries = createMemo<MarketplaceEntry[]>(() => store().entries().filter((e) => !packMemberIds().has(e.id)));
+  const standaloneEntries = createMemo<MarketplaceEntry[]>(() =>
+    activeSource() ? store().entries().filter((e) => !packMemberIds().has(e.id)) : [],
+  );
 
   const handleSourceChange = (e: Event): void => {
     const name = (e.currentTarget as HTMLSelectElement).value;
@@ -103,14 +135,14 @@ export function PacksPanel(props: PacksPanelProps): JSX.Element {
   };
 
   const handleConfirmInstallPack = (entry: MarketplacePackEntry): void => {
-    const src = store().selectedSource();
+    const src = activeSource();
     if (!src) return;
     setConfirmingPackId(null);
     void store().installPack(src, entry);
   };
 
   const handleConfirmRemovePack = (packId: string): void => {
-    const src = store().selectedSource();
+    const src = activeSource();
     setConfirmingRemovePackId(null);
     if (!src) return;
     void store().uninstallPack(src, packId);
@@ -147,9 +179,9 @@ export function PacksPanel(props: PacksPanelProps): JSX.Element {
         <button
           type="button"
           class={styles.fetchBtn}
-          disabled={store().entriesLoading() || !store().selectedSource()}
+          disabled={store().entriesLoading() || !activeSource()}
           onClick={() => {
-            const s = store().selectedSource();
+            const s = activeSource();
             if (s) void store().fetchEntries(s);
           }}
         >
@@ -342,7 +374,7 @@ export function PacksPanel(props: PacksPanelProps): JSX.Element {
                         class={`${styles.btn} ${styles.btnPrimary}`}
                         disabled={store().isPending(entry.id)}
                         onClick={() => {
-                          const s = store().selectedSource();
+                          const s = activeSource();
                           if (s) void store().installProcessor(s, entry);
                         }}
                       >

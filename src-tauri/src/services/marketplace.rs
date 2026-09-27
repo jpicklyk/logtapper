@@ -700,6 +700,24 @@ pub async fn install_pack_from_marketplace(
         .map_err(ServiceError::Internal)?;
     let proc_map: HashMap<&str, &MarketplaceEntry> = index.processors.iter().map(|e| (e.id.as_str(), e)).collect();
 
+    // Fetch, verify and validate the manifest before touching any member, so
+    // a bad manifest cannot leave its processors half-installed. The index just
+    // fetched is authoritative for the checksum, as it is for the members below;
+    // the caller's copy of the entry is only the fallback for a pack the index
+    // no longer lists.
+    let expected_sha = index
+        .packs
+        .iter()
+        .find(|p| p.id == pack_entry.id)
+        .map_or(pack_entry.sha256.as_str(), |p| p.sha256.as_str());
+    let pack_yaml = download_text_from_source(ctx, &source, &pack_entry.path).await?;
+    registry::verify_marketplace_file(&pack_yaml, expected_sha, &pack_entry.id, &source.source_type)
+        .map_err(ServiceError::Internal)?;
+    let mut pack_meta: PackMeta =
+        crate::processors::pack::parse_pack_yaml(&pack_yaml).map_err(ServiceError::invalid_arg)?;
+    pack_meta.id = pack_entry.id.clone();
+    crate::processors::pack::validate_pack(&pack_meta).map_err(ServiceError::invalid_arg)?;
+
     for proc_id in &pack_entry.processor_ids {
         let qualified_id = marketplace::qualified_id(proc_id, source_name);
         let entry = proc_map.get(proc_id.as_str()).ok_or_else(|| {
@@ -720,12 +738,6 @@ pub async fn install_pack_from_marketplace(
 
         download_and_install_processor(ctx, &source, entry, &qualified_id).await?;
     }
-
-    let pack_yaml = download_text_from_source(ctx, &source, &pack_entry.path).await?;
-    let mut pack_meta: PackMeta =
-        crate::processors::pack::parse_pack_yaml(&pack_yaml).map_err(ServiceError::invalid_arg)?;
-    pack_meta.id = pack_entry.id.clone();
-    crate::processors::pack::validate_pack(&pack_meta).map_err(ServiceError::invalid_arg)?;
 
     // The marketplace index is authoritative for the pack version — reconcile
     // a lagging manifest version so `detect_pack_updates` doesn't re-report
@@ -1140,6 +1152,44 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].payload["action"], serde_json::json!("install"));
         assert_eq!(events[0].payload["ids"], serde_json::json!(["wifi-state@official", "wifi-pack"]));
+    }
+
+    #[tokio::test]
+    async fn install_pack_from_marketplace_rejects_a_manifest_that_fails_the_index_checksum() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("wifi-state.yaml"), FIXTURE_PROCESSOR_YAML).unwrap();
+        std::fs::write(dir.path().join("wifi-pack.pack.yaml"), FIXTURE_PACK_YAML).unwrap();
+        let listed = MarketplacePackEntry {
+            id: "wifi-pack".to_string(),
+            name: "WiFi Pack".to_string(),
+            version: "1.0.0".to_string(),
+            description: None,
+            path: "wifi-pack.pack.yaml".to_string(),
+            tags: vec![],
+            sha256: "0000dead".to_string(),
+            category: None,
+            processor_ids: vec!["wifi-state".to_string()],
+        };
+        let index = MarketplaceIndex {
+            name: "official".to_string(),
+            version: 2,
+            owner: None,
+            processors: vec![fixture_entry("1.0.0")],
+            packs: vec![listed.clone()],
+        };
+        std::fs::write(dir.path().join("marketplace.json"), serde_json::to_string(&index).unwrap()).unwrap();
+
+        let (ctx, sink, _tmp) = test_ctx().build_recording();
+        ctx.state().sources.lock().unwrap().push(local_source(dir.path()));
+
+        // The caller's copy carries no checksum; the index's must still apply.
+        let caller_copy = MarketplacePackEntry { sha256: String::new(), ..listed };
+        let err = install_pack_from_marketplace(&ctx, "official", caller_copy).await.unwrap_err();
+        assert!(err.message().contains("Integrity check failed for 'wifi-pack'"), "{}", err.message());
+
+        // Verified before any member is touched: nothing installed, nothing announced.
+        assert!(!ctx.state().processors.lock().unwrap().contains_key("wifi-state@official"));
+        assert!(sink.events_named("catalog-update").is_empty());
     }
 
     #[test]
