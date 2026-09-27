@@ -4,7 +4,7 @@ import type { UpdateAvailable } from "./UpdateAvailable";
 
 /**
  * Payload of the `updates-available` Tauri event, emitted once by the
- * startup marketplace check (`lib.rs::startup_update_check`) when it found
+ * startup marketplace check (`services::marketplace::startup_check`) when it found
  * anything to report: updates it left pending for the user, and processors
  * it already applied silently for `auto_update` sources. The UI turns the
  * pending half into the "Update all" prompt; the auto-applied half is

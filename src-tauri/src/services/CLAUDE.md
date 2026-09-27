@@ -168,7 +168,7 @@ indexer and the ADB reader task depend on landing on that runtime. Test doubles
 - **`deny_agent_gate_mutation(ctx, what) -> Result<(), ServiceError>`** — an agent may
   never widen its own gate. Called first by `set_anonymizer_config`, `set_open_allowlist`,
   `set_agent_raw_access` (the sharpest case — it decides whether an agent sees PII at all,
-  and has no bridge write route), `add_source`/`remove_source` (marketplace sources are a
+  and has no bridge write route), `add_source`/`remove_source`/`restore_default_sources` (marketplace sources are a
   supply-chain surface, same risk class). `Ui` passes; `Agent` gets `Forbidden`. A differently-worded inline check is used
   for `pii_mappings` (a *read*, not a mutation — the helper's message says "may not
   *modify*", the wrong word for a read) — same `Forbidden`/`NOT_ALLOWED` shape.
@@ -202,7 +202,7 @@ an empty `ids`, e.g. `update_all_from_source` finding nothing outdated). Mutatio
 `processors.rs`'s `install_yaml`/`install_from_file`/`uninstall`/`install_pack_yaml`/
 `load_pack_from_file`/`uninstall_pack`, and `marketplace.rs`'s `update_processor`/
 `update_all_from_source`/`install_from_marketplace`/`install_pack_from_marketplace`/
-`uninstall_pack_from_marketplace`. **Never** `add_source`/`remove_source` — those are the
+`uninstall_pack_from_marketplace`/`startup_check` (its auto-applied ids). **Never** `add_source`/`remove_source` — those are the
 human-only supply-chain gate (`policy::deny_agent_gate_mutation`), not a catalog change.
 
 Every processor installed by either caller is stamped with `_installed_by` provenance in
@@ -216,6 +216,34 @@ is populated at startup (`lib.rs::load_persisted_processors`) from the parsed
 `Provenance.installed_by`, next to the existing `_source` copy, and exposed on
 `ProcessorSummary.installed_by` (`skip_serializing_if` + `#[ts(optional)]`, absent for a
 built-in or a processor installed before this field existed). Packs get no provenance.
+
+## Marketplace update checks (`marketplace.rs`)
+
+`check_updates` is the **one** fetch/compare implementation — the Settings → Packs check,
+`GET /mcp/marketplace/updates` and the launch-time `startup_check` all go through it. It
+fetches enabled sources concurrently, stamps `last_checked` on each source that answered
+and re-persists `sources.json` itself, and **never applies anything** (it is a read; an
+agent reaches it via a `GET`). `startup_check` (spawned by `lib.rs`, skipped on first
+run) adds the only auto-apply: processor updates from `auto_update: true` sources,
+carrying the existing `installed_by` forward (a failed apply falls back to pending). It
+seeds `AppState::pending_updates`/`pending_pack_updates` **before** emitting
+`updates-available`, which `src-solid/packs/packsStore.ts` relies on (seed read at
+construction + event listener). Don't add a second loop in `lib.rs` or an adapter.
+
+**`sources.json` is loaded tolerantly** (`load_sources_file` → `parse_sources_tolerant`):
+each entry is deserialized on its own, so an entry this build can't read (a future
+`type`, a downgrade, a hand edit) or a duplicate name costs only that entry. A bad entry
+named `official`, or a file that isn't a JSON array at all, is replaced by
+`default_official_source()`; a valid `[]` stays empty (the user removed it on purpose).
+Whenever anything was dropped or recovered, the original is copied to `sources.json.bak`
+first, because the next save writes only what was readable, and `load_sources_file` returns
+a `SourcesLoadNotice { skipped, unreadable, backupPath }` that `lib.rs` parks in
+`AppState::sources_load_notice`. The Sources tab reads it (`sources_load_notice`, not
+consumed by reading) and shows a banner until the user dismisses it
+(`dismiss_sources_load_notice`, UI state only, not journaled). The user-facing repair is
+`restore_default_sources` (Settings → Packs → Advanced → "Restore default source"): it
+re-adds or resets `official` and leaves every other source alone. `default_official_source()`
+is the one definition of the official source — first-run seeding in `lib.rs` uses it too.
 
 ## Lock discipline
 

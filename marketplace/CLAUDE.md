@@ -27,8 +27,9 @@ marketplace/
 `check_updates` only detects version changes for **already-installed** processors. It compares each installed processor's version against the marketplace index entry with the same qualified ID (`{id}@{source_name}`).
 
 - **Updating an existing processor:** bump the version in both the YAML and `marketplace.json` — the "Updates" tab will show the new version.
+- **`auto_update` sources:** only the launch-time check (`services::marketplace::startup_check`) applies their processor updates silently. A manual "Check for updates" (Settings → Packs, or `GET /mcp/marketplace/updates`) never applies anything — it lists those updates as pending like any other source's. Pack updates are never auto-applied.
 - **Adding a new processor:** it will NOT appear in "check for updates." Users must browse the Marketplace and install it (or install/update a pack that includes it).
-- **Updating a pack:** `check_updates` runs a pack-level check too (`detect_pack_updates` in `commands/sources.rs`), which flags a pack when the index version is newer than the **installed manifest's** version, or when the index lists processor IDs the installed manifest doesn't have. Clicking "Update Pack" re-runs the pack install, which installs/updates every listed processor and re-persists the manifest.
+- **Updating a pack:** `check_updates` runs a pack-level check too (`detect_pack_updates` in `src-tauri/src/services/marketplace.rs`), which flags a pack when the index version is newer than the **installed manifest's** version, or when the index lists processor IDs the installed manifest doesn't have. Clicking "Update Pack" re-runs the pack install, which installs/updates every listed processor and re-persists the manifest.
   - **The installed manifest's `version` is what the check compares against** — not the index entry that was used to install it. If `packs/*.pack.yaml` lags its `marketplace.json` entry, the pack's update row reappears after every install and never clears. The `pack_yaml_versions_match_index` test in `commands/sources.rs` guards this.
 
 ## Version bumping checklist

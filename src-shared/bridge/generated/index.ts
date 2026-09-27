@@ -140,6 +140,7 @@ export type { Source } from './Source';
 export type { SourceError } from './SourceError';
 export type { SourceMatchRecord } from './SourceMatchRecord';
 export type { SourceReference } from './SourceReference';
+export type { SourcesLoadNotice } from './SourcesLoadNotice';
 export type { StartStreamRequest } from './StartStreamRequest';
 export type { StateSnapshot } from './StateSnapshot';
 export type { StateTransition } from './StateTransition';

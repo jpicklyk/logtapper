@@ -188,6 +188,9 @@ vi.mock('@bridge/commands', () => ({
   listSources: vi.fn(() => Promise.resolve([])),
   addSource: vi.fn(() => Promise.resolve()),
   removeSource: vi.fn(() => Promise.resolve()),
+  restoreDefaultSources: vi.fn(() => Promise.resolve()),
+  getSourcesLoadNotice: vi.fn(() => Promise.resolve(null)),
+  dismissSourcesLoadNotice: vi.fn(() => Promise.resolve()),
   // P1 added the packs store, which fetches installed packs/processors
   // (`listPacks`/`listProcessors` above) immediately at construction and
   // calls the rest of these only from a Packs-tab action no test here

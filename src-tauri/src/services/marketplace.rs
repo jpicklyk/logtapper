@@ -35,9 +35,9 @@ use super::{lock_svc, ServiceCtx, ServiceError};
 // ---------------------------------------------------------------------------
 // DTOs (moved from commands/sources.rs — camelCase wire shapes for the
 // frontend; unchanged field-for-field). `commands::sources` re-exports every
-// one of these under its old path so existing callers (lib.rs's startup
-// update check, `AppState.pending_updates`/`pending_pack_updates`, the
-// ts-rs `ROOT_TYPES!` list) keep compiling unchanged.
+// one of these under its old path so existing callers
+// (`AppState.pending_updates`/`pending_pack_updates`, the ts-rs
+// `ROOT_TYPES!` list) keep compiling unchanged.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -59,6 +59,25 @@ pub struct MarketplaceEntryDto {
 
 impl From<MarketplaceEntry> for MarketplaceEntryDto {
     fn from(e: MarketplaceEntry) -> Self {
+        Self {
+            id: e.id,
+            name: e.name,
+            version: e.version,
+            description: e.description,
+            path: e.path,
+            tags: e.tags,
+            sha256: e.sha256,
+            category: e.category,
+            license: e.license,
+            processor_type: e.processor_type,
+            source_types: e.source_types,
+            deprecated: e.deprecated,
+        }
+    }
+}
+
+impl From<MarketplaceEntryDto> for MarketplaceEntry {
+    fn from(e: MarketplaceEntryDto) -> Self {
         Self {
             id: e.id,
             name: e.name,
@@ -157,7 +176,7 @@ pub struct UpdateCheckResult {
 }
 
 /// Payload of the `updates-available` Tauri event, emitted once by the
-/// startup marketplace check (`lib.rs::startup_update_check`) when it found
+/// startup marketplace check (`services::marketplace::startup_check`) when it found
 /// anything to report: updates it left pending for the user, and processors
 /// it already applied silently for `auto_update` sources. The UI turns the
 /// pending half into the "Update all" prompt; the auto-applied half is
@@ -269,7 +288,7 @@ pub(crate) fn chrono_now_iso() -> String {
 /// `installed_by` is `"ui"` / `"agent:<client>"` for a fresh caller-driven
 /// install ([`super::processors::caller_provenance`]), or the previously
 /// recorded value (or `None`) when this is an automatic version bump that
-/// nobody explicitly triggered — see `lib.rs`'s `startup_update_check`.
+/// nobody explicitly triggered — see [`startup_check`].
 pub(crate) fn build_provenance_yaml(source_name: &str, version: &str, sha256: &str, installed_by: Option<&str>) -> String {
     let now = chrono_now_iso();
     let mut yaml = format!("\n_source: {source_name}\n_installed_version: {version}\n_installed_at: {now}\n_sha256: {sha256}\n");
@@ -316,16 +335,179 @@ fn sources_path(paths: &dyn AppPaths) -> Result<PathBuf, ServiceError> {
     Ok(paths.app_data_dir()?.join("sources.json"))
 }
 
-/// Load `sources.json`, or an empty Vec if it does not exist or is corrupt —
-/// mirrors `commands::sources::load_sources`'s tolerant startup behavior.
-pub(crate) fn load_sources_file(paths: &dyn AppPaths) -> Vec<Source> {
+/// Name of the built-in marketplace source every install is seeded with.
+pub(crate) const OFFICIAL_SOURCE_NAME: &str = "official";
+/// GitHub repo / ref the official source points at in release builds
+/// (debug builds point it at the local checkout instead).
+#[cfg(not(debug_assertions))]
+pub(crate) const OFFICIAL_GITHUB_REPO: &str = "jpicklyk/logtapper";
+#[cfg(not(debug_assertions))]
+pub(crate) const OFFICIAL_GITHUB_REF: &str = "main";
+
+/// The official source as a fresh install gets it — the one definition shared
+/// by first-run seeding (`lib.rs`), the tolerant loader's recovery, and
+/// [`restore_default_sources`]. Dev builds point at the checkout's
+/// `marketplace/` directory (`crate::resolve_dev_marketplace_path`), release
+/// builds at GitHub.
+pub(crate) fn default_official_source() -> Source {
+    #[cfg(debug_assertions)]
+    let source_type = SourceType::Local {
+        path: crate::resolve_dev_marketplace_path(),
+    };
+    #[cfg(not(debug_assertions))]
+    let source_type = SourceType::Github {
+        repo: OFFICIAL_GITHUB_REPO.to_string(),
+        git_ref: OFFICIAL_GITHUB_REF.to_string(),
+    };
+    Source {
+        name: OFFICIAL_SOURCE_NAME.to_string(),
+        source_type,
+        enabled: true,
+        auto_update: false,
+        last_checked: None,
+    }
+}
+
+/// Outcome of [`parse_sources_tolerant`].
+#[derive(Debug, Default)]
+pub(crate) struct ParsedSources {
+    pub sources: Vec<Source>,
+    /// Entries dropped: unreadable by this build, or a duplicate name.
+    pub skipped: usize,
+    /// The file was not a JSON array at all.
+    pub unreadable: bool,
+}
+
+/// Parse `sources.json` one entry at a time, so a single entry this build
+/// can't read (a future `type` variant, a field an older build doesn't know
+/// after a downgrade, a hand edit) costs that entry, not every source.
+///
+/// Recovery of the official source: when the whole file is unreadable, or the
+/// entry that failed is named `official`, the default official source is put
+/// in its place — the file shows the user had it, and a deliberate removal
+/// writes a valid file without it, so this never overrides that choice.
+pub(crate) fn parse_sources_tolerant(json: &str) -> ParsedSources {
+    let values: Vec<serde_json::Value> = match serde_json::from_str(json) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("[marketplace] sources.json is unreadable ({e}); restoring the default source");
+            return ParsedSources {
+                sources: vec![default_official_source()],
+                skipped: 0,
+                unreadable: true,
+            };
+        }
+    };
+    let mut out = ParsedSources::default();
+    for value in values {
+        let name = value.get("name").and_then(|n| n.as_str()).map(str::to_string);
+        let source = match serde_json::from_value::<Source>(value) {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("[marketplace] skipping unreadable sources.json entry {name:?}: {e}");
+                out.skipped += 1;
+                if name.as_deref() == Some(OFFICIAL_SOURCE_NAME) {
+                    default_official_source()
+                } else {
+                    continue;
+                }
+            }
+        };
+        if out.sources.iter().any(|s| s.name == source.name) {
+            log::warn!("[marketplace] skipping duplicate sources.json entry '{}'", source.name);
+            out.skipped += 1;
+            continue;
+        }
+        out.sources.push(source);
+    }
+    out
+}
+
+/// What went wrong loading `sources.json` at startup, for the Sources tab's
+/// notice. Parked in `AppState::sources_load_notice` by `lib.rs`'s setup and
+/// cleared only by `dismiss_sources_load_notice`; absent when the file
+/// loaded cleanly (or did not exist).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct SourcesLoadNotice {
+    /// Entries dropped: unreadable by this build, or a duplicate name.
+    #[ts(type = "number")]
+    pub skipped: usize,
+    /// The file could not be read as a list at all; only the default source
+    /// was restored.
+    pub unreadable: bool,
+    /// Where the original file was copied; empty if that copy failed.
+    pub backup_path: Option<String>,
+}
+
+/// [`load_sources_file`]'s result: the sources to use, and a notice when
+/// anything had to be dropped or recovered.
+#[derive(Debug, Default)]
+pub(crate) struct LoadedSources {
+    pub sources: Vec<Source>,
+    pub notice: Option<SourcesLoadNotice>,
+}
+
+/// Load `sources.json` tolerantly (see [`parse_sources_tolerant`]); empty
+/// if it does not exist. Whenever anything had to be dropped or recovered,
+/// the original file is first copied to `sources.json.bak`, so the next save
+/// (which writes only what was readable) can't destroy it, and a
+/// [`SourcesLoadNotice`] is returned for the UI.
+pub(crate) fn load_sources_file(paths: &dyn AppPaths) -> LoadedSources {
     let Ok(path) = sources_path(paths) else {
-        return Vec::new();
+        return LoadedSources::default();
     };
-    let Ok(json) = std::fs::read_to_string(&path) else {
-        return Vec::new();
+    if !path.exists() {
+        return LoadedSources::default();
+    }
+    let parsed = match std::fs::read_to_string(&path) {
+        Ok(json) => parse_sources_tolerant(&json),
+        Err(e) => {
+            log::warn!("[marketplace] could not read sources.json ({e}); restoring the default source");
+            ParsedSources {
+                sources: vec![default_official_source()],
+                skipped: 0,
+                unreadable: true,
+            }
+        }
     };
-    serde_json::from_str(&json).unwrap_or_default()
+    if !parsed.unreadable && parsed.skipped == 0 {
+        return LoadedSources {
+            sources: parsed.sources,
+            notice: None,
+        };
+    }
+    let backup = path.with_extension("json.bak");
+    let backup_path = match std::fs::copy(&path, &backup) {
+        Ok(_) => {
+            log::warn!("[marketplace] original sources.json kept at {}", backup.display());
+            Some(backup.to_string_lossy().to_string())
+        }
+        Err(e) => {
+            log::warn!("[marketplace] could not back up sources.json: {e}");
+            None
+        }
+    };
+    LoadedSources {
+        sources: parsed.sources,
+        notice: Some(SourcesLoadNotice {
+            skipped: parsed.skipped,
+            unreadable: parsed.unreadable,
+            backup_path,
+        }),
+    }
+}
+
+/// Pure core of [`restore_default_sources`]: `current` with the official
+/// source reset to `official` (in place, keeping its position) or added
+/// first if missing. Every other source is untouched.
+pub(crate) fn with_default_official(current: &[Source], official: Source) -> Vec<Source> {
+    let mut updated = current.to_vec();
+    match updated.iter_mut().find(|s| s.name == official.name) {
+        Some(existing) => *existing = official,
+        None => updated.insert(0, official),
+    }
+    updated
 }
 
 fn save_sources_file(paths: &dyn AppPaths, sources: &[Source]) -> Result<(), ServiceError> {
@@ -379,18 +561,51 @@ pub fn remove_source(ctx: &ServiceCtx, source_name: &str) -> Result<(), ServiceE
     Ok(())
 }
 
+/// Restore the built-in official source to its default definition — re-add
+/// it if it was removed, reset it if it was changed — leaving every other
+/// source as it is. The user-facing repair for a `sources.json` damaged by a
+/// schema change. **Agent-forbidden** — see the module doc.
+pub fn restore_default_sources(ctx: &ServiceCtx) -> Result<(), ServiceError> {
+    policy::deny_agent_gate_mutation(ctx, "marketplace sources")?;
+    let mut sources = lock_svc(&ctx.state().sources, "sources")?;
+    let updated = with_default_official(&sources, default_official_source());
+    save_sources_file(ctx.paths(), &updated)?;
+    *sources = updated;
+    drop(sources);
+    ctx.journal(
+        "source.restore",
+        None,
+        format!("restored the default marketplace source '{OFFICIAL_SOURCE_NAME}'"),
+    );
+    Ok(())
+}
+
+/// The startup [`SourcesLoadNotice`], if `sources.json` needed repair. Not
+/// consumed by reading — it stays until the user dismisses it, so reopening
+/// the tab still shows it.
+pub fn sources_load_notice(ctx: &ServiceCtx) -> Result<Option<SourcesLoadNotice>, ServiceError> {
+    Ok(lock_svc(&ctx.state().sources_load_notice, "sources_load_notice")?.clone())
+}
+
+/// Clear the startup [`SourcesLoadNotice`] (the user acknowledged it). UI
+/// state only — the sources themselves are untouched, so not journaled.
+pub fn dismiss_sources_load_notice(ctx: &ServiceCtx) -> Result<(), ServiceError> {
+    *lock_svc(&ctx.state().sources_load_notice, "sources_load_notice")? = None;
+    Ok(())
+}
+
 pub fn save_sources_to_disk(ctx: &ServiceCtx) -> Result<(), ServiceError> {
     let sources = lock_svc(&ctx.state().sources, "sources")?;
     save_sources_file(ctx.paths(), &sources)
 }
 
-/// Return and clear the pending-updates list discovered by the startup check.
+/// Return and clear the pending-updates list discovered by [`startup_check`].
 pub fn pending_updates(ctx: &ServiceCtx) -> Result<Vec<UpdateAvailable>, ServiceError> {
     let mut pending = lock_svc(&ctx.state().pending_updates, "pending_updates")?;
     Ok(std::mem::take(&mut *pending))
 }
 
-/// Return and clear the pending pack-updates list discovered by the startup check.
+/// Return and clear the pending pack-updates list discovered by [`startup_check`].
 pub fn pending_pack_updates(ctx: &ServiceCtx) -> Result<Vec<PackUpdateAvailable>, ServiceError> {
     let mut pending = lock_svc(&ctx.state().pending_pack_updates, "pending_pack_updates")?;
     Ok(std::mem::take(&mut *pending))
@@ -412,21 +627,32 @@ pub async fn fetch(ctx: &ServiceCtx, source_name: &str) -> Result<MarketplaceFet
     })
 }
 
-/// Check every enabled source for processor and pack updates.
+/// Check every enabled source for processor and pack updates — the one
+/// update-check implementation, shared by the Settings → Packs "Check for
+/// updates" button, `GET /mcp/marketplace/updates`, and [`startup_check`].
+///
+/// Sources are fetched concurrently (each fetch is bounded by the shared
+/// `http_client`'s timeout, so N slow sources cost one timeout, not N).
+/// Results keep the configured source order. Every source that answered gets
+/// its `last_checked` stamped, and `sources.json` is re-persisted
+/// (best-effort: a failed write is logged, not surfaced — the check itself
+/// succeeded).
+///
+/// **Never applies anything**, including for `auto_update` sources: this is a
+/// read (an agent reaches it through a `GET`), and a read must not install
+/// code. Auto-apply is launch-time only — see [`startup_check`]. A manual
+/// check therefore lists an `auto_update` source's updates as pending like
+/// any other source's, and the user applies them with the usual buttons.
 pub async fn check_updates(ctx: &ServiceCtx) -> Result<UpdateCheckResult, ServiceError> {
     let sources: Vec<Source> = {
         let s = lock_svc(&ctx.state().sources, "sources")?;
         s.iter().filter(|s| s.enabled).cloned().collect()
     };
-    let installed: HashMap<String, (String, String)> = {
+    let installed: HashMap<String, String> = {
         let procs = lock_svc(&ctx.state().processors, "processors")?;
         procs
             .iter()
-            .filter_map(|(qid, proc)| {
-                proc.source
-                    .as_ref()
-                    .map(|_src| (qid.clone(), (proc.meta.id.clone(), proc.meta.version.clone())))
-            })
+            .filter_map(|(qid, proc)| proc.source.as_ref().map(|_| (qid.clone(), proc.meta.version.clone())))
             .collect()
     };
     let installed_packs: HashMap<String, (String, Vec<String>)> = {
@@ -437,12 +663,21 @@ pub async fn check_updates(ctx: &ServiceCtx) -> Result<UpdateCheckResult, Servic
             .collect()
     };
 
+    let client = &ctx.state().http_client;
+    let fetched = futures_util::future::join_all(
+        sources
+            .iter()
+            .map(|source| async move { (source, registry::fetch_marketplace(client, source).await) }),
+    )
+    .await;
+
     let mut updates = Vec::new();
     let mut pack_updates = Vec::new();
     let mut errors = Vec::new();
+    let mut checked: Vec<&str> = Vec::new();
 
-    for source in &sources {
-        let index = match registry::fetch_marketplace(&ctx.state().http_client, source).await {
+    for (source, result) in fetched {
+        let index = match result {
             Ok(idx) => idx,
             Err(e) => {
                 errors.push(SourceError {
@@ -455,10 +690,10 @@ pub async fn check_updates(ctx: &ServiceCtx) -> Result<UpdateCheckResult, Servic
 
         for market_entry in &index.processors {
             let qid = marketplace::qualified_id(&market_entry.id, &source.name);
-            if let Some((_bare_id, inst_ver)) = installed.get(&qid) {
+            if let Some(inst_ver) = installed.get(&qid) {
                 if is_newer(inst_ver, &market_entry.version) {
                     updates.push(UpdateAvailable {
-                        processor_id: qid.clone(),
+                        processor_id: qid,
                         processor_name: market_entry.name.clone(),
                         source_name: source.name.clone(),
                         installed_version: inst_ver.clone(),
@@ -470,11 +705,17 @@ pub async fn check_updates(ctx: &ServiceCtx) -> Result<UpdateCheckResult, Servic
         }
 
         pack_updates.extend(detect_pack_updates(&installed_packs, &index.packs, &source.name));
+        checked.push(&source.name);
+    }
 
-        if let Ok(mut srcs) = ctx.state().sources.lock() {
-            if let Some(s) = srcs.iter_mut().find(|s| s.name == source.name) {
-                s.last_checked = Some(chrono_now_iso());
-            }
+    if !checked.is_empty() {
+        let mut srcs = lock_svc(&ctx.state().sources, "sources")?;
+        let now = chrono_now_iso();
+        for s in srcs.iter_mut().filter(|s| checked.contains(&s.name.as_str())) {
+            s.last_checked = Some(now.clone());
+        }
+        if let Err(e) = save_sources_file(ctx.paths(), &srcs) {
+            log::warn!("[marketplace] update check could not persist last_checked: {}", e.message());
         }
     }
 
@@ -483,6 +724,102 @@ pub async fn check_updates(ctx: &ServiceCtx) -> Result<UpdateCheckResult, Servic
         pack_updates,
         errors,
     })
+}
+
+/// The launch-time update check (spawned from `lib.rs`'s `setup`, skipped on
+/// first run): [`check_updates`], then the one thing a manual check never
+/// does — silently apply every processor update offered by a source with
+/// `auto_update: true`.
+///
+/// - An auto-applied update carries forward the processor's existing
+///   `installed_by` provenance (nobody triggered this version bump; see
+///   [`build_provenance_yaml`]). One that fails to apply is logged and falls
+///   back to pending, so the user still sees it.
+/// - Pack updates are never auto-applied (a pack update can pull in new
+///   processors, which is an install, not a version bump).
+/// - What is left pending is parked in `AppState::pending_updates` /
+///   `pending_pack_updates` **before** `updates-available` is emitted — the
+///   frontend reads that seed at construction and also listens for the
+///   event, so either order of "check finishes" vs "window subscribes" works
+///   (`src-solid/packs/packsStore.ts`).
+/// - Auto-applied ids ride `catalog-update` (action `"update"`) like every
+///   other catalog mutation, and are journaled.
+/// - `updates-available` is emitted only when there is something to report.
+///
+/// Per-source fetch failures are logged; the returned event is exactly what
+/// was emitted (or would have been, if empty).
+pub async fn startup_check(ctx: &ServiceCtx) -> Result<UpdatesAvailableEvent, ServiceError> {
+    let check = check_updates(ctx).await?;
+    for e in &check.errors {
+        log::warn!("[marketplace] startup update check: source '{}' failed: {}", e.source_name, e.error);
+    }
+
+    let auto_sources: HashMap<String, Source> = {
+        let srcs = lock_svc(&ctx.state().sources, "sources")?;
+        srcs.iter()
+            .filter(|s| s.enabled && s.auto_update)
+            .map(|s| (s.name.clone(), s.clone()))
+            .collect()
+    };
+
+    let mut pending = Vec::new();
+    let mut auto_applied = Vec::new();
+    for update in check.updates {
+        let Some(source) = auto_sources.get(&update.source_name) else {
+            pending.push(update);
+            continue;
+        };
+        match auto_apply(ctx, source, &update).await {
+            Ok(()) => {
+                log::info!(
+                    "[marketplace] auto-updated {} from {} to {}",
+                    update.processor_id,
+                    update.installed_version,
+                    update.available_version
+                );
+                auto_applied.push(update.processor_id);
+            }
+            Err(e) => {
+                log::warn!("[marketplace] auto-update of {} failed: {}", update.processor_id, e.message());
+                pending.push(update);
+            }
+        }
+    }
+
+    *lock_svc(&ctx.state().pending_updates, "pending_updates")? = pending.clone();
+    *lock_svc(&ctx.state().pending_pack_updates, "pending_pack_updates")? = check.pack_updates.clone();
+
+    if !auto_applied.is_empty() {
+        ctx.journal(
+            "processor.install",
+            None,
+            format!("auto-updated {} processor(s) from auto-update sources", auto_applied.len()),
+        );
+        super::processors::emit_catalog_update(ctx, "update", auto_applied.clone());
+    }
+
+    let event = UpdatesAvailableEvent {
+        updates: pending,
+        pack_updates: check.pack_updates,
+        auto_applied,
+    };
+    if !event.updates.is_empty() || !event.pack_updates.is_empty() || !event.auto_applied.is_empty() {
+        ctx.events()
+            .emit_json(UPDATES_AVAILABLE_EVENT, serde_json::to_value(&event).unwrap_or_default());
+    }
+    Ok(event)
+}
+
+/// Apply one update found by [`check_updates`] without attributing it to a
+/// caller: the processor keeps whatever `installed_by` it already had.
+async fn auto_apply(ctx: &ServiceCtx, source: &Source, update: &UpdateAvailable) -> Result<(), ServiceError> {
+    let existing_installed_by = {
+        let procs = lock_svc(&ctx.state().processors, "processors")?;
+        procs.get(&update.processor_id).and_then(|p| p.installed_by.clone())
+    };
+    let entry = MarketplaceEntry::from(update.entry.clone());
+    install_processor_with_provenance(ctx, source, &entry, &update.processor_id, existing_installed_by).await?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -497,19 +834,32 @@ async fn download_and_install_processor(
     entry: &MarketplaceEntry,
     qualified_id: &str,
 ) -> Result<AnyProcessor, ServiceError> {
+    let installed_by = super::processors::caller_provenance(ctx.caller());
+    install_processor_with_provenance(ctx, source, entry, qualified_id, Some(installed_by)).await
+}
+
+/// [`download_and_install_processor`] with the `installed_by` provenance
+/// supplied explicitly — `None` when an automatic version bump
+/// ([`auto_apply`]) carries forward a processor that predates the field.
+async fn install_processor_with_provenance(
+    ctx: &ServiceCtx,
+    source: &Source,
+    entry: &MarketplaceEntry,
+    qualified_id: &str,
+    installed_by: Option<String>,
+) -> Result<AnyProcessor, ServiceError> {
     let yaml = registry::download_processor_from_source(&ctx.state().http_client, source, entry)
         .await
         .map_err(ServiceError::Internal)?;
-    let installed_by = super::processors::caller_provenance(ctx.caller());
     let final_yaml = format!(
         "{}{}",
         yaml,
-        build_provenance_yaml(&source.name, &entry.version, &entry.sha256, Some(&installed_by))
+        build_provenance_yaml(&source.name, &entry.version, &entry.sha256, installed_by.as_deref())
     );
     let mut def = AnyProcessor::from_yaml(&final_yaml)
         .map_err(|e| ServiceError::invalid_arg(format!("Failed to parse processor YAML: {e}")))?;
     def.source = Some(source.name.clone());
-    def.installed_by = Some(installed_by);
+    def.installed_by = installed_by;
 
     super::processors::persist_processor_file(ctx.paths(), qualified_id, &final_yaml)?;
 
@@ -928,7 +1278,7 @@ mod tests {
         assert_eq!(sources(&ctx).unwrap().len(), 1);
         let path = ctx.paths().app_data_dir().unwrap().join("sources.json");
         assert!(path.exists());
-        let on_disk = load_sources_file(ctx.paths());
+        let on_disk = load_sources_file(ctx.paths()).sources;
         assert_eq!(on_disk.len(), 1);
         let events = sink.events_named("activity");
         assert_eq!(events[0].payload["action"], serde_json::json!("source.add"));
@@ -1310,5 +1660,410 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(summary.installed_by.as_deref(), Some("ui"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Tolerant sources.json loading + restore_default_sources
+    // -----------------------------------------------------------------------
+
+    fn write_sources_json(ctx: &ServiceCtx, json: &str) -> PathBuf {
+        let path = ctx.paths().app_data_dir().unwrap().join("sources.json");
+        std::fs::write(&path, json).unwrap();
+        path
+    }
+
+    const GOOD_OFFICIAL: &str = r#"{"name":"official","type":"github","repo":"jpicklyk/logtapper","ref":"main","enabled":true,"autoUpdate":false}"#;
+    const GOOD_MINE: &str = r#"{"name":"mine","type":"local","path":"/tmp/m","enabled":true,"autoUpdate":true}"#;
+    /// An entry from a hypothetical future build: a source type this one doesn't know.
+    const FUTURE_ENTRY: &str = r#"{"name":"future","type":"s3","bucket":"b","enabled":true}"#;
+
+    #[test]
+    fn a_valid_sources_file_loads_unchanged_and_is_not_backed_up() {
+        let (ctx, _tmp) = test_ctx().build();
+        let path = write_sources_json(&ctx, &format!("[{GOOD_OFFICIAL},{GOOD_MINE}]"));
+        let loaded = load_sources_file(ctx.paths());
+        assert!(loaded.notice.is_none(), "a clean load raises no notice");
+        let names: Vec<&str> = loaded.sources.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["official", "mine"]);
+        assert!(!path.with_extension("json.bak").exists());
+    }
+
+    #[test]
+    fn one_unreadable_entry_costs_only_that_entry_and_backs_the_file_up() {
+        let (ctx, _tmp) = test_ctx().build();
+        let original = format!("[{GOOD_OFFICIAL},{FUTURE_ENTRY},{GOOD_MINE}]");
+        let path = write_sources_json(&ctx, &original);
+
+        let loaded = load_sources_file(ctx.paths());
+
+        let names: Vec<&str> = loaded.sources.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["official", "mine"]);
+        let backup = path.with_extension("json.bak");
+        assert_eq!(
+            std::fs::read_to_string(&backup).unwrap(),
+            original,
+            "the original must survive the next save"
+        );
+        assert_eq!(
+            loaded.notice,
+            Some(SourcesLoadNotice {
+                skipped: 1,
+                unreadable: false,
+                backup_path: Some(backup.to_string_lossy().to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn an_unreadable_official_entry_is_replaced_by_the_default_in_place() {
+        let broken_official = r#"{"name":"official","type":"s3","enabled":true}"#;
+        let parsed = parse_sources_tolerant(&format!("[{GOOD_MINE},{broken_official}]"));
+        assert_eq!(parsed.skipped, 1);
+        let names: Vec<&str> = parsed.sources.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["mine", "official"]);
+        assert_eq!(
+            serde_json::to_value(&parsed.sources[1]).unwrap(),
+            serde_json::to_value(default_official_source()).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_json_array_recovers_the_default_source_and_is_backed_up() {
+        let (ctx, _tmp) = test_ctx().build();
+        let path = write_sources_json(&ctx, "{ this is not json");
+
+        let loaded = load_sources_file(ctx.paths());
+
+        assert_eq!(loaded.sources.len(), 1);
+        assert_eq!(loaded.sources[0].name, OFFICIAL_SOURCE_NAME);
+        assert_eq!(std::fs::read_to_string(path.with_extension("json.bak")).unwrap(), "{ this is not json");
+        let notice = loaded.notice.expect("an unreadable file raises a notice");
+        assert!(notice.unreadable);
+        assert_eq!(notice.skipped, 0);
+    }
+
+    #[test]
+    fn a_deliberately_emptied_source_list_stays_empty() {
+        let (ctx, _tmp) = test_ctx().build();
+        write_sources_json(&ctx, "[]");
+        assert!(load_sources_file(ctx.paths()).sources.is_empty(), "removing 'official' on purpose must stick");
+    }
+
+    #[test]
+    fn duplicate_names_keep_the_first_entry() {
+        let dup = r#"{"name":"mine","type":"local","path":"/other","enabled":false,"autoUpdate":false}"#;
+        let parsed = parse_sources_tolerant(&format!("[{GOOD_MINE},{dup}]"));
+        assert_eq!(parsed.skipped, 1);
+        assert_eq!(parsed.sources.len(), 1);
+        assert!(parsed.sources[0].enabled);
+    }
+
+    #[test]
+    fn a_missing_sources_file_loads_empty() {
+        let (ctx, _tmp) = test_ctx().build();
+        assert!(load_sources_file(ctx.paths()).sources.is_empty());
+    }
+
+    #[test]
+    fn restore_default_sources_re_adds_a_removed_official_and_keeps_custom_sources() {
+        let (ctx, sink, _tmp) = test_ctx().build_recording();
+        add_source(&ctx, test_source("mine")).unwrap();
+        sink.clear();
+
+        restore_default_sources(&ctx).unwrap();
+
+        let names: Vec<String> = sources(&ctx).unwrap().into_iter().map(|s| s.name).collect();
+        assert_eq!(names, vec!["official".to_string(), "mine".to_string()]);
+        let on_disk: Vec<String> = load_sources_file(ctx.paths()).sources.into_iter().map(|s| s.name).collect();
+        assert_eq!(on_disk, names, "restore persists before committing");
+        assert_eq!(sink.events_named("activity")[0].payload["action"], serde_json::json!("source.restore"));
+    }
+
+    #[test]
+    fn restore_default_sources_resets_a_changed_official_in_place() {
+        let (ctx, _tmp) = test_ctx().build();
+        let mut changed = test_source("official");
+        changed.enabled = false;
+        changed.auto_update = true;
+        add_source(&ctx, test_source("mine")).unwrap();
+        add_source(&ctx, changed).unwrap();
+
+        restore_default_sources(&ctx).unwrap();
+
+        let after = sources(&ctx).unwrap();
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[0].name, "mine");
+        assert_eq!(
+            serde_json::to_value(&after[1]).unwrap(),
+            serde_json::to_value(default_official_source()).unwrap()
+        );
+    }
+
+    #[test]
+    fn the_sources_load_notice_survives_reads_until_dismissed() {
+        let (ctx, _tmp) = test_ctx().build();
+        assert_eq!(sources_load_notice(&ctx).unwrap(), None);
+        let notice = SourcesLoadNotice {
+            skipped: 2,
+            unreadable: false,
+            backup_path: Some("/data/sources.json.bak".to_string()),
+        };
+        *ctx.state().sources_load_notice.lock().unwrap() = Some(notice.clone());
+
+        assert_eq!(sources_load_notice(&ctx).unwrap(), Some(notice.clone()));
+        assert_eq!(sources_load_notice(&ctx).unwrap(), Some(notice), "reading must not consume it");
+
+        dismiss_sources_load_notice(&ctx).unwrap();
+        assert_eq!(sources_load_notice(&ctx).unwrap(), None);
+    }
+
+    #[test]
+    fn the_sources_load_notice_serializes_camel_case_for_the_ui() {
+        let v = serde_json::to_value(SourcesLoadNotice {
+            skipped: 1,
+            unreadable: true,
+            backup_path: None,
+        })
+        .unwrap();
+        assert_eq!(v, serde_json::json!({ "skipped": 1, "unreadable": true, "backupPath": null }));
+    }
+
+    #[test]
+    fn restore_default_sources_is_forbidden_for_an_agent_caller() {
+        let (ctx, _tmp) = test_ctx().agent("claude-code").build();
+        let err = restore_default_sources(&ctx).unwrap_err();
+        assert_eq!(err.code(), "NOT_ALLOWED");
+        assert!(sources(&ctx).unwrap().is_empty(), "the agent's write must not have applied");
+    }
+
+    // -----------------------------------------------------------------------
+    // check_updates / startup_check — one implementation, auto-apply only at
+    // startup
+    // -----------------------------------------------------------------------
+
+    fn processor_yaml(version: &str) -> String {
+        format!("meta:\n  id: wifi-state\n  name: WiFi State\n  version: {version}\n")
+    }
+
+    fn named_local_source(name: &str, dir: &std::path::Path, auto_update: bool) -> Source {
+        Source {
+            name: name.to_string(),
+            auto_update,
+            ..local_source(dir)
+        }
+    }
+
+    fn fixture_pack_entry(version: &str) -> MarketplacePackEntry {
+        MarketplacePackEntry {
+            id: "wifi-pack".to_string(),
+            name: "WiFi Pack".to_string(),
+            version: version.to_string(),
+            description: None,
+            path: "wifi-pack.pack.yaml".to_string(),
+            tags: vec![],
+            sha256: String::new(),
+            category: None,
+            processor_ids: vec!["wifi-state".to_string()],
+        }
+    }
+
+    /// A local marketplace offering `wifi-state` at `version`, with the
+    /// processor file on disk at that same version.
+    fn marketplace_offering(version: &str, packs: Vec<MarketplacePackEntry>) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("wifi-state.yaml"), processor_yaml(version)).unwrap();
+        let index = MarketplaceIndex {
+            name: "official".to_string(),
+            version: 2,
+            owner: None,
+            processors: vec![fixture_entry(version)],
+            packs,
+        };
+        std::fs::write(dir.path().join("marketplace.json"), serde_json::to_string(&index).unwrap()).unwrap();
+        dir
+    }
+
+    fn installed_version(ctx: &ServiceCtx, qid: &str) -> String {
+        ctx.state().processors.lock().unwrap()[qid].meta.version.clone()
+    }
+
+    #[tokio::test]
+    async fn check_updates_reports_but_never_applies_even_for_an_auto_update_source() {
+        let market = marketplace_offering("2.0.0", vec![]);
+        let (ctx, sink, _tmp) = test_ctx().build_recording();
+        ctx.state().sources.lock().unwrap().push(named_local_source("official", market.path(), true));
+        install_current(&ctx);
+
+        let result = check_updates(&ctx).await.unwrap();
+
+        assert_eq!(result.updates.len(), 1);
+        assert_eq!(result.updates[0].processor_id, "wifi-state@official");
+        assert_eq!(result.updates[0].available_version, "2.0.0");
+        assert!(result.errors.is_empty());
+        assert_eq!(installed_version(&ctx, "wifi-state@official"), "1.0.0", "a manual check must not apply");
+        assert!(sink.events_named("catalog-update").is_empty());
+        assert!(sink.events_named(UPDATES_AVAILABLE_EVENT).is_empty(), "only the startup check emits");
+    }
+
+    #[tokio::test]
+    async fn check_updates_stamps_and_persists_last_checked_for_reachable_sources_only() {
+        let market = marketplace_offering("1.0.0", vec![]);
+        let missing = tempfile::tempdir().unwrap();
+        let (ctx, _tmp) = test_ctx().build();
+        {
+            let mut srcs = ctx.state().sources.lock().unwrap();
+            srcs.push(named_local_source("official", market.path(), false));
+            srcs.push(named_local_source("broken", &missing.path().join("nope"), false));
+        }
+
+        let result = check_updates(&ctx).await.unwrap();
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(result.errors[0].source_name, "broken");
+
+        let in_memory = sources(&ctx).unwrap();
+        assert!(in_memory[0].last_checked.is_some());
+        assert!(in_memory[1].last_checked.is_none(), "a source that failed to fetch was not checked");
+        let on_disk = load_sources_file(ctx.paths()).sources;
+        assert_eq!(on_disk.len(), 2);
+        assert_eq!(on_disk[0].last_checked, in_memory[0].last_checked, "check_updates persists sources.json itself");
+    }
+
+    #[tokio::test]
+    async fn check_updates_fetches_every_source_and_keeps_configured_order() {
+        let a = marketplace_offering("2.0.0", vec![]);
+        let b = marketplace_offering("3.0.0", vec![]);
+        let (ctx, _tmp) = test_ctx().build();
+        {
+            let mut srcs = ctx.state().sources.lock().unwrap();
+            srcs.push(named_local_source("alpha", a.path(), false));
+            srcs.push(named_local_source("beta", b.path(), false));
+        }
+        for src in ["alpha", "beta"] {
+            let mut proc = AnyProcessor::from_yaml(FIXTURE_PROCESSOR_YAML).unwrap();
+            proc.source = Some(src.to_string());
+            ctx.state().processors.lock().unwrap().insert(format!("wifi-state@{src}"), proc);
+        }
+
+        let result = check_updates(&ctx).await.unwrap();
+        let got: Vec<(&str, &str)> = result
+            .updates
+            .iter()
+            .map(|u| (u.processor_id.as_str(), u.available_version.as_str()))
+            .collect();
+        assert_eq!(got, vec![("wifi-state@alpha", "2.0.0"), ("wifi-state@beta", "3.0.0")]);
+    }
+
+    #[tokio::test]
+    async fn startup_check_auto_applies_for_an_auto_update_source_and_keeps_installed_by() {
+        let market = marketplace_offering("2.0.0", vec![]);
+        let (ctx, sink, tmp) = test_ctx().build_recording();
+        ctx.state().sources.lock().unwrap().push(named_local_source("official", market.path(), true));
+        install_current(&ctx);
+        ctx.state()
+            .processors
+            .lock()
+            .unwrap()
+            .get_mut("wifi-state@official")
+            .unwrap()
+            .installed_by = Some("agent:claude".to_string());
+
+        let event = startup_check(&ctx).await.unwrap();
+
+        assert_eq!(event.auto_applied, vec!["wifi-state@official".to_string()]);
+        assert!(event.updates.is_empty());
+        assert_eq!(installed_version(&ctx, "wifi-state@official"), "2.0.0");
+
+        // Provenance is carried forward, not re-attributed to the startup ctx's `Ui` caller.
+        let proc_installed_by = ctx.state().processors.lock().unwrap()["wifi-state@official"].installed_by.clone();
+        assert_eq!(proc_installed_by.as_deref(), Some("agent:claude"));
+        let yaml_path = tmp
+            .path()
+            .join("processors")
+            .join(format!("{}.yaml", marketplace::id_to_filename("wifi-state@official")));
+        let prov: Provenance = serde_yaml::from_str(&std::fs::read_to_string(yaml_path).unwrap()).unwrap();
+        assert_eq!(prov.installed_by.as_deref(), Some("agent:claude"));
+        assert_eq!(prov.installed_version.as_deref(), Some("2.0.0"));
+
+        let catalog = sink.events_named("catalog-update");
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].payload["action"], serde_json::json!("update"));
+        assert_eq!(catalog[0].payload["ids"], serde_json::json!(["wifi-state@official"]));
+        let available = sink.events_named(UPDATES_AVAILABLE_EVENT);
+        assert_eq!(available.len(), 1);
+        assert_eq!(available[0].payload["autoApplied"], serde_json::json!(["wifi-state@official"]));
+        assert!(pending_updates(&ctx).unwrap().is_empty(), "an applied update is not pending");
+    }
+
+    #[tokio::test]
+    async fn startup_check_seeds_pending_state_before_emitting_for_a_manual_source() {
+        let market = marketplace_offering("2.0.0", vec![fixture_pack_entry("2.0.0")]);
+        let (ctx, sink, _tmp) = test_ctx().build_recording();
+        ctx.state().sources.lock().unwrap().push(named_local_source("official", market.path(), false));
+        install_current(&ctx);
+        ctx.state().packs.lock().unwrap().push(PackMeta {
+            id: "wifi-pack".to_string(),
+            name: "WiFi Pack".to_string(),
+            version: "1.0.0".to_string(),
+            author: String::new(),
+            description: String::new(),
+            tags: vec![],
+            category: None,
+            license: None,
+            repository: None,
+            deprecated: false,
+            processors: vec!["wifi-state".to_string()],
+        });
+
+        let event = startup_check(&ctx).await.unwrap();
+
+        assert!(event.auto_applied.is_empty());
+        assert_eq!(installed_version(&ctx, "wifi-state@official"), "1.0.0");
+        assert!(sink.events_named("catalog-update").is_empty());
+
+        let available = sink.events_named(UPDATES_AVAILABLE_EVENT);
+        assert_eq!(available.len(), 1);
+        assert_eq!(available[0].payload["updates"][0]["processorId"], serde_json::json!("wifi-state@official"));
+        assert_eq!(available[0].payload["packUpdates"][0]["packId"], serde_json::json!("wifi-pack"));
+
+        // The seed the frontend reads at construction (packsStore.ts).
+        let seeded = pending_updates(&ctx).unwrap();
+        assert_eq!(seeded.len(), 1);
+        assert_eq!(seeded[0].processor_id, "wifi-state@official");
+        let seeded_packs = pending_pack_updates(&ctx).unwrap();
+        assert_eq!(seeded_packs.len(), 1);
+        assert_eq!(seeded_packs[0].pack_id, "wifi-pack");
+    }
+
+    #[tokio::test]
+    async fn startup_check_falls_back_to_pending_when_an_auto_apply_fails() {
+        let market = marketplace_offering("2.0.0", vec![]);
+        // The index still offers 2.0.0 but the processor file is gone.
+        std::fs::remove_file(market.path().join("wifi-state.yaml")).unwrap();
+        let (ctx, sink, _tmp) = test_ctx().build_recording();
+        ctx.state().sources.lock().unwrap().push(named_local_source("official", market.path(), true));
+        install_current(&ctx);
+
+        let event = startup_check(&ctx).await.unwrap();
+
+        assert!(event.auto_applied.is_empty());
+        assert_eq!(event.updates.len(), 1, "a failed auto-apply must still reach the user");
+        assert_eq!(installed_version(&ctx, "wifi-state@official"), "1.0.0");
+        assert!(sink.events_named("catalog-update").is_empty());
+        assert_eq!(pending_updates(&ctx).unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn startup_check_emits_nothing_when_everything_is_current() {
+        let market = marketplace_offering("1.0.0", vec![]);
+        let (ctx, sink, _tmp) = test_ctx().build_recording();
+        ctx.state().sources.lock().unwrap().push(named_local_source("official", market.path(), true));
+        install_current(&ctx);
+
+        let event = startup_check(&ctx).await.unwrap();
+
+        assert!(event.updates.is_empty() && event.pack_updates.is_empty() && event.auto_applied.is_empty());
+        assert!(sink.events_named(UPDATES_AVAILABLE_EVENT).is_empty());
+        assert!(sink.events_named("catalog-update").is_empty());
+        assert!(sources(&ctx).unwrap()[0].last_checked.is_some());
     }
 }

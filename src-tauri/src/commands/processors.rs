@@ -6,16 +6,6 @@ use crate::processors::{AnyProcessor, PackSummary, ProcessorSummary};
 use crate::services::processors as svc;
 use ts_rs::TS;
 
-/// Persist a processor YAML to disk. Kept as a direct `AppHandle`-based
-/// helper — `lib.rs`'s startup auto-update path calls this before any
-/// `ServiceCtx` exists — but delegates to the same `AppPaths`-based writer
-/// [`crate::services::processors::install_yaml`] uses, so there is exactly
-/// one place that knows the on-disk layout.
-pub(crate) fn persist_processor(app: &AppHandle, id: &str, yaml: &str) -> Result<(), String> {
-    let paths = crate::commands::adapters::TauriPaths::new(app.clone());
-    svc::persist_processor_file(&paths, id, yaml).map_err(|e| e.message())
-}
-
 /// Pure validation checks for an `AnyProcessor` — no I/O, no AppHandle needed.
 /// Returns `Ok(())` if all checks pass, or an error string describing the problem.
 pub(crate) fn validate_processor(processor: &AnyProcessor) -> Result<(), String> {
