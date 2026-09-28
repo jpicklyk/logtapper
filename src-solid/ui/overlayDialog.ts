@@ -1,14 +1,11 @@
 /**
- * The a11y wiring both analyzer overlays need, in one place (D1-L6).
- *
- * `packs/UpdatesPrompt.tsx` already does this correctly — `role="dialog"`,
- * `aria-modal`, an autofocused control, Escape to dismiss — while
- * `AnalyzerDetail` and `AddAnalyzer` were bare `<div class={styles.overlay}>`s:
- * no role, no Escape, no focus move, so a keyboard user tabbed straight past
- * the overlay into the panel behind it and had no way out. The pattern is
- * hand-rolled once here rather than a third and fourth time, and stays inside
- * `analyzers/` because `packs/` is a sibling module (nothing may import across
- * except through a barrel, and `ui/` is not this package's to extend).
+ * The a11y wiring an in-app overlay dialog needs, in one place (D1-L6):
+ * `role="dialog"`, `aria-modal`, focus moved in on open and restored on close,
+ * Escape to dismiss. `AnalyzerDetail` and `AddAnalyzer` were once bare
+ * `<div class={styles.overlay}>`s — no role, no Escape, no focus move, so a
+ * keyboard user tabbed straight past the overlay into the panel behind it.
+ * Lives in `ui/` so every module (analyzers, packs) reaches it through the
+ * barrel instead of hand-rolling another copy.
  *
  * Escape is handled on the overlay root rather than on `window`: the panel can
  * have both overlays mounted at once, and a window listener would dismiss both
