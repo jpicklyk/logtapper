@@ -241,7 +241,7 @@ a `SourcesLoadNotice { skipped, unreadable, backupPath }` that `lib.rs` parks in
 `AppState::sources_load_notice`. The Sources tab reads it (`sources_load_notice`, not
 consumed by reading) and shows a banner until the user dismisses it
 (`dismiss_sources_load_notice`, UI state only, not journaled). The user-facing repair is
-`restore_default_sources` (Settings → Packs → Advanced → "Restore default source"): it
+`restore_default_sources` (Settings → Packs → Sources → "Restore default source"): it
 re-adds or resets `official` and leaves every other source alone. `default_official_source()`
 is the one definition of the official source — first-run seeding in `lib.rs` uses it too.
 

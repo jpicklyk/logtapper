@@ -74,10 +74,17 @@ function fakeStore(overrides: Partial<PacksStore> = {}): PacksStore {
     updateOne: vi.fn(() => Promise.resolve()),
     updateAllFromSource: vi.fn(() => Promise.resolve()),
     updatePack: vi.fn(() => Promise.resolve()),
+    updateAll: vi.fn(() => Promise.resolve({ failedProcessorIds: [], failedPackIds: [] })),
+    updatingAll: () => false,
+    updateAllProgress: () => ({ done: 0, total: 0 }),
     dispose: vi.fn(),
     ...overrides,
   } as PacksStore;
 }
+
+const openTab = (id: 'browse' | 'installed' | 'updates' | 'library' | 'sources'): void => {
+  fireEvent.click(screen.getByTestId(`packs-subtab-${id}`));
+};
 
 describe('PacksPanel', () => {
   it('fetches the first enabled source when nothing is selected yet', () => {
@@ -100,13 +107,14 @@ describe('PacksPanel', () => {
     expect(screen.getByText('Battery Pack')).toBeTruthy();
   });
 
-  it('does not install a pack on one click: shows a preview of its member analyzers first, gated behind Confirm add', () => {
+  it('does not install a pack on one click: opens its details listing the member analyzers, gated behind Confirm add', () => {
     const store = fakeStore();
     render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
     const card = screen.getByTestId('pack-card-wifi-pack');
     fireEvent.click(within(card).getByText('Add pack'));
     expect(store.installPack).not.toHaveBeenCalled();
-    const preview = screen.getByTestId('pack-preview-wifi-pack');
+    const preview = screen.getByTestId('pack-details-wifi-pack');
+    expect(preview.getAttribute('role')).toBe('dialog');
     expect(within(preview).getByText('WiFi State')).toBeTruthy();
     expect(within(preview).getByText('Tracks WiFi association')).toBeTruthy();
     // wlan-disconnect has no matching fetched entry, falls back to the bare id
@@ -120,19 +128,35 @@ describe('PacksPanel', () => {
     render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
     const card = screen.getByTestId('pack-card-wifi-pack');
     fireEvent.click(within(card).getByText('Add pack'));
-    fireEvent.click(screen.getByTestId('pack-preview-wifi-pack').querySelector('button:last-child')!);
+    fireEvent.click(within(screen.getByTestId('pack-details-wifi-pack')).getByText('Cancel'));
     expect(store.installPack).not.toHaveBeenCalled();
-    expect(screen.queryByTestId('pack-preview-wifi-pack')).toBeNull();
+    expect(screen.queryByTestId('pack-details-wifi-pack')).toBeNull();
   });
 
-  it('removing an installed pack requires a second confirming click', () => {
+  it('Escape closes the details dialog without reaching the drawer behind it', () => {
+    const store = fakeStore();
+    const onWindowKey = vi.fn();
+    window.addEventListener('keydown', onWindowKey);
+    render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+    fireEvent.click(within(screen.getByTestId('pack-card-wifi-pack')).getByText('Add pack'));
+    const dialog = screen.getByTestId('pack-details-wifi-pack');
+    expect(document.activeElement).toBe(dialog);
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+    expect(screen.queryByTestId('pack-details-wifi-pack')).toBeNull();
+    expect(onWindowKey).not.toHaveBeenCalled();
+    window.removeEventListener('keydown', onWindowKey);
+  });
+
+  it('removing an installed pack from its details requires a second confirming click', () => {
     const store = fakeStore({ installedPacks: () => [{ id: 'wifi-pack' } as PackSummary] });
     render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
     const card = screen.getByTestId('pack-card-wifi-pack');
     expect(within(card).getByText('Added')).toBeTruthy();
-    fireEvent.click(within(card).getByText('Remove'));
+    fireEvent.click(within(card).getByText('Details'));
+    const dialog = screen.getByTestId('pack-details-wifi-pack');
+    fireEvent.click(within(dialog).getByText('Remove'));
     expect(store.uninstallPack).not.toHaveBeenCalled();
-    fireEvent.click(within(card).getByText('Confirm remove'));
+    fireEvent.click(within(dialog).getByText('Confirm remove'));
     expect(store.uninstallPack).toHaveBeenCalledWith('official', 'wifi-pack');
   });
 
@@ -153,8 +177,11 @@ describe('PacksPanel', () => {
 
     // Update used to REPLACE Remove, so a pack with a pending update could
     // only be uninstalled by updating it first.
-    fireEvent.click(within(card).getByText('Remove'));
-    fireEvent.click(within(card).getByText('Confirm remove'));
+    fireEvent.click(within(card).getByText('Details'));
+    const dialog = screen.getByTestId('pack-details-wifi-pack');
+    expect(within(dialog).getByText('Update')).toBeTruthy();
+    fireEvent.click(within(dialog).getByText('Remove'));
+    fireEvent.click(within(dialog).getByText('Confirm remove'));
     expect(store.uninstallPack).toHaveBeenCalledWith('official', 'wifi-pack');
   });
 
@@ -166,22 +193,88 @@ describe('PacksPanel', () => {
     expect(screen.queryByText('WiFi Pack')).toBeNull();
   });
 
-  it('hides pack-member processors from the Advanced library and lists only standalone entries', () => {
+  it('category chips narrow the grid and show per-category counts', () => {
     const store = fakeStore();
     render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+    const power = screen.getByTestId('packs-chip-Power');
+    expect(power.textContent).toContain('1');
+    fireEvent.click(power);
+    expect(power.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('pack-card-battery-pack')).toBeTruthy();
+    expect(screen.queryByTestId('pack-card-wifi-pack')).toBeNull();
+    fireEvent.click(power);
+    expect(screen.getByTestId('pack-card-wifi-pack')).toBeTruthy();
+  });
+
+  it('the status filter shows only added or only not-added packs', () => {
+    const store = fakeStore({ installedPacks: () => [{ id: 'wifi-pack' } as PackSummary] });
+    render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+    const select = screen.getByLabelText('Show packs');
+    fireEvent.change(select, { target: { value: 'added' } });
+    expect(screen.getByTestId('pack-card-wifi-pack')).toBeTruthy();
+    expect(screen.queryByTestId('pack-card-battery-pack')).toBeNull();
+    fireEvent.change(select, { target: { value: 'available' } });
+    expect(screen.queryByTestId('pack-card-wifi-pack')).toBeNull();
+    expect(screen.getByTestId('pack-card-battery-pack')).toBeTruthy();
+  });
+
+  it('a search with no pack match points at matching Library analyzers', () => {
+    const store = fakeStore();
+    render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+    fireEvent.input(screen.getByLabelText('Filter packs'), { target: { value: 'anr' } });
+    fireEvent.click(screen.getByText(/1 individual analyzer in the Library match/));
+    expect(screen.getByTestId('library-row-anr-detector')).toBeTruthy();
+    expect((screen.getByLabelText('Filter analyzers') as HTMLInputElement).value).toBe('anr');
+  });
+
+  it('Installed lists packs and standalone marketplace analyzers from any source', () => {
+    const store = fakeStore({
+      installedPacks: () => [{ id: 'bt-pack', name: 'BT Pack', version: '2.0.0', processorIds: ['bt@team'] } as PackSummary],
+      installedProcessors: () => [
+        { id: 'bt@team', name: 'BT', version: '2.0.0', builtin: false, source: 'team', packId: 'bt-pack' } as ProcessorSummary,
+        { id: 'anr@official', name: 'ANR', version: '1.0.0', builtin: false, source: 'official' } as ProcessorSummary,
+        { id: 'builtin-x', name: 'Builtin', version: '1.0.0', builtin: true } as ProcessorSummary,
+      ],
+    });
+    render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+    expect(screen.getByTestId('packs-subtab-installed').textContent).toBe('Installed (2)');
+    openTab('installed');
+    expect(screen.queryByTestId('installed-processor-bt@team')).toBeNull();
+    expect(screen.queryByTestId('installed-processor-builtin-x')).toBeNull();
+
+    // The pack came from 'team', not the 'official' source being browsed.
+    const pack = screen.getByTestId('installed-pack-bt-pack');
+    fireEvent.click(within(pack).getByText('Remove'));
+    expect(store.uninstallPack).not.toHaveBeenCalled();
+    fireEvent.click(within(pack).getByText('Confirm'));
+    expect(store.uninstallPack).toHaveBeenCalledWith('team', 'bt-pack');
+
+    const proc = screen.getByTestId('installed-processor-anr@official');
+    fireEvent.click(within(proc).getByText('Uninstall'));
+    fireEvent.click(within(proc).getByText('Confirm'));
+    expect(store.uninstallProcessor).toHaveBeenCalledWith('anr@official');
+  });
+
+  it('hides pack-member processors from the Library and lists only standalone entries', () => {
+    const store = fakeStore();
+    render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+    openTab('library');
     expect(screen.queryByTestId('library-row-wifi-state')).toBeNull();
     expect(screen.getByTestId('library-row-anr-detector')).toBeTruthy();
   });
 
-  it('renders the injected sourcesPanel slot inside Advanced, unmodified', () => {
+  it('renders the injected sourcesPanel slot in the Sources tab, unmodified', () => {
     const store = fakeStore();
     render(() => <PacksPanel store={store} sourcesPanel={<div data-testid="sources-slot">hi</div>} />);
+    expect(screen.queryByTestId('sources-slot')).toBeNull();
+    openTab('sources');
     expect(screen.getByTestId('sources-slot')).toBeTruthy();
   });
 
   it('installing a standalone library analyzer calls installProcessor with the selected source', () => {
     const store = fakeStore();
     render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+    openTab('library');
     const row = screen.getByTestId('library-row-anr-detector');
     fireEvent.click(within(row).getByText('Add'));
     expect(store.installProcessor).toHaveBeenCalledWith('official', standaloneEntry);
@@ -190,6 +283,7 @@ describe('PacksPanel', () => {
   it('uninstalling a standalone library analyzer is confirm-gated', () => {
     const store = fakeStore({ installedProcessors: () => [{ id: 'anr-detector' } as ProcessorSummary] });
     render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+    openTab('library');
     const row = screen.getByTestId('library-row-anr-detector');
     fireEvent.click(within(row).getByText('Uninstall'));
     expect(store.uninstallProcessor).not.toHaveBeenCalled();
@@ -204,13 +298,20 @@ describe('PacksPanel', () => {
     });
     render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
     expect(screen.getByTestId('packs-update-summary').textContent).toContain('2 updates available');
+    expect(screen.getByTestId('packs-subtab-updates').textContent).toBe('Updates (2)');
+    fireEvent.click(screen.getByText('Review updates'));
+    expect(screen.getByTestId('packs-subtab-updates').getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByTestId('pack-update-row-wifi-pack')).toBeTruthy();
+    fireEvent.click(screen.getByText('Update all'));
+    expect(store.updateAll).toHaveBeenCalled();
   });
 
-  it('Advanced Updates section triggers checkUpdates and updateOne', () => {
+  it('Updates tab triggers checkUpdates and updateOne', () => {
     const store = fakeStore({
       pendingUpdates: () => [{ processorId: 'wifi-state', processorName: 'WiFi State', sourceName: 'official', installedVersion: '1.0.0', availableVersion: '1.1.0', entry: wifiStateEntry }],
     });
     render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+    openTab('updates');
     fireEvent.click(screen.getByText('Check for updates'));
     expect(store.checkUpdates).toHaveBeenCalled();
     const row = screen.getByTestId('update-row-wifi-state');
@@ -345,6 +446,7 @@ describe('PacksPanel', () => {
   it('renders a wholesale update-check failure rather than "No pending updates." (D1-M12)', () => {
     const store = fakeStore({ updatesError: () => 'Error: network down' });
     render(() => <PacksPanel store={store} sourcesPanel={<div />} />);
+    openTab('updates');
     const banner = screen.getByTestId('updates-check-error');
     expect(banner.getAttribute('role')).toBe('alert');
     expect(banner.textContent).toContain('network down');

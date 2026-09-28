@@ -34,11 +34,11 @@ const panelId = (id: SettingsTab): string => `settings-tabpanel-${id}`;
  * mounted in the rail's overlay drawer (which already supplies the header,
  * close button, padding and scroll — see `shell/AppShell.tsx`).
  *
- * The former standalone "Sources" tab is gone (P1): brief §3 demotes
- * marketplace sources — along with the standalone-analyzer library and
- * update management — under the Packs tab's "Advanced" disclosure.
- * `SourcesTab` itself is unchanged; it is now mounted from here as a slot
- * handed to `PacksPanel` rather than as its own top-level tab. See
+ * The former standalone "Sources" tab is gone (P1): marketplace sources —
+ * along with installed packs, updates and the standalone-analyzer library —
+ * are sub-tabs of the Packs tab. `SourcesTab` itself is unchanged; it is
+ * mounted from here as a slot handed to `PacksPanel` rather than as its own
+ * top-level tab. See
  * `packs/PacksPanel.tsx`'s doc comment for why it is a slot instead of a
  * direct cross-module import.
  *

@@ -2,10 +2,9 @@
 import { For, Show, createMemo, createSignal } from 'solid-js';
 import type { JSX } from 'solid-js';
 import type { Caller, ProcessorSummary } from '@bridge/types';
-import { CallerBadge, callerClient } from '../ui';
+import { CallerBadge, callerClient, createOverlayDialog } from '../ui';
 import { PII_ANONYMIZER_ID } from './analyzerStore';
 import type { AnalyzerStore } from './analyzerStore';
-import { createOverlayDialog } from './overlayDialog';
 import styles from './analyzers.module.css';
 
 const OTHER_GROUP = 'Other';
@@ -46,8 +45,8 @@ export interface AddAnalyzerProps {
  *  per-row add, "Load YAML from file…", and a confirm-gated uninstall for
  *  every row shown here (all of them are non-active by construction).
  *
- *  This is the per-session view of the "library" brief §3 demotes under the
- *  Advanced disclosure — it browses and manages whatever is *already
+ *  This is the per-session view of the "library" brief §3 demotes out of the
+ *  primary Packs view — it browses and manages whatever is *already
  *  installed*. Browsing and adding curated packs or individual analyzers
  *  *from a marketplace source* lives in the Packs tab (`packs/PacksPanel.tsx`,
  *  under Settings), not here; the hint text below is this file's pointer to

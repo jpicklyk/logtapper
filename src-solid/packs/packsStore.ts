@@ -12,7 +12,7 @@
  * rather than a hook/context split — Solid has no render-tree context to
  * split "shared" state across (see `analyzerStore.ts`'s module doc for the
  * same reasoning), and there is exactly one mount point (`PacksPanel`, inside
- * the `settings` surface's Advanced-adjacent Packs tab) so nothing here needs
+ * the `settings` surface's Packs tab) so nothing here needs
  * to survive a panel unmount independently of anything else.
  *
  * The one-catalog-fetch-per-source browse (`fetchEntries`) is the "supersede
@@ -309,7 +309,7 @@ export function createPacksStore(deps: PacksStoreDeps): PacksStore {
       setInstalledProcessors(procList);
     });
   };
-  // Seed installed state immediately — the Advanced/library view and the
+  // Seed installed state immediately — the Installed/Library tabs and the
   // "already added" badges on curated pack cards must not wait for a browse
   // fetch, which needs a selected source the user may never pick.
   void refreshInstalled();
