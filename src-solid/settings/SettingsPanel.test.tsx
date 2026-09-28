@@ -99,7 +99,7 @@ describe('SettingsPanel', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Themes' }));
     expect(screen.getByTestId('themes-tab')).toBeTruthy();
   });
-  it('shows a fallback on the Packs tab when no packs store is supplied, and the real panel (with Sources under Advanced) when one is', () => {
+  it('shows a fallback on the Packs tab when no packs store is supplied, and the real panel (with its Sources sub-tab) when one is', () => {
     render(() => <SettingsPanel store={fakeStore()} />);
     fireEvent.click(screen.getByRole('tab', { name: 'Packs' }));
     expect(screen.getByText('Packs are unavailable in this build.')).toBeTruthy();
@@ -107,7 +107,7 @@ describe('SettingsPanel', () => {
     render(() => <SettingsPanel store={fakeStore()} packs={fakePacksStore()} />);
     fireEvent.click(screen.getByRole('tab', { name: 'Packs' }));
     expect(screen.getByTestId('packs-panel')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('packs-advanced').querySelector('summary')!);
+    fireEvent.click(screen.getByTestId('packs-subtab-sources'));
     expect(screen.getByTestId('sources-tab')).toBeTruthy();
   });
   it('deletes a user theme only after the row is confirmed', () => {
@@ -349,7 +349,7 @@ describe('SourcesTab (D1-L9)', () => {
   const openSources = (store: SettingsStore) => {
     render(() => <SettingsPanel store={store} packs={fakePacksStore()} />);
     fireEvent.click(screen.getByRole('tab', { name: 'Packs' }));
-    fireEvent.click(screen.getByTestId('packs-advanced').querySelector('summary')!);
+    fireEvent.click(screen.getByTestId('packs-subtab-sources'));
   };
 
   it('rejects a github source with no repo and a local source with no path', () => {

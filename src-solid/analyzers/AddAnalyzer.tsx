@@ -45,8 +45,8 @@ export interface AddAnalyzerProps {
  *  per-row add, "Load YAML from file…", and a confirm-gated uninstall for
  *  every row shown here (all of them are non-active by construction).
  *
- *  This is the per-session view of the "library" brief §3 demotes under the
- *  Advanced disclosure — it browses and manages whatever is *already
+ *  This is the per-session view of the "library" brief §3 demotes out of the
+ *  primary Packs view — it browses and manages whatever is *already
  *  installed*. Browsing and adding curated packs or individual analyzers
  *  *from a marketplace source* lives in the Packs tab (`packs/PacksPanel.tsx`,
  *  under Settings), not here; the hint text below is this file's pointer to

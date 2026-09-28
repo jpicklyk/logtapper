@@ -165,8 +165,14 @@ pub fn list(ctx: &ServiceCtx) -> Result<Vec<ProcessorSummary>, ServiceError> {
         .iter()
         .flat_map(|pk| pk.processors.iter().map(move |pid| (pid.as_str(), pk.id.as_str())))
         .collect();
+    // A marketplace pack's manifest lists its members by bare id
+    // (`nfc-state`), while they are installed under the qualified key
+    // (`nfc-state@official`) — match either, or no marketplace member ever
+    // reports its pack.
     for summary in &mut out {
-        if let Some(pack_id) = proc_to_pack.get(summary.id.as_str()) {
+        let bare = crate::processors::marketplace::split_qualified_id(&summary.id).0;
+        let pack = proc_to_pack.get(summary.id.as_str()).or_else(|| proc_to_pack.get(bare));
+        if let Some(pack_id) = pack {
             summary.pack_id = Some((*pack_id).to_string());
         }
     }
@@ -588,6 +594,23 @@ processors:
         let out = list(&ctx).unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].id, "test-reporter");
+        assert_eq!(out[0].pack_id.as_deref(), Some("test-pack"));
+    }
+
+    #[test]
+    fn list_annotates_marketplace_pack_members_installed_under_a_qualified_id() {
+        // A marketplace pack manifest names members by bare id, but they are
+        // installed as `id@source`.
+        let (ctx, _tmp) = test_ctx().build();
+        install_test_processor(&ctx, "test-reporter@official");
+        {
+            let mut packs = ctx.state().packs.lock().unwrap();
+            let mut pack: PackMeta = crate::processors::pack::parse_pack_yaml(MINIMAL_PACK).unwrap();
+            pack.id = "test-pack".to_string();
+            packs.push(pack);
+        }
+        let out = list(&ctx).unwrap();
+        assert_eq!(out[0].id, "test-reporter@official");
         assert_eq!(out[0].pack_id.as_deref(), Some("test-pack"));
     }
 
