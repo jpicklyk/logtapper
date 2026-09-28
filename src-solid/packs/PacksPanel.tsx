@@ -2,7 +2,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onMount } from 'solid-js';
 import type { JSX } from 'solid-js';
 import type { MarketplaceEntry, MarketplacePackEntry, PackSummary, ProcessorSummary } from '@bridge/types';
-import { matchesQuery } from '@bridge/types';
+import { getBareId, matchesQuery } from '@bridge/types';
 import type { PacksStore } from './packsStore';
 import { PackDetailsDialog } from './PackDetailsDialog';
 import styles from './packs.module.css';
@@ -112,7 +112,15 @@ export function PacksPanel(props: PacksPanelProps): JSX.Element {
   });
 
   const installedPackIds = createMemo(() => new Set(store().installedPacks().map((p) => p.id)));
-  const installedProcessorIds = createMemo(() => new Set(store().installedProcessors().map((p) => p.id)));
+  /** Bare catalog id → installed (qualified `id@source`) id, for the browsed
+   *  source only. Catalog entries carry bare ids, installed processors are
+   *  keyed qualified, so a plain id comparison never matched. */
+  const libraryInstalled = createMemo(() => {
+    const src = activeSource();
+    const map = new Map<string, string>();
+    for (const p of store().installedProcessors()) if (src && p.source === src) map.set(getBareId(p.id), p.id);
+    return map;
+  });
   const entriesById = createMemo(() => new Map(store().entries().map((e) => [e.id, e])));
 
   // ── Browse ────────────────────────────────────────────────────────────────
@@ -607,7 +615,7 @@ export function PacksPanel(props: PacksPanelProps): JSX.Element {
           <div class={styles.hint}>Individual analyzers that are not part of any pack from this source.</div>
           <For each={filteredStandalone()}>
             {(entry) => {
-              const installed = createMemo(() => installedProcessorIds().has(entry.id));
+              const installedId = createMemo(() => libraryInstalled().get(entry.id));
               return (
                 <div class={styles.row} data-testid={`library-row-${entry.id}`}>
                   <div class={styles.rowInfo}>
@@ -615,8 +623,12 @@ export function PacksPanel(props: PacksPanelProps): JSX.Element {
                     <Show when={entry.description}><span class={styles.rowDesc}>{entry.description}</span></Show>
                   </div>
                   <Show
-                    when={!installed()}
-                    fallback={confirmRemove(entry.id, confirmingRemoveProcId, setConfirmingRemoveProcId, () => handleConfirmRemoveProcessor(entry.id), 'Uninstall')}
+                    when={!installedId()}
+                    fallback={
+                      <Show when={installedId()}>
+                        {(id) => confirmRemove(id(), confirmingRemoveProcId, setConfirmingRemoveProcId, () => handleConfirmRemoveProcessor(id()), 'Uninstall')}
+                      </Show>
+                    }
                   >
                     <button
                       type="button"
