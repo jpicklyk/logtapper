@@ -216,13 +216,58 @@ describe('SessionInfo', () => {
   it('Escape closes the popover and returns focus to the trigger', () => {
     render(() => <SessionInfo entry={entry()} metadata={null} onReopenAs={vi.fn()} />);
     const trigger = screen.getByTestId('status-session');
+    // Chromium focuses a clicked button; jsdom's synthetic click does not.
+    trigger.focus();
     fireEvent.click(trigger);
     expect(screen.getByRole('dialog')).toBeTruthy();
 
-    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.keyDown(screen.getByTestId('session-info-popover'), { key: 'Escape' });
 
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it("Escape stops at the popover, so AppShell's window Escape does not also close a drawer", () => {
+    const onWindowKey = vi.fn();
+    window.addEventListener('keydown', onWindowKey);
+    try {
+      render(() => <SessionInfo entry={entry()} metadata={null} onReopenAs={vi.fn()} />);
+      fireEvent.click(screen.getByTestId('status-session'));
+
+      fireEvent.keyDown(screen.getByTestId('session-info-popover'), { key: 'Escape' });
+
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(onWindowKey).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('keydown', onWindowKey);
+    }
+  });
+
+  it('opened from another entry point, closing returns focus to that entry point', () => {
+    const [open, setOpen] = createSignal(false);
+    render(() => (
+      <div>
+        <button type="button" data-testid="file-info" onClick={() => setOpen(true)}>File info…</button>
+        <SessionInfo entry={entry()} metadata={null} onReopenAs={vi.fn()} open={open} onOpenChange={setOpen} />
+      </div>
+    ));
+    const fileInfo = screen.getByTestId('file-info');
+    fileInfo.focus();
+    fireEvent.click(fileInfo);
+    expect(document.activeElement).toBe(screen.getByTestId('session-info-popover'));
+
+    fireEvent.click(screen.getByRole('button', { name: /close session info/i }));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(document.activeElement).toBe(fileInfo);
+  });
+
+  it('is a modal dialog named by its file-name title', () => {
+    render(() => <SessionInfo entry={entry()} metadata={null} onReopenAs={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('status-session'));
+
+    const dialog = screen.getByRole('dialog', { name: 'bugreport.log' });
+    expect(dialog.getAttribute('aria-modal')).toBe('true');
   });
 
   it('a click outside the popover and the trigger closes it', () => {

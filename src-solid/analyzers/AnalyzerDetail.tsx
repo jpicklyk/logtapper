@@ -4,7 +4,7 @@ import type { JSX } from 'solid-js';
 import { formatNumber, groupVars, snakeToTitle } from '@processors';
 import { MATCHED_PREVIEW_CAP } from './analyzerStore';
 import type { AnalyzerStore, MatchedLineDigest } from './analyzerStore';
-import { createOverlayDialog } from './overlayDialog';
+import { createOverlayDialog } from '../ui';
 import styles from './analyzers.module.css';
 
 const RANKED_CAP = 15;

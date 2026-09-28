@@ -6,3 +6,5 @@
  */
 export { CallerBadge, normalizeCaller, callerClient } from './CallerBadge';
 export type { CallerBadgeProps, CallerKind, CallerLike } from './CallerBadge';
+export { createOverlayDialog } from './overlayDialog';
+export type { OverlayDialog } from './overlayDialog';

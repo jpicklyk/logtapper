@@ -5,6 +5,7 @@ import type { DumpstateMetadata, SourceType } from '@bridge/types';
 import { isBugreportLike } from '@bridge/types';
 import { buildReopenOptions, formatDuration, formatTimestamp, REOPEN_SOURCE_TYPES } from '@fileinfo';
 import type { ReopenOption } from '@fileinfo';
+import { createOverlayDialog } from '../ui';
 import type { SessionEntry } from './sessions';
 import styles from './sessionInfo.module.css';
 
@@ -115,7 +116,7 @@ export function SessionInfo(props: SessionInfoProps): JSX.Element {
             close();
           }}
           onClose={close}
-          restoreFocusTo={triggerRef}
+          trigger={triggerRef}
         />
       </Show>
     </span>
@@ -130,23 +131,23 @@ interface SessionInfoPopoverProps {
   duration: string | null;
   onReopenAs: (sourceType: SourceType) => void;
   onClose: () => void;
-  restoreFocusTo: HTMLButtonElement | undefined;
+  /** The chip; a pointerdown on it is its own toggle, not an outside click. */
+  trigger: HTMLButtonElement | undefined;
 }
-
-const TITLE_ID = 'session-info-title';
 
 /**
  * A fresh instance mounted by the `<Show>` above each time the popover
  * opens — the same pattern `bookmarks/CreateBookmarkDialog.tsx` uses — so
  * its mount/cleanup pair IS the open/close transition, not every re-render.
  *
- * Focus in/out and Escape are hand-rolled rather than imported from
- * `analyzers/overlayDialog.ts`'s `createOverlayDialog`: that helper is not
- * on the `analyzers/` barrel (deliberately private, per its own doc
- * comment) and this package may only import across a module boundary
- * through a barrel — see this task's implementation-notes for the
- * follow-up to hoist it into `reactive/` or `ui/` so a third caller (this
- * one) doesn't reimplement the same dozen lines again.
+ * Dialog role, focus in/out and Escape come from `ui/`'s
+ * `createOverlayDialog`, the helper the analyzer overlays use. Escape is
+ * handled on the popover root and stops propagation there, so it never also
+ * reaches `AppShell`'s window-level Escape and closes an overlay drawer
+ * behind the popover. Focus goes back to whatever held it when the popover
+ * opened: the chip on a chip click, the sections "File info…" button when
+ * opened from there. Only the outside-pointerdown dismissal is local — a
+ * popover closes on a click elsewhere, a modal overlay does not.
  *
  * Reopen semantics: this deliberately does NOT close the session first.
  * Closing runs the backend's close path, which deletes the session's
@@ -158,47 +159,34 @@ const TITLE_ID = 'session-info-title';
  * `sessions.ts`'s `SessionStore.replace`.
  */
 function SessionInfoPopover(props: SessionInfoPopoverProps): JSX.Element {
+  const dialog = createOverlayDialog(() => props.onClose());
   let rootRef: HTMLDivElement | undefined;
-
-  const onKeyDown = (event: KeyboardEvent): void => {
-    if (event.key !== 'Escape') return;
-    event.stopPropagation();
-    props.onClose();
-  };
 
   const onDocumentPointerDown = (event: PointerEvent): void => {
     const target = event.target as Node | null;
     if (!target) return;
     if (rootRef?.contains(target)) return;
-    if (props.restoreFocusTo?.contains(target)) return;
+    if (props.trigger?.contains(target)) return;
     props.onClose();
   };
 
-  onMount(() => {
-    rootRef?.focus();
-    document.addEventListener('keydown', onKeyDown);
-    document.addEventListener('pointerdown', onDocumentPointerDown);
-  });
-  onCleanup(() => {
-    document.removeEventListener('keydown', onKeyDown);
-    document.removeEventListener('pointerdown', onDocumentPointerDown);
-    props.restoreFocusTo?.focus?.();
-  });
+  onMount(() => { document.addEventListener('pointerdown', onDocumentPointerDown); });
+  onCleanup(() => { document.removeEventListener('pointerdown', onDocumentPointerDown); });
 
   const load = () => props.entry.load;
 
   return (
     <div
-      ref={rootRef}
       class={styles.popover}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={TITLE_ID}
-      tabIndex={-1}
       data-testid="session-info-popover"
+      {...dialog.props}
+      ref={(el: HTMLDivElement) => {
+        rootRef = el;
+        dialog.props.ref(el);
+      }}
     >
       <div class={styles.header}>
-        <span class={styles.fileName} id={TITLE_ID} title={load().sourceName}>
+        <span class={styles.fileName} id={dialog.labelId} title={load().sourceName}>
           {load().sourceName}
         </span>
         <span class={styles.typeBadge}>{load().sourceType}</span>

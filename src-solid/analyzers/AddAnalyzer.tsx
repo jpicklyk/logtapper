@@ -2,10 +2,9 @@
 import { For, Show, createMemo, createSignal } from 'solid-js';
 import type { JSX } from 'solid-js';
 import type { Caller, ProcessorSummary } from '@bridge/types';
-import { CallerBadge, callerClient } from '../ui';
+import { CallerBadge, callerClient, createOverlayDialog } from '../ui';
 import { PII_ANONYMIZER_ID } from './analyzerStore';
 import type { AnalyzerStore } from './analyzerStore';
-import { createOverlayDialog } from './overlayDialog';
 import styles from './analyzers.module.css';
 
 const OTHER_GROUP = 'Other';
