@@ -47,6 +47,14 @@ runs:
         mkdir -p "$taps"
         ln -s "$(cd "$TAP_DIR" && pwd)" "$taps/homebrew-logtapper"
 
+    # Current Homebrew refuses to load a cask from a tap it has not been told to
+    # trust ("Refusing to load cask ... from untrusted tap"; first seen on the
+    # 2026-11-07 publish run, which passed on 2026-09-28). The tap here is the
+    # rendered file we are about to lint and push, so trusting it is the point.
+    - name: Trust the tap
+      shell: bash
+      run: brew trust jpicklyk/logtapper
+
     - name: brew style
       shell: bash
       run: brew style --cask jpicklyk/logtapper/logtapper
