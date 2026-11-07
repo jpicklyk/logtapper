@@ -151,6 +151,13 @@ jobs:
         # per-machine scope, `/currentuser` vs `/allusers`). `wingetcreate update` needs one
         # URL per existing entry, and cannot tell them apart from the exe alone, so each URL
         # carries an explicit `|architecture|scope` override.
+        #
+        # `Silent` and `SilentWithProgress` must stay in each entry's `InstallerSwitches`, not
+        # at the manifest root. `wingetcreate update` copies a root field only to entries where
+        # that field is empty, then clears the root. Every entry has `Custom`, so root-level
+        # switches are lost and winget falls back to `/S` for `SilentWithProgress` instead of
+        # our `/P`. This placement keeps the install behaviour but does not clear the validator:
+        # the 0.14.0 PR still got `Missing property Switches` with the switches on each entry.
         run: |
           $url = "https://github.com/jpicklyk/LogTapper/releases/download/v$env:VERSION/LogTapper_${env:VERSION}_x64-setup.exe"
           .\wingetcreate.exe update jpicklyk.LogTapper --version $env:VERSION --urls "$url|x64|user" "$url|x64|machine" --submit --token $env:WINGET_PAT
