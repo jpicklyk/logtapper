@@ -38,8 +38,9 @@ Rules the cask has already run into:
 To republish an existing version after fixing a template, dispatch the workflow on `main`
 with `gh workflow run publish-packages.yml --ref main -f version=0.14.0`. The Homebrew and
 Scoop jobs no-op if nothing changed, the `chocolatey` job skips or tolerates a version the
-feed already has (below), and the `winget` job is `continue-on-error`, failing until the
-first manifest is merged into `microsoft/winget-pkgs`.
+feed already has (below), and the `winget` job opens a PR on `microsoft/winget-pkgs` for
+the version (it fails if the manifest's installer entries no longer match the URLs it passes;
+see the comment on that step).
 
 Chocolatey has no target repo: `choco pack` builds the `.nupkg` from the rendered
 `chocolatey/` tree and `choco push` uploads it directly to the community feed

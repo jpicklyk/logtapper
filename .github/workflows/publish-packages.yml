@@ -9,10 +9,9 @@ name: Publish packages
 # before the first real release.
 #
 # See `plans/package-manager-channels.md` for the full design. The winget
-# job is `continue-on-error: true` until the first manifest (created and
-# submitted by hand, per that plan's §5) has merged into
-# microsoft/winget-pkgs — `wingetcreate update` has nothing to update before
-# that exists.
+# manifest (first version created and submitted by hand, per that plan's §5)
+# merged into microsoft/winget-pkgs in PR 438639, so the winget job runs
+# `wingetcreate update` against it and a failure there fails the run.
 on:
   release:
     types: [published]
@@ -133,9 +132,6 @@ jobs:
   winget:
     needs: resolve-version
     runs-on: windows-latest
-    # See the workflow-level comment: soft-fails until the first manifest is
-    # merged into microsoft/winget-pkgs. Flip this off once that PR lands.
-    continue-on-error: true
     env:
       VERSION: ${{ needs.resolve-version.outputs.version }}
     steps:
@@ -150,9 +146,14 @@ jobs:
         # reliably accepted for that fork+PR flow.
         env:
           WINGET_PAT: ${{ secrets.WINGET_PAT }}
+        #
+        # The manifest carries two installer entries for the one NSIS setup exe (per-user and
+        # per-machine scope, `/currentuser` vs `/allusers`). `wingetcreate update` needs one
+        # URL per existing entry, and cannot tell them apart from the exe alone, so each URL
+        # carries an explicit `|architecture|scope` override.
         run: |
           $url = "https://github.com/jpicklyk/LogTapper/releases/download/v$env:VERSION/LogTapper_${env:VERSION}_x64-setup.exe"
-          .\wingetcreate.exe update jpicklyk.LogTapper --version $env:VERSION --urls $url --submit --token $env:WINGET_PAT
+          .\wingetcreate.exe update jpicklyk.LogTapper --version $env:VERSION --urls "$url|x64|user" "$url|x64|machine" --submit --token $env:WINGET_PAT
 
   # Install-tests the exact version about to be pushed on a throwaway Windows
   # runner (verify-chocolatey.yml). The push below needs it, so a package that
